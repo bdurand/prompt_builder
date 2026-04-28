@@ -1,0 +1,137 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+
+# Prompt for user input
+def prompt(message)
+  print "#{message}: "
+  gets.chomp
+end
+
+# Convert gem name to CamelCase
+def camelize(string)
+  string.split(/[_-]/).map(&:capitalize).join
+end
+
+# Get current year
+def current_year
+  Time.now.year
+end
+
+# Process file contents
+def process_file_contents(file_path, replacements)
+  return unless File.file?(file_path)
+
+  begin
+    content = File.read(file_path)
+    original_content = content.dup
+
+    replacements.each do |pattern, replacement|
+      content.gsub!(pattern, replacement)
+    end
+
+    # Only write if content changed
+    if content != original_content
+      File.write(file_path, content)
+      puts "  Updated: #{file_path}"
+    end
+  rescue => e
+    puts "  Warning: Could not process #{file_path}: #{e.message}"
+  end
+end
+
+# Rename file if basename matches old name
+def rename_file(file_path, old_basename, new_basename)
+  return file_path unless File.basename(file_path, ".*").start_with?(old_basename)
+
+  dir = File.dirname(file_path)
+  basename = File.basename(file_path).sub(old_basename, new_basename)
+  new_path = File.join(dir, basename)
+
+  if file_path != new_path
+    FileUtils.mv(file_path, new_path)
+    puts "  Renamed: #{file_path} -> #{new_path}"
+    return new_path
+  end
+
+  file_path
+end
+
+# Main script
+puts "=" * 60
+puts "Gem Initialization Script"
+puts "=" * 60
+puts
+
+gem_name = prompt("Gem name")
+author = prompt("Author")
+email = prompt("Email")
+github_username = prompt("GitHub Username")
+
+if gem_name.empty? || author.empty? || email.empty? || github_username.empty?
+  puts "\nError: All fields are required!"
+  exit 1
+end
+
+camelized_gem_name = camelize(gem_name)
+year = current_year
+
+puts "\n" + "=" * 60
+puts "Configuration:"
+puts "  Gem name: #{gem_name}"
+puts "  CamelCase: #{camelized_gem_name}"
+puts "  Author: #{author}"
+puts "  Email: #{email}"
+puts "  GitHub Username: #{github_username}"
+puts "  Year: #{year}"
+puts "=" * 60
+
+print "\nProceed with initialization? (y/n): "
+confirmation = gets.chomp.downcase
+
+unless confirmation == "y" || confirmation == "yes"
+  puts "Initialization cancelled."
+  exit 0
+end
+
+puts "\nProcessing files..."
+
+# Build replacement map
+replacements = {
+  "base_gem" => gem_name,
+  "BaseGem" => camelized_gem_name,
+  "${YEAR}" => year.to_s,
+  "${AUTHOR}" => author,
+  "${EMAIL}" => email,
+  "${GITHUB_USERNAME}" => github_username
+}
+
+# Get all files recursively, excluding certain directories
+excluded_dirs = [".git", "node_modules", "vendor", ".bundle"]
+files_to_process = []
+
+Dir.glob("**/*", File::FNM_DOTMATCH).each do |path|
+  next if File.directory?(path)
+  next if excluded_dirs.any? { |dir| path.start_with?("#{dir}/") || path == dir }
+  next if File.basename(path) == "initialize_gem" # Don't process this script
+
+  files_to_process << path
+end
+
+# First pass: update file contents
+files_to_process.each do |file_path|
+  process_file_contents(file_path, replacements)
+end
+
+# Second pass: rename files (do this after content updates to avoid path issues)
+files_to_rename = files_to_process.dup
+files_to_rename.each do |file_path|
+  next unless File.exist?(file_path) # Skip if already moved
+  rename_file(file_path, "base_gem", gem_name)
+end
+
+puts "\n" + "=" * 60
+puts "Initialization complete!"
+puts "=" * 60
+puts "\nYou may now delete this initialize_gem script."
