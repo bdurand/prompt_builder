@@ -103,7 +103,8 @@ module PromptBuilder
     #   @return [Array<Items::Base>] the output items
     # @!attribute [r] usage
     #   @return [Usage, nil] token usage statistics
-    attr_reader(*FIELDS, :text_config, :output, :usage)
+    FIELDS.each { |f| attr_reader f }
+    attr_reader :text_config, :output, :usage
 
     BOOLEAN_FIELDS.each { |f| alias_method("#{f}?", f) }
 

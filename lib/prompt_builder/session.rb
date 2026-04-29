@@ -92,7 +92,7 @@ module PromptBuilder
     #   @return [String, nil] the service tier
     # @!attribute [rw] top_logprobs
     #   @return [Integer, nil] the number of top log probabilities to return
-    attr_accessor(*FIELDS)
+    FIELDS.each { |f| attr_accessor f }
 
     BOOLEAN_FIELDS.each { |f| alias_method("#{f}?", f) }
 
