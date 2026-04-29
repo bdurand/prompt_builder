@@ -1,12 +1,12 @@
 Gem::Specification.new do |spec|
-  spec.name = "base_gem"
+  spec.name = "prompt_builder"
   spec.version = File.read(File.expand_path("../VERSION", __FILE__)).strip
-  spec.authors = ["${AUTHOR}"]
-  spec.email = ["${EMAIL}"]
+  spec.authors = ["Brian Durand"]
+  spec.email = ["bbdurand@gmail.com"]
 
-  spec.summary = "TODO: Write a gem summary"
+  spec.summary = "Ruby DSL for building and parsing LLM API requests across Chat Completions and Responses API formats"
 
-  spec.homepage = "https://github.com/${GITHUB_USERNAME}/base_gem"
+  spec.homepage = "https://github.com/bdurand/prompt_builder"
   spec.license = "MIT"
 
   spec.metadata = {

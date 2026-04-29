@@ -1,0 +1,123 @@
+# frozen_string_literal: true
+
+require "spec_helper"
+
+RSpec.describe PromptBuilder::Serializers::OpenResponses do
+  describe ".request_payload" do
+    it "returns session.to_h for local state sessions" do
+      session = PromptBuilder::Session.new(model: "gpt-4.1")
+      session.user("Hello")
+
+      expect(described_class.request_payload(session)).to eq(session.to_h)
+    end
+
+    it "returns session.to_h for server state sessions" do
+      session = PromptBuilder::Session.new(previous_response_id: "resp_123")
+      session.user("follow up")
+
+      expect(described_class.request_payload(session)).to eq(session.to_h)
+    end
+  end
+
+  describe ".parse_response" do
+    it "parses an Open Responses hash into PromptBuilder::Response" do
+      hash = {
+        "id" => "resp_123",
+        "object" => "response",
+        "status" => "completed",
+        "model" => "gpt-5.2",
+        "output" => [
+          {
+            "type" => "message",
+            "role" => "assistant",
+            "content" => [{"type" => "output_text", "text" => "Hello!"}]
+          }
+        ],
+        "usage" => {
+          "input_tokens" => 10,
+          "output_tokens" => 5
+        }
+      }
+
+      response = described_class.parse_response(hash)
+
+      expect(response).to be_a(PromptBuilder::Response)
+      expect(response.id).to eq("resp_123")
+      expect(response.object).to eq("response")
+      expect(response.status).to eq("completed")
+      expect(response.model).to eq("gpt-5.2")
+      expect(response.output.length).to eq(1)
+      expect(response.output[0]).to be_a(PromptBuilder::Items::Message)
+      expect(response.text).to eq("Hello!")
+      expect(response.usage.input_tokens).to eq(10)
+      expect(response.usage.output_tokens).to eq(5)
+    end
+
+    it "handles minimal response hashes" do
+      response = described_class.parse_response({"status" => "completed"})
+
+      expect(response).to be_a(PromptBuilder::Response)
+      expect(response.status).to eq("completed")
+      expect(response.output).to eq([])
+      expect(response.usage).to be_nil
+    end
+
+    it "round-trips RefusalContent through output" do
+      hash = {
+        "status" => "completed",
+        "output" => [{
+          "type" => "message",
+          "role" => "assistant",
+          "content" => [{"type" => "refusal", "refusal" => "I cannot help."}]
+        }]
+      }
+
+      response = described_class.parse_response(hash)
+      msg = response.output[0]
+      expect(msg).to be_a(PromptBuilder::Items::Message)
+      expect(msg.content[0]).to be_a(PromptBuilder::Content::RefusalContent)
+      expect(msg.content[0].refusal).to eq("I cannot help.")
+    end
+
+    it "round-trips InputVideo through session" do
+      session = PromptBuilder::Session.new(model: "gpt-4.1")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/clip.mp4")]
+      ))
+
+      payload = described_class.request_payload(session)
+      item_hash = payload["input"][0]
+      expect(item_hash["type"]).to eq("message")
+      expect(item_hash["content"][0]["type"]).to eq("input_video")
+      expect(item_hash["content"][0]["video_url"]).to eq("https://example.com/clip.mp4")
+    end
+
+    it "round-trips ItemReference through session" do
+      session = PromptBuilder::Session.new(model: "gpt-4.1")
+      session.add_item(PromptBuilder::Items::ItemReference.new(id: "item_abc"))
+
+      payload = described_class.request_payload(session)
+      expect(payload["input"][0]).to eq({"type" => "item_reference", "id" => "item_abc"})
+    end
+
+    it "round-trips Compaction through response output" do
+      hash = {
+        "status" => "completed",
+        "output" => [{
+          "type" => "compaction",
+          "id" => "comp_1",
+          "encrypted_content" => "encrypted_data",
+          "created_by" => "assistant"
+        }]
+      }
+
+      response = described_class.parse_response(hash)
+      item = response.output[0]
+      expect(item).to be_a(PromptBuilder::Items::Compaction)
+      expect(item.id).to eq("comp_1")
+      expect(item.encrypted_content).to eq("encrypted_data")
+      expect(item.created_by).to eq("assistant")
+    end
+  end
+end

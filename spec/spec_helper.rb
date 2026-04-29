@@ -2,7 +2,7 @@
 
 require "bundler/setup"
 
-require_relative "../lib/base_gem"
+require_relative "../lib/prompt_builder"
 
 RSpec.configure do |config|
   config.disable_monkey_patching!

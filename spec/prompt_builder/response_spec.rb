@@ -1,0 +1,178 @@
+# frozen_string_literal: true
+
+require "spec_helper"
+
+RSpec.describe PromptBuilder::Response do
+  let(:response_hash) do
+    {
+      "id" => "resp_123",
+      "object" => "response",
+      "created_at" => 1700000000,
+      "completed_at" => 1700000005,
+      "status" => "completed",
+      "model" => "gpt-5.2",
+      "output" => [
+        {
+          "type" => "message",
+          "role" => "assistant",
+          "content" => [{"type" => "output_text", "text" => "Hello!"}]
+        }
+      ],
+      "usage" => {
+        "input_tokens" => 10,
+        "output_tokens" => 5,
+        "total_tokens" => 15,
+        "input_tokens_details" => {"cached_tokens" => 2},
+        "output_tokens_details" => {"reasoning_tokens" => 3}
+      }
+    }
+  end
+
+  describe ".from_h" do
+    it "parses a response hash" do
+      response = described_class.from_h(response_hash)
+      expect(response.id).to eq("resp_123")
+      expect(response.object).to eq("response")
+      expect(response.created_at).to eq(1700000000)
+      expect(response.completed_at).to eq(1700000005)
+      expect(response.status).to eq("completed")
+      expect(response.model).to eq("gpt-5.2")
+      expect(response.output.length).to eq(1)
+      expect(response.output[0]).to be_a(PromptBuilder::Items::Message)
+      expect(response.usage.input_tokens).to eq(10)
+      expect(response.usage.output_tokens).to eq(5)
+      expect(response.usage.total_tokens).to eq(15)
+      expect(response.usage.cached_tokens).to eq(2)
+      expect(response.usage.reasoning_tokens).to eq(3)
+    end
+
+    it "handles missing optional fields" do
+      response = described_class.from_h({"status" => "completed"})
+      expect(response.id).to be_nil
+      expect(response.output).to eq([])
+      expect(response.usage).to be_nil
+    end
+  end
+
+  describe "#completed?" do
+    it "returns true when completed" do
+      response = described_class.from_h({"status" => "completed"})
+      expect(response).to be_completed
+    end
+
+    it "returns false when not completed" do
+      response = described_class.from_h({"status" => "failed"})
+      expect(response).not_to be_completed
+    end
+  end
+
+  describe "#failed?" do
+    it "returns true when failed" do
+      response = described_class.from_h({"status" => "failed"})
+      expect(response).to be_failed
+    end
+  end
+
+  describe "#incomplete?" do
+    it "returns true when incomplete" do
+      response = described_class.from_h({"status" => "incomplete"})
+      expect(response).to be_incomplete
+    end
+  end
+
+  describe "#has_tool_calls?" do
+    it "returns true when output contains function calls" do
+      response = described_class.from_h({
+        "output" => [{
+          "type" => "function_call",
+          "name" => "get_weather",
+          "call_id" => "call_1",
+          "arguments" => "{}"
+        }]
+      })
+      expect(response).to have_tool_calls
+    end
+
+    it "returns false when no function calls" do
+      response = described_class.from_h(response_hash)
+      expect(response).not_to have_tool_calls
+    end
+  end
+
+  describe "#tool_calls" do
+    it "returns function call items" do
+      response = described_class.from_h({
+        "output" => [
+          {
+            "type" => "message",
+            "role" => "assistant",
+            "content" => [{"type" => "output_text", "text" => "Let me check."}]
+          },
+          {
+            "type" => "function_call",
+            "name" => "get_weather",
+            "call_id" => "call_1",
+            "arguments" => '{"city":"London"}'
+          }
+        ]
+      })
+      calls = response.tool_calls
+      expect(calls.length).to eq(1)
+      expect(calls[0].name).to eq("get_weather")
+    end
+  end
+
+  describe "#text" do
+    it "extracts text from the first output message" do
+      response = described_class.from_h(response_hash)
+      expect(response.text).to eq("Hello!")
+    end
+
+    it "returns nil when no text output" do
+      response = described_class.from_h({
+        "output" => [{
+          "type" => "function_call",
+          "name" => "test",
+          "call_id" => "call_1",
+          "arguments" => "{}"
+        }]
+      })
+      expect(response.text).to be_nil
+    end
+
+    it "concatenates multiple text blocks" do
+      response = described_class.from_h({
+        "output" => [{
+          "type" => "message",
+          "role" => "assistant",
+          "content" => [
+            {"type" => "output_text", "text" => "Hello "},
+            {"type" => "output_text", "text" => "World!"}
+          ]
+        }]
+      })
+      expect(response.text).to eq("Hello World!")
+    end
+  end
+
+  describe "#to_h" do
+    it "round-trips through from_h and to_h" do
+      response = described_class.from_h(response_hash)
+      h = response.to_h
+      expect(h["id"]).to eq("resp_123")
+      expect(h["status"]).to eq("completed")
+      expect(h["model"]).to eq("gpt-5.2")
+      expect(h["output"].length).to eq(1)
+      expect(h["usage"]["input_tokens"]).to eq(10)
+      expect(h["usage"]["total_tokens"]).to eq(15)
+    end
+
+    it "omits nil values" do
+      response = described_class.from_h({"status" => "completed"})
+      h = response.to_h
+      expect(h).not_to have_key("id")
+      expect(h).not_to have_key("model")
+      expect(h).not_to have_key("usage")
+    end
+  end
+end

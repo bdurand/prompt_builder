@@ -2,10 +2,10 @@
 
 require "spec_helper"
 
-RSpec.describe BaseGem do
+RSpec.describe PromptBuilder do
   describe "VERSION" do
     it "has a version number" do
-      expect(BaseGem::VERSION).to eq(File.read(File.join(__dir__, "../VERSION")).strip)
+      expect(PromptBuilder::VERSION).to eq(File.read(File.join(__dir__, "../VERSION")).strip)
     end
   end
 end
