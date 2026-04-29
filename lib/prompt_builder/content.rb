@@ -8,6 +8,9 @@ module PromptBuilder
     autoload :InputText, File.expand_path("content/input_text", __dir__)
     autoload :InputVideo, File.expand_path("content/input_video", __dir__)
     autoload :OutputText, File.expand_path("content/output_text", __dir__)
+    autoload :ReasoningText, File.expand_path("content/reasoning_text", __dir__)
     autoload :RefusalContent, File.expand_path("content/refusal_content", __dir__)
+    autoload :SummaryText, File.expand_path("content/summary_text", __dir__)
+    autoload :Text, File.expand_path("content/text", __dir__)
   end
 end
