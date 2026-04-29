@@ -28,7 +28,7 @@ The `PromptBuilder::Session` class is the main entry point. A session holds the 
 
 ```ruby
 session = PromptBuilder::Session.new(
-  model: "gpt-4.1",
+  model: "gpt-5.4",
   instructions: "You are a helpful assistant.",
   temperature: 0.7
 )
@@ -40,7 +40,7 @@ You can also pass an `input` shorthand to create a user message in one step:
 
 ```ruby
 session = PromptBuilder::Session.new(
-  model: "gpt-4.1",
+  model: "gpt-5.4",
   input: "What is the capital of France?"
 )
 ```
@@ -50,7 +50,7 @@ session = PromptBuilder::Session.new(
 Build up a multi-turn conversation by adding messages:
 
 ```ruby
-session = PromptBuilder::Session.new(model: "gpt-4.1")
+session = PromptBuilder::Session.new(model: "gpt-5.4")
 session.system("You are a helpful assistant.")
 session.user("Hello!")
 session.assistant("Hi there! How can I help you today?")
@@ -102,17 +102,23 @@ end
 
 ### Parsing Responses
 
-Parse an API response back into an `PromptBuilder::Response` object using the matching serializer:
+Parse an API response back into an `PromptBuilder::Response` object using `Response.parse` with a serializer symbol:
 
 ```ruby
 # OpenAI Responses API
-response = PromptBuilder::Serializers::OpenResponses.parse_response(JSON.parse(response_body))
+response = PromptBuilder::Response.parse(JSON.parse(response_body), :open_responses)
 
 # OpenAI Chat Completions API
-response = PromptBuilder::Serializers::ChatCompletion.parse_response(JSON.parse(response_body))
+response = PromptBuilder::Response.parse(JSON.parse(response_body), :chat_completion)
 
 # Anthropic Messages API
-response = PromptBuilder::Serializers::Messages.parse_response(JSON.parse(response_body))
+response = PromptBuilder::Response.parse(JSON.parse(response_body), :messages)
+```
+
+You can also pass a serializer class directly:
+
+```ruby
+response = PromptBuilder::Response.parse(JSON.parse(response_body), PromptBuilder::Serializers::ChatCompletion)
 ```
 
 The `Response` object provides convenient accessors:
@@ -126,10 +132,10 @@ response.usage         # => #<PromptBuilder::Usage input_tokens=25 output_tokens
 
 ### Agentic Tool Loops
 
-You can register tools on a session, add the API response to the conversation, and let the session automatically dispatch tool calls:
+You can register tool definitions on a session, add API responses to the conversation, and manually append tool outputs to build an agentic loop:
 
 ```ruby
-session = PromptBuilder::Session.new(model: "gpt-4.1")
+session = PromptBuilder::Session.new(model: "gpt-5.4")
 
 session.register_tool(
   "get_weather",
@@ -141,28 +147,30 @@ session.register_tool(
     },
     "required" => ["city"]
   }
-) do |args|
-  # Call your weather service here
-  "72°F and sunny in #{args["city"]}"
-end
+)
 
 session.user("What's the weather in Paris?")
 
 loop do
   payload = session.request_payload(:chat_completion)
   response_body = call_api(payload)  # Your HTTP call
-  response = PromptBuilder::Serializers::ChatCompletion.parse_response(response_body)
+  response = PromptBuilder::Response.parse(response_body, :chat_completion)
 
   session.add_response(response)
   break unless response.has_tool_calls?
 
-  session.dispatch_tool_calls
+  # Invoke tool handlers and add their outputs back to the conversation
+  session.items.each do |item|
+    next unless item.is_a?(PromptBuilder::Items::FunctionCall)
+    result = call_tool(item.name, item.parsed_arguments)  # Your dispatch logic
+    session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: item.call_id, output: result.to_s))
+  end
 end
 
 puts session.items.last.content.first.text
 ```
 
-The `add_response` method appends the model's output items (messages, tool calls, reasoning, etc.) to the session's conversation history. The `dispatch_tool_calls` method finds any pending function calls, invokes their handlers, and adds the results back to the conversation. This lets you loop until the model produces a final text response.
+The `add_response` method appends the model's output items (messages, tool calls, reasoning, etc.) to the session's conversation history. You add `FunctionCallOutput` items manually after invoking each tool, then loop until the model produces a final text response.
 
 ### Tool Registry
 
@@ -186,7 +194,7 @@ registry.register(
 end
 
 # Apply all tools from the registry to a session
-session = PromptBuilder::Session.new(model: "gpt-4.1")
+session = PromptBuilder::Session.new(model: "gpt-5.4")
 session.register_tools(registry)
 ```
 
@@ -202,7 +210,71 @@ session.register_tools(PromptBuilder.tool_registry)
 
 ### Content Types
 
-Message content can be a plain string or an array of structured content objects for multi-modal input:
+Message content can be a plain string or an array of structured content objects for multi-modal input. Content can be provided as raw Hashes or as `PromptBuilder::Content` objects.
+
+**Images**
+
+Send an image by URL or as base64-encoded data:
+
+```ruby
+# Image from a URL
+session.user([
+  PromptBuilder::Content::InputText.new(text: "What is in this image?"),
+  PromptBuilder::Content::InputImage.new(image_url: "https://example.com/photo.jpg")
+])
+
+# Image with a detail level hint
+session.user([
+  PromptBuilder::Content::InputText.new(text: "Describe this image in detail."),
+  PromptBuilder::Content::InputImage.new(
+    image_url: "https://example.com/photo.jpg",
+    detail: "high"
+  )
+])
+
+# Base64-encoded image
+session.user([
+  PromptBuilder::Content::InputText.new(text: "What is in this image?"),
+  PromptBuilder::Content::InputImage.new(
+    data: Base64.strict_encode64(File.read("photo.png")),
+    media_type: "image/png"
+  )
+])
+```
+
+**Files**
+
+Attach a file by URL or as base64-encoded data:
+
+```ruby
+# File from a URL
+session.user([
+  PromptBuilder::Content::InputText.new(text: "Summarize this document."),
+  PromptBuilder::Content::InputFile.new(file_url: "https://example.com/report.pdf")
+])
+
+# Base64-encoded file with a filename
+session.user([
+  PromptBuilder::Content::InputText.new(text: "What does this spreadsheet contain?"),
+  PromptBuilder::Content::InputFile.new(
+    file_data: Base64.strict_encode64(File.read("data.csv")),
+    filename: "data.csv"
+  )
+])
+```
+
+**Videos**
+
+```ruby
+session.user([
+  PromptBuilder::Content::InputText.new(text: "Summarize what happens in this video."),
+  PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/clip.mp4")
+])
+```
+
+**Using Hashes**
+
+You can also pass plain Hashes instead of content objects:
 
 ```ruby
 session.user([
@@ -211,16 +283,16 @@ session.user([
 ])
 ```
 
-Supported content types:
+**Supported content types**
 
-| Type | Description |
-|------|-------------|
-| `input_text` | Text input |
-| `input_image` | Image input (URL or base64) |
-| `input_file` | File input |
-| `input_video` | Video input |
-| `output_text` | Text output from the model |
-| `refusal` | Refusal content from the model |
+| Type | Class | Description |
+|------|-------|-------------|
+| `input_text` | `Content::InputText` | Text input |
+| `input_image` | `Content::InputImage` | Image input (URL or base64) |
+| `input_file` | `Content::InputFile` | File input (URL or base64) |
+| `input_video` | `Content::InputVideo` | Video input (URL) |
+| `output_text` | `Content::OutputText` | Text output from the model |
+| `refusal` | `Content::RefusalContent` | Refusal content from the model |
 
 ### Configuration Options
 
@@ -228,7 +300,7 @@ Sessions support a wide range of configuration options that map to common API pa
 
 ```ruby
 session = PromptBuilder::Session.new(
-  model: "gpt-4.1",
+  model: "gpt-5.4",
   instructions: "You are a helpful assistant.",
   temperature: 0.7,
   top_p: 0.9,

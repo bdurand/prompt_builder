@@ -71,7 +71,7 @@ RSpec.describe PromptBuilder::Session do
     end
 
     it "includes tools when registered" do
-      session.register_tool("test", description: "A test tool") { |_| "ok" }
+      session.register_tool("test", description: "A test tool")
       h = session.to_h
       expect(h["tools"].length).to eq(1)
       expect(h["tools"][0]["name"]).to eq("test")
@@ -187,7 +187,7 @@ RSpec.describe PromptBuilder::Session do
 
   describe "#register_tool" do
     it "registers a tool on the session" do
-      session.register_tool("greet", description: "Say hello") { |args| "Hello #{args["name"]}!" }
+      session.register_tool("greet", description: "Say hello")
       defn = session.tool_definitions.find { |d| d.name == "greet" }
       expect(defn).not_to be_nil
       expect(defn.description).to eq("Say hello")
@@ -206,68 +206,10 @@ RSpec.describe PromptBuilder::Session do
     end
   end
 
-  describe "#dispatch_tool_calls" do
-    it "invokes handlers and adds output items" do
-      session.register_tool("get_weather") { |args| "72F in #{args["city"]}" }
-
-      session.user("What's the weather?")
-      session.add_item(PromptBuilder::Items::FunctionCall.new(
-        name: "get_weather",
-        call_id: "call_1",
-        arguments: '{"city":"London"}'
-      ))
-
-      outputs = session.dispatch_tool_calls
-      expect(outputs.length).to eq(1)
-      expect(outputs[0].call_id).to eq("call_1")
-      expect(outputs[0].output).to eq("72F in London")
-      expect(session.items.last).to be_a(PromptBuilder::Items::FunctionCallOutput)
-    end
-
-    it "skips function calls that already have output" do
-      session.register_tool("test") { |_| "result" }
-
-      session.add_item(PromptBuilder::Items::FunctionCall.new(
-        name: "test", call_id: "call_1", arguments: "{}"
-      ))
-      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
-        call_id: "call_1", output: "existing"
-      ))
-
-      outputs = session.dispatch_tool_calls
-      expect(outputs).to be_empty
-    end
-
-    it "raises ToolNotFoundError for unknown tools" do
-      session.add_item(PromptBuilder::Items::FunctionCall.new(
-        name: "unknown_tool", call_id: "call_1", arguments: "{}"
-      ))
-
-      expect {
-        session.dispatch_tool_calls
-      }.to raise_error(PromptBuilder::ToolNotFoundError, /unknown_tool/)
-    end
-
-    it "appends all outputs atomically after iteration" do
-      session.register_tool("tool_a") { |_| "a" }
-      session.register_tool("tool_b") { |_| "b" }
-
-      session.add_item(PromptBuilder::Items::FunctionCall.new(name: "tool_a", call_id: "call_a", arguments: "{}"))
-      session.add_item(PromptBuilder::Items::FunctionCall.new(name: "tool_b", call_id: "call_b", arguments: "{}"))
-
-      outputs = session.dispatch_tool_calls
-      expect(outputs.length).to eq(2)
-      # Both outputs should be appended, not interleaved during iteration
-      output_items = session.items.select { |i| i.is_a?(PromptBuilder::Items::FunctionCallOutput) }
-      expect(output_items.length).to eq(2)
-      expect(output_items.map(&:call_id)).to contain_exactly("call_a", "call_b")
-    end
-  end
-
   describe "#clone_config" do
     it "creates a new session with same options but no items" do
       session.user("Hello")
-      session.register_tool("test") { |_| "ok" }
+      session.register_tool("test")
 
       cloned = session.clone_config
       expect(cloned.model).to eq("gpt-5.2")
@@ -313,12 +255,12 @@ RSpec.describe PromptBuilder::Session do
   end
 
   describe "full conversation flow" do
-    it "supports create -> user -> serialize -> parse response -> add response -> dispatch -> serialize" do
+    it "supports create -> user -> serialize -> parse response -> add response -> serialize" do
       session.register_tool(
         "get_weather",
         description: "Get weather",
         parameters: {"type" => "object", "properties" => {"city" => {"type" => "string"}}}
-      ) { |args| "72F sunny in #{args["city"]}" }
+      )
 
       session.user("What's the weather in London?")
       payload = session.to_h
@@ -328,25 +270,13 @@ RSpec.describe PromptBuilder::Session do
       expect(payload["tools"].length).to eq(1)
 
       # Simulate API response with tool call
-      response = PromptBuilder::Response.from_h({
-        "id" => "resp_1",
-        "status" => "completed",
-        "output" => [{
-          "type" => "function_call",
-          "name" => "get_weather",
-          "call_id" => "call_abc",
-          "arguments" => '{"city":"London"}'
-        }]
-      })
-
-      session.add_response(response)
+      session.add_response(PromptBuilder::Response.new(id: "resp_1", status: "completed", output: [
+        PromptBuilder::Items::FunctionCall.new(name: "get_weather", call_id: "call_abc", arguments: '{"city":"London"}')
+      ]))
       expect(session.items.length).to eq(2)
 
-      outputs = session.dispatch_tool_calls
-      expect(outputs.length).to eq(1)
-      expect(outputs[0].output).to eq("72F sunny in London")
-
-      # Ready for next API call
+      # Add tool output manually and prepare next API call
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: "call_abc", output: "72F sunny in London"))
       payload2 = session.to_h
       expect(payload2["input"].length).to eq(3) # user + function_call + function_call_output
     end

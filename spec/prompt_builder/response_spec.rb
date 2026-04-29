@@ -28,6 +28,46 @@ RSpec.describe PromptBuilder::Response do
     }
   end
 
+  describe ".parse" do
+    it "delegates to the serializer class and returns a Response" do
+      response = described_class.parse(response_hash, PromptBuilder::Serializers::OpenResponses)
+      expect(response).to be_a(described_class)
+      expect(response.id).to eq("resp_123")
+      expect(response.status).to eq("completed")
+    end
+
+    it "resolves a symbol to the correct serializer" do
+      response = described_class.parse(response_hash, :open_responses)
+      expect(response).to be_a(described_class)
+      expect(response.id).to eq("resp_123")
+    end
+
+    it "accepts :chat_completion symbol" do
+      openai_hash = {
+        "id" => "chatcmpl-abc",
+        "object" => "chat.completion",
+        "created" => 1700000000,
+        "model" => "gpt-4o",
+        "choices" => [
+          {
+            "index" => 0,
+            "message" => {"role" => "assistant", "content" => "Hello!"},
+            "finish_reason" => "stop"
+          }
+        ],
+        "usage" => {"prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15}
+      }
+      response = described_class.parse(openai_hash, :chat_completion)
+      expect(response).to be_a(described_class)
+      expect(response.text).to eq("Hello!")
+    end
+
+    it "raises ArgumentError for unknown symbol" do
+      expect { described_class.parse({}, :unknown_format) }
+        .to raise_error(ArgumentError, /Unknown serializer/)
+    end
+  end
+
   describe ".from_h" do
     it "parses a response hash" do
       response = described_class.from_h(response_hash)

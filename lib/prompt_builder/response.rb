@@ -35,9 +35,11 @@ module PromptBuilder
       metadata
       safety_identifier prompt_cache_key
     ].freeze
+    private_constant :FIELDS
 
     # Boolean fields that may legitimately be false; serialized with a nil? check.
     BOOLEAN_FIELDS = %i[parallel_tool_calls store background].freeze
+    private_constant :BOOLEAN_FIELDS
 
     # @!attribute [r] id
     #   @return [String, nil] the response identifier
@@ -116,6 +118,17 @@ module PromptBuilder
     end
 
     class << self
+      # Parse a response hash using the given serializer and return a Response.
+      #
+      # @param hash [Hash] the API response hash (typically from JSON.parse)
+      # @param serializer_class [Class, Symbol] a serializer class (e.g. Serializers::ChatCompletion)
+      #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+)
+      # @return [Response]
+      # @raise [ArgumentError] if a symbol is given that does not map to a known serializer
+      def parse(hash, serializer_class)
+        Serializers.resolve(serializer_class).parse_response(hash)
+      end
+
       # Deserialize a Response from a Hash.
       #
       # @param hash [Hash] a Hash with string keys from the API response

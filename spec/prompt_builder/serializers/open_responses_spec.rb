@@ -5,7 +5,7 @@ require "spec_helper"
 RSpec.describe PromptBuilder::Serializers::OpenResponses do
   describe ".request_payload" do
     it "returns session.to_h for local state sessions" do
-      session = PromptBuilder::Session.new(model: "gpt-4.1")
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.user("Hello")
 
       expect(described_class.request_payload(session)).to eq(session.to_h)
@@ -80,7 +80,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
     end
 
     it "round-trips InputVideo through session" do
-      session = PromptBuilder::Session.new(model: "gpt-4.1")
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/clip.mp4")]
@@ -94,7 +94,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
     end
 
     it "round-trips ItemReference through session" do
-      session = PromptBuilder::Session.new(model: "gpt-4.1")
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::ItemReference.new(id: "item_abc"))
 
       payload = described_class.request_payload(session)

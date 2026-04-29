@@ -33,13 +33,16 @@ module PromptBuilder
       service_tier
       top_logprobs
     ].freeze
+    private_constant :FIELDS
 
     # Boolean fields that may legitimately be false; serialized with a nil? check.
     BOOLEAN_FIELDS = %i[parallel_tool_calls stream background store].freeze
+    private_constant :BOOLEAN_FIELDS
 
     # Subset of FIELDS representing cloneable config (excludes stateful
     # previous_response_id, which is managed by add_response).
     CONFIG_FIELDS = (FIELDS - %i[previous_response_id]).freeze
+    private_constant :CONFIG_FIELDS
 
     # @!attribute [rw] model
     #   @return [String, nil] the model identifier
@@ -132,7 +135,6 @@ module PromptBuilder
       FIELDS.each { |f| instance_variable_set(:"@#{f}", attributes[f]) }
       @items = []
       @tool_definitions = {}
-      @tool_handlers = {}
       @response_boundary_index = 0
       user(attributes[:input]) if attributes[:input]
     end
@@ -192,36 +194,14 @@ module PromptBuilder
       @response_boundary_index = @items.length
     end
 
-    # Dispatch all pending tool calls by invoking their handlers and adding
-    # FunctionCallOutput items to the conversation.
-    #
-    # @return [Array<Items::FunctionCallOutput>] the generated output items
-    def dispatch_tool_calls
-      outputs = []
-      @items.each do |item|
-        next unless item.is_a?(Items::FunctionCall)
-        next if tool_call_has_output?(item.call_id)
-
-        handler = @tool_handlers[item.name]
-        raise ToolNotFoundError, "No handler registered for tool: #{item.name.inspect}" unless handler
-        result = handler.call(item.parsed_arguments).to_s
-        outputs << Items::FunctionCallOutput.new(call_id: item.call_id, output: result)
-      end
-      @items.concat(outputs)
-      outputs
-    end
-
     # Register a tool on this session.
     #
     # @param name [String] the tool name
     # @param description [String, nil] the tool description
     # @param parameters [Hash, nil] the JSON Schema for parameters
     # @param strict [Boolean] whether strict mode is enabled
-    # @param callable [#call, nil] a callable handler (alternative to block)
-    # @yield [Hash] the parsed arguments when the tool is invoked
-    # @yieldreturn [String] the tool output
     # @return [Tools::Definition] the registered definition
-    def register_tool(name, description: nil, parameters: nil, strict: false, callable: nil, &handler)
+    def register_tool(name, description: nil, parameters: nil, strict: false)
       definition = Tools::Definition.new(
         name: name,
         description: description,
@@ -229,7 +209,6 @@ module PromptBuilder
         strict: strict
       )
       @tool_definitions[name] = definition
-      @tool_handlers[name] = callable || handler
       definition
     end
 
@@ -239,13 +218,11 @@ module PromptBuilder
     # @return [void]
     def register_tools(registry)
       registry.definitions.each do |defn|
-        handler = registry.handler_for(defn.name)
         register_tool(
           defn.name,
           description: defn.description,
           parameters: defn.parameters,
-          strict: defn.strict,
-          callable: handler
+          strict: defn.strict
         )
       end
     end
@@ -267,8 +244,7 @@ module PromptBuilder
           name,
           description: defn.description,
           parameters: defn.parameters,
-          strict: defn.strict,
-          callable: @tool_handlers[name]
+          strict: defn.strict
         )
       end
       session
@@ -309,13 +285,6 @@ module PromptBuilder
       h
     end
 
-    # Mapping of shorthand symbols to serializer classes.
-    SERIALIZER_ALIASES = {
-      open_responses: Serializers::OpenResponses,
-      chat_completion: Serializers::ChatCompletion,
-      messages: Serializers::Messages
-    }.freeze
-
     # Export this session to an alternate API format using the given serializer.
     #
     # @param serializer_class [Class, Symbol] a serializer class (e.g. Serializers::ChatCompletion)
@@ -323,12 +292,7 @@ module PromptBuilder
     # @return [Hash] the serialized request payload
     # @raise [ArgumentError] if a symbol is given that does not map to a known serializer
     def request_payload(serializer_class)
-      if serializer_class.is_a?(Symbol)
-        serializer_class = SERIALIZER_ALIASES.fetch(serializer_class) do
-          raise ArgumentError, "Unknown serializer: #{serializer_class.inspect}. Valid options: #{SERIALIZER_ALIASES.keys.map(&:inspect).join(", ")}"
-        end
-      end
-      serializer_class.request_payload(self)
+      Serializers.resolve(serializer_class).request_payload(self)
     end
 
     private
