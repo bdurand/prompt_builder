@@ -19,9 +19,9 @@ module PromptBuilder
       # @param annotations [Array<Hash>] annotations on the text
       # @param logprobs [Array<Hash>] token log probabilities on the text
       def initialize(text:, annotations: [], logprobs: [])
-        @text = text
-        @annotations = annotations
-        @logprobs = logprobs
+        @text = text&.to_s
+        @annotations = PromptBuilder.jsonify(annotations)
+        @logprobs = PromptBuilder.jsonify(logprobs)
       end
 
       class << self
@@ -48,7 +48,5 @@ module PromptBuilder
         h
       end
     end
-
-    Base.register_type("output_text", OutputText)
   end
 end

@@ -39,6 +39,18 @@ module PromptBuilder
     BOOLEAN_FIELDS = %i[parallel_tool_calls stream background store].freeze
     private_constant :BOOLEAN_FIELDS
 
+    # String-typed fields coerced with .to_s on assignment.
+    STRING_FIELDS = %i[model instructions previous_response_id truncation safety_identifier prompt_cache_key service_tier].freeze
+    private_constant :STRING_FIELDS
+
+    # Float-typed fields coerced with .to_f on assignment.
+    FLOAT_FIELDS = %i[temperature top_p presence_penalty frequency_penalty].freeze
+    private_constant :FLOAT_FIELDS
+
+    # Integer-typed fields coerced with .to_i on assignment.
+    INTEGER_FIELDS = %i[max_output_tokens max_tool_calls top_logprobs].freeze
+    private_constant :INTEGER_FIELDS
+
     # Subset of FIELDS representing cloneable config (excludes stateful
     # previous_response_id, which is managed by add_response).
     CONFIG_FIELDS = (FIELDS - %i[previous_response_id]).freeze
@@ -132,7 +144,7 @@ module PromptBuilder
     # @option attributes [String, nil] :input optional string shorthand; a user
     #   message is automatically added with this text
     def initialize(**attributes)
-      FIELDS.each { |f| instance_variable_set(:"@#{f}", attributes[f]) }
+      FIELDS.each { |f| instance_variable_set(:"@#{f}", coerce_field(f, attributes[f])) }
       @items = []
       @tool_definitions = {}
       @response_boundary_index = 0
@@ -296,6 +308,22 @@ module PromptBuilder
     end
 
     private
+
+    def coerce_field(field, value)
+      return value if value.nil?
+
+      if STRING_FIELDS.include?(field)
+        value.to_s
+      elsif FLOAT_FIELDS.include?(field)
+        value.to_f
+      elsif INTEGER_FIELDS.include?(field)
+        value.to_i
+      elsif BOOLEAN_FIELDS.include?(field)
+        value
+      else
+        PromptBuilder.jsonify(value)
+      end
+    end
 
     def tool_call_has_output?(call_id)
       @items.any? { |item|

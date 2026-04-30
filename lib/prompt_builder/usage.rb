@@ -28,11 +28,11 @@ module PromptBuilder
     # @param reasoning_tokens [Integer, nil] number of reasoning tokens
     def initialize(input_tokens: nil, output_tokens: nil, total_tokens: nil,
       input_tokens_details: nil, output_tokens_details: nil, reasoning_tokens: nil)
-      @input_tokens = input_tokens
-      @output_tokens = output_tokens
-      @total_tokens = total_tokens
-      @input_tokens_details = input_tokens_details
-      @output_tokens_details = output_tokens_details || build_output_tokens_details(reasoning_tokens)
+      @input_tokens = input_tokens&.to_i
+      @output_tokens = output_tokens&.to_i
+      @total_tokens = total_tokens&.to_i
+      @input_tokens_details = PromptBuilder.jsonify(input_tokens_details)
+      @output_tokens_details = PromptBuilder.jsonify(output_tokens_details) || build_output_tokens_details(reasoning_tokens)
     end
 
     class << self

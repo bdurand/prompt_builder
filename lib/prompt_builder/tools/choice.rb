@@ -13,7 +13,7 @@ module PromptBuilder
       #
       # @param value [String, Hash] the choice value
       def initialize(value:)
-        @value = value
+        @value = PromptBuilder.jsonify(value)
       end
 
       class << self

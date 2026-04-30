@@ -28,11 +28,11 @@ module PromptBuilder
       # @param summary [Array<Hash>] summary blocks
       # @param content [Array<Hash>] reasoning content blocks
       def initialize(id: nil, status: nil, encrypted_content: nil, summary: [], content: [])
-        @id = id
-        @status = status
-        @encrypted_content = encrypted_content
-        @summary = summary
-        @content = content
+        @id = id&.to_s
+        @status = status&.to_s
+        @encrypted_content = encrypted_content&.to_s
+        @summary = PromptBuilder.jsonify(summary)
+        @content = PromptBuilder.jsonify(content)
       end
 
       class << self
@@ -64,7 +64,5 @@ module PromptBuilder
         h
       end
     end
-
-    Base.register_type("reasoning", Reasoning)
   end
 end

@@ -19,6 +19,24 @@ module PromptBuilder
   VERSION = File.read(File.join(__dir__, "../VERSION")).strip
 
   class << self
+    # Convert a value to a JSON-safe structure by deep-stringifying Hash keys
+    # and converting Symbols to Strings.
+    #
+    # @param value [Object] the value to convert
+    # @return [Object] the JSON-safe value
+    def jsonify(value)
+      case value
+      when Hash
+        value.each_with_object({}) { |(k, v), h| h[k.to_s] = jsonify(v) }
+      when Array
+        value.map { |v| jsonify(v) }
+      when Symbol
+        value.to_s
+      else
+        value
+      end
+    end
+
     # Returns the global tool registry singleton.
     #
     # @return [ToolRegistry]
@@ -33,7 +51,7 @@ module PromptBuilder
     # @param parameters [Hash, nil] the JSON Schema for parameters
     # @param strict [Boolean] whether strict mode is enabled
     # @yield [Hash] the parsed arguments when the tool is invoked
-    # @yieldreturn [String] the tool output
+    # @yieldreturn [Object] the tool output (String, Hash, Array, or any object)
     # @return [Tools::Definition] the registered definition
     def register_tool(name, description: nil, parameters: nil, strict: false, &handler)
       tool_registry.register(name, description: description, parameters: parameters, strict: strict, &handler)

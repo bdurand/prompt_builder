@@ -6,7 +6,17 @@ module PromptBuilder
     # via the +type+ field in the hash representation.
     class Base
       # Content type registry for polymorphic dispatch.
-      TYPES = {}
+      TYPES = {
+        "input_file" => "InputFile",
+        "input_image" => "InputImage",
+        "input_text" => "InputText",
+        "input_video" => "InputVideo",
+        "output_text" => "OutputText",
+        "reasoning_text" => "ReasoningText",
+        "refusal" => "RefusalContent",
+        "summary_text" => "SummaryText",
+        "text" => "Text"
+      }.freeze
 
       class << self
         # Deserialize a content object from a Hash by dispatching on the +type+ field.
@@ -16,19 +26,10 @@ module PromptBuilder
         # @raise [InvalidItemError] if the type is unknown
         def from_h(hash)
           type = hash["type"]
-          klass = TYPES[type]
-          raise InvalidItemError, "Unknown content type: #{type.inspect}" unless klass
+          class_name = TYPES[type]
+          raise InvalidItemError, "Unknown content type: #{type.inspect}" unless class_name
 
-          klass.from_h(hash)
-        end
-
-        # Register a content subclass for a given type string.
-        #
-        # @param type [String] the type identifier
-        # @param klass [Class] the content class to register
-        # @return [void]
-        def register_type(type, klass)
-          TYPES[type] = klass
+          Content.const_get(class_name).from_h(hash)
         end
       end
 

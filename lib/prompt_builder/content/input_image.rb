@@ -23,10 +23,10 @@ module PromptBuilder
       # @param media_type [String, nil] the media type of the image
       # @param detail [String, nil] the image detail level
       def initialize(image_url: nil, data: nil, media_type: nil, detail: nil)
-        @image_url = image_url
-        @data = data
-        @media_type = media_type
-        @detail = detail
+        @image_url = image_url&.to_s
+        @data = data&.to_s
+        @media_type = media_type&.to_s
+        @detail = detail&.to_s
       end
 
       class << self
@@ -56,7 +56,5 @@ module PromptBuilder
         h
       end
     end
-
-    Base.register_type("input_image", InputImage)
   end
 end

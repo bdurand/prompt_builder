@@ -14,8 +14,8 @@ module PromptBuilder
     # @param format [Hash, nil] the format configuration
     # @param verbosity [String, nil] the verbosity configuration
     def initialize(format: nil, verbosity: nil)
-      @format = format
-      @verbosity = verbosity
+      @format = PromptBuilder.jsonify(format)
+      @verbosity = verbosity&.to_s
     end
 
     class << self

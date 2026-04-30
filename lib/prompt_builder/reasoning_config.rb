@@ -14,8 +14,8 @@ module PromptBuilder
     # @param effort [String, nil] the reasoning effort level
     # @param summary [String, nil] the summary mode
     def initialize(effort: nil, summary: nil)
-      @effort = effort
-      @summary = summary
+      @effort = effort&.to_s
+      @summary = summary&.to_s
     end
 
     class << self

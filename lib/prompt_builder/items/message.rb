@@ -28,10 +28,10 @@ module PromptBuilder
       # @param phase [String, nil] the message phase
       # @param content [Array<Content::Base>] the content objects
       def initialize(role:, content:, id: nil, status: nil, phase: nil)
-        @id = id
-        @role = role
-        @status = status
-        @phase = phase
+        @id = id&.to_s
+        @role = role&.to_s
+        @status = status&.to_s
+        @phase = phase&.to_s
         @content = normalize_content(content)
       end
 
@@ -89,7 +89,5 @@ module PromptBuilder
         end
       end
     end
-
-    Base.register_type("message", Message)
   end
 end

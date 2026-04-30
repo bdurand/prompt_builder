@@ -41,6 +41,18 @@ module PromptBuilder
     BOOLEAN_FIELDS = %i[parallel_tool_calls store background].freeze
     private_constant :BOOLEAN_FIELDS
 
+    # String-typed fields coerced with .to_s on assignment.
+    STRING_FIELDS = %i[id object status model previous_response_id instructions truncation service_tier safety_identifier prompt_cache_key].freeze
+    private_constant :STRING_FIELDS
+
+    # Float-typed fields coerced with .to_f on assignment.
+    FLOAT_FIELDS = %i[top_p presence_penalty frequency_penalty temperature].freeze
+    private_constant :FLOAT_FIELDS
+
+    # Integer-typed fields coerced with .to_i on assignment.
+    INTEGER_FIELDS = %i[created_at completed_at top_logprobs max_output_tokens max_tool_calls].freeze
+    private_constant :INTEGER_FIELDS
+
     # @!attribute [r] id
     #   @return [String, nil] the response identifier
     # @!attribute [r] object
@@ -112,8 +124,8 @@ module PromptBuilder
     #
     # @param attributes [Hash] response attributes
     def initialize(**attributes)
-      FIELDS.each { |f| instance_variable_set(:"@#{f}", attributes[f]) }
-      @text_config = attributes[:text_config]
+      FIELDS.each { |f| instance_variable_set(:"@#{f}", coerce_field(f, attributes[f])) }
+      @text_config = PromptBuilder.jsonify(attributes[:text_config])
       @output = attributes[:output] || []
       @usage = attributes[:usage]
     end
@@ -209,6 +221,24 @@ module PromptBuilder
       h["output"] = @output.map(&:to_h) unless @output.empty?
       h["usage"] = @usage.to_h if @usage
       h
+    end
+
+    private
+
+    def coerce_field(field, value)
+      return value if value.nil?
+
+      if STRING_FIELDS.include?(field)
+        value.to_s
+      elsif FLOAT_FIELDS.include?(field)
+        value.to_f
+      elsif INTEGER_FIELDS.include?(field)
+        value.to_i
+      elsif BOOLEAN_FIELDS.include?(field)
+        value
+      else
+        PromptBuilder.jsonify(value)
+      end
     end
   end
 end

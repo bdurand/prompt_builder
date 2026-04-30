@@ -23,10 +23,10 @@ module PromptBuilder
       # @param parameters [Hash, nil] the JSON Schema for the parameters
       # @param strict [Boolean] whether strict mode is enabled
       def initialize(name:, description: nil, parameters: nil, strict: false)
-        @name = name
-        @description = description
-        @parameters = parameters
-        @strict = strict
+        @name = name&.to_s
+        @description = description&.to_s
+        @parameters = PromptBuilder.jsonify(parameters)
+        @strict = strict ? true : false
       end
 
       class << self

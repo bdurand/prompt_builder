@@ -19,9 +19,9 @@ module PromptBuilder
       # @param file_data [String, nil] base64-encoded file data
       # @param filename [String, nil] the filename
       def initialize(file_url: nil, file_data: nil, filename: nil)
-        @file_url = file_url
-        @file_data = file_data
-        @filename = filename
+        @file_url = file_url&.to_s
+        @file_data = file_data&.to_s
+        @filename = filename&.to_s
       end
 
       class << self
@@ -49,7 +49,5 @@ module PromptBuilder
         h
       end
     end
-
-    Base.register_type("input_file", InputFile)
   end
 end

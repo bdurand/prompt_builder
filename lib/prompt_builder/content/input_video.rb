@@ -11,7 +11,7 @@ module PromptBuilder
       #
       # @param video_url [String, nil] the video URL
       def initialize(video_url: nil)
-        @video_url = video_url
+        @video_url = video_url&.to_s
       end
 
       class << self
@@ -33,7 +33,5 @@ module PromptBuilder
         h
       end
     end
-
-    Base.register_type("input_video", InputVideo)
   end
 end

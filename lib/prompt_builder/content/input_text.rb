@@ -11,7 +11,7 @@ module PromptBuilder
       #
       # @param text [String] the text content
       def initialize(text:)
-        @text = text
+        @text = text&.to_s
       end
 
       class << self
@@ -31,7 +31,5 @@ module PromptBuilder
         {"type" => "input_text", "text" => @text}
       end
     end
-
-    Base.register_type("input_text", InputText)
   end
 end

@@ -30,11 +30,11 @@ module PromptBuilder
       # @param id [String, nil] the item identifier
       # @param status [String, nil] the call status
       def initialize(name:, call_id:, arguments:, id: nil, status: nil)
-        @name = name
-        @call_id = call_id
-        @arguments = arguments
-        @id = id
-        @status = status
+        @name = name&.to_s
+        @call_id = call_id&.to_s
+        @arguments = arguments&.to_s
+        @id = id&.to_s
+        @status = status&.to_s
       end
 
       class << self
@@ -78,7 +78,5 @@ module PromptBuilder
         h
       end
     end
-
-    Base.register_type("function_call", FunctionCall)
   end
 end

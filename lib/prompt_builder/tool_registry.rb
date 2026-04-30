@@ -11,15 +11,18 @@ module PromptBuilder
 
     # Register a tool with its definition and handler.
     #
-    # @param name [String] the tool name
+    # @param name [String, Symbol] the tool name
     # @param description [String, nil] the tool description
     # @param parameters [Hash, nil] the JSON Schema for parameters
     # @param strict [Boolean] whether strict mode is enabled
     # @param callable [#call, nil] a callable handler (alternative to block)
     # @yield [Hash] the parsed arguments when the tool is invoked
-    # @yieldreturn [String] the tool output
+    # @yieldreturn [Object] the tool output (String, Hash, Array, or any object)
     # @return [Tools::Definition] the registered definition
     def register(name, description: nil, parameters: nil, strict: false, callable: nil, &handler)
+      name = name.to_s
+      raise ArgumentError.new("Tool name is required") if name.empty?
+
       definition = Tools::Definition.new(
         name: name,
         description: description,
@@ -58,14 +61,13 @@ module PromptBuilder
     #
     # @param name [String] the tool name
     # @param arguments [Hash] the parsed arguments
-    # @return [String] the tool output
+    # @return [Object] the raw tool handler return value
     # @raise [ToolNotFoundError] if no handler is found for the given name
     def invoke(name, arguments)
       handler = handler_for(name)
       raise ToolNotFoundError, "No handler registered for tool: #{name.inspect}" unless handler
 
-      result = handler.call(arguments)
-      result.to_s
+      handler.call(arguments)
     end
   end
 end

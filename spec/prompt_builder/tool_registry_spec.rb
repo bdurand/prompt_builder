@@ -54,9 +54,9 @@ RSpec.describe PromptBuilder::ToolRegistry do
       expect(result).to eq("Hello, World!")
     end
 
-    it "converts non-string results to string" do
+    it "returns non-string results as-is" do
       registry.register("number") { |_args| 42 }
-      expect(registry.invoke("number", {})).to eq("42")
+      expect(registry.invoke("number", {})).to eq(42)
     end
 
     it "raises ToolNotFoundError for unknown tools" do

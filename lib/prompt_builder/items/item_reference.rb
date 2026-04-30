@@ -11,7 +11,7 @@ module PromptBuilder
       #
       # @param id [String] the referenced item identifier
       def initialize(id:)
-        @id = id
+        @id = id&.to_s
       end
 
       class << self
@@ -31,7 +31,5 @@ module PromptBuilder
         {"type" => "item_reference", "id" => @id}
       end
     end
-
-    Base.register_type("item_reference", ItemReference)
   end
 end

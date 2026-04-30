@@ -11,7 +11,7 @@ module PromptBuilder
       #
       # @param refusal [String] the refusal message
       def initialize(refusal:)
-        @refusal = refusal
+        @refusal = refusal&.to_s
       end
 
       class << self
@@ -31,7 +31,5 @@ module PromptBuilder
         {"type" => "refusal", "refusal" => @refusal}
       end
     end
-
-    Base.register_type("refusal", RefusalContent)
   end
 end

@@ -11,7 +11,7 @@ module PromptBuilder
       #
       # @param text [String] the summary text content
       def initialize(text:)
-        @text = text
+        @text = text&.to_s
       end
 
       class << self
@@ -31,7 +31,5 @@ module PromptBuilder
         {"type" => "summary_text", "text" => @text}
       end
     end
-
-    Base.register_type("summary_text", SummaryText)
   end
 end

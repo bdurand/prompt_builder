@@ -25,9 +25,9 @@ module PromptBuilder
       # @param status [String, nil] the function call output status
       # @param output [String, Array<Content::Base>] the function output
       def initialize(call_id:, output:, id: nil, status: nil)
-        @id = id
-        @call_id = call_id
-        @status = status
+        @id = id&.to_s
+        @call_id = call_id&.to_s
+        @status = status&.to_s
         @output = normalize_output(output)
       end
 
@@ -84,7 +84,5 @@ module PromptBuilder
         end
       end
     end
-
-    Base.register_type("function_call_output", FunctionCallOutput)
   end
 end

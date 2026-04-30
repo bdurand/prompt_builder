@@ -19,9 +19,9 @@ module PromptBuilder
       # @param encrypted_content [String, nil] encrypted compacted content
       # @param created_by [String, nil] who created the compaction
       def initialize(id: nil, encrypted_content: nil, created_by: nil)
-        @id = id
-        @encrypted_content = encrypted_content
-        @created_by = created_by
+        @id = id&.to_s
+        @encrypted_content = encrypted_content&.to_s
+        @created_by = created_by&.to_s
       end
 
       class << self
@@ -49,7 +49,5 @@ module PromptBuilder
         h
       end
     end
-
-    Base.register_type("compaction", Compaction)
   end
 end
