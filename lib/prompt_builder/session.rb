@@ -5,36 +5,6 @@ module PromptBuilder
   # Manages conversation items, tool registration, and serialization to
   # multiple API formats.
   class Session
-    # All scalar configuration fields on a Session. Used to drive attr_accessor,
-    # initialize, from_h, to_h, and config_hash so each name is declared once.
-    FIELDS = %i[
-      model
-      instructions
-      previous_response_id
-      include
-      tool_choice
-      metadata
-      text
-      temperature
-      top_p
-      presence_penalty
-      frequency_penalty
-      parallel_tool_calls
-      stream
-      stream_options
-      background
-      max_output_tokens
-      max_tool_calls
-      reasoning
-      safety_identifier
-      prompt_cache_key
-      truncation
-      store
-      service_tier
-      top_logprobs
-    ].freeze
-    private_constant :FIELDS
-
     # Boolean fields that may legitimately be false; serialized with a nil? check.
     BOOLEAN_FIELDS = %i[parallel_tool_calls stream background store].freeze
     private_constant :BOOLEAN_FIELDS
@@ -51,10 +21,9 @@ module PromptBuilder
     INTEGER_FIELDS = %i[max_output_tokens max_tool_calls top_logprobs].freeze
     private_constant :INTEGER_FIELDS
 
-    # Subset of FIELDS representing cloneable config (excludes stateful
-    # previous_response_id, which is managed by add_response).
-    CONFIG_FIELDS = (FIELDS - %i[previous_response_id]).freeze
-    private_constant :CONFIG_FIELDS
+    # Complex fields serialized to JSON-compatible values via PromptBuilder.jsonify.
+    JSONIFY_FIELDS = %i[include tool_choice metadata text stream_options reasoning].freeze
+    private_constant :JSONIFY_FIELDS
 
     # @!attribute [rw] model
     #   @return [String, nil] the model identifier
@@ -62,14 +31,19 @@ module PromptBuilder
     #   @return [String, nil] the system instructions
     # @!attribute [rw] previous_response_id
     #   @return [String, nil] the previous response identifier for server-side state
-    # @!attribute [rw] include
-    #   @return [Array, nil] fields to include in the response
-    # @!attribute [rw] tool_choice
-    #   @return [String, Hash, nil] the tool choice configuration
-    # @!attribute [rw] metadata
-    #   @return [Hash, nil] arbitrary metadata
-    # @!attribute [rw] text
-    #   @return [Hash, nil] text output configuration
+    # @!attribute [rw] truncation
+    #   @return [String, nil] the truncation strategy
+    # @!attribute [rw] safety_identifier
+    #   @return [String, nil] the safety identifier
+    # @!attribute [rw] prompt_cache_key
+    #   @return [String, nil] the prompt cache key
+    # @!attribute [rw] service_tier
+    #   @return [String, nil] the service tier
+    STRING_FIELDS.each do |f|
+      attr_reader f
+      define_method(:"#{f}=") { |v| instance_variable_set(:"@#{f}", v.nil? ? nil : v.to_s) }
+    end
+
     # @!attribute [rw] temperature
     #   @return [Float, nil] the temperature
     # @!attribute [rw] top_p
@@ -78,35 +52,52 @@ module PromptBuilder
     #   @return [Float, nil] the presence penalty
     # @!attribute [rw] frequency_penalty
     #   @return [Float, nil] the frequency penalty
-    # @!attribute [rw] parallel_tool_calls
-    #   @return [Boolean, nil] whether parallel tool calls are enabled
-    # @!attribute [rw] stream
-    #   @return [Boolean, nil] whether to stream the response
-    # @!attribute [rw] stream_options
-    #   @return [Hash, nil] stream configuration options
-    # @!attribute [rw] background
-    #   @return [Boolean, nil] whether this is a background request
+    FLOAT_FIELDS.each do |f|
+      attr_reader f
+      define_method(:"#{f}=") { |v| instance_variable_set(:"@#{f}", v.nil? ? nil : v.to_f) }
+    end
+
     # @!attribute [rw] max_output_tokens
     #   @return [Integer, nil] the maximum output tokens
     # @!attribute [rw] max_tool_calls
     #   @return [Integer, nil] the maximum number of tool calls
-    # @!attribute [rw] reasoning
-    #   @return [Hash, nil] the reasoning configuration
-    # @!attribute [rw] safety_identifier
-    #   @return [String, nil] the safety identifier
-    # @!attribute [rw] prompt_cache_key
-    #   @return [String, nil] the prompt cache key
-    # @!attribute [rw] truncation
-    #   @return [String, nil] the truncation strategy
-    # @!attribute [rw] store
-    #   @return [Boolean, nil] whether to store the response
-    # @!attribute [rw] service_tier
-    #   @return [String, nil] the service tier
     # @!attribute [rw] top_logprobs
     #   @return [Integer, nil] the number of top log probabilities to return
-    FIELDS.each { |f| attr_accessor f }
+    INTEGER_FIELDS.each do |f|
+      attr_reader f
+      define_method(:"#{f}=") { |v| instance_variable_set(:"@#{f}", v.nil? ? nil : v.to_i) }
+    end
 
-    BOOLEAN_FIELDS.each { |f| alias_method("#{f}?", f) }
+    # @!attribute [rw] parallel_tool_calls
+    #   @return [Boolean, nil] whether parallel tool calls are enabled
+    # @!attribute [rw] stream
+    #   @return [Boolean, nil] whether to stream the response
+    # @!attribute [rw] background
+    #   @return [Boolean, nil] whether this is a background request
+    # @!attribute [rw] store
+    #   @return [Boolean, nil] whether to store the response
+    BOOLEAN_FIELDS.each do |f|
+      attr_reader f
+      define_method(:"#{f}=") { |v| instance_variable_set(:"@#{f}", v) }
+      alias_method :"#{f}?", f
+    end
+
+    # @!attribute [rw] include
+    #   @return [Array, nil] fields to include in the response
+    # @!attribute [rw] tool_choice
+    #   @return [String, Hash, nil] the tool choice configuration
+    # @!attribute [rw] metadata
+    #   @return [Hash, nil] arbitrary metadata
+    # @!attribute [rw] text
+    #   @return [Hash, nil] text output configuration
+    # @!attribute [rw] stream_options
+    #   @return [Hash, nil] stream configuration options
+    # @!attribute [rw] reasoning
+    #   @return [Hash, nil] the reasoning configuration
+    JSONIFY_FIELDS.each do |f|
+      attr_reader f
+      define_method(:"#{f}=") { |v| instance_variable_set(:"@#{f}", v.nil? ? nil : PromptBuilder.jsonify(v)) }
+    end
 
     # @return [Array<Items::Base>] all conversation items
     attr_reader :items
@@ -120,7 +111,8 @@ module PromptBuilder
       # @param hash [Hash] a Hash with string keys
       # @return [Session]
       def from_h(hash)
-        attrs = FIELDS.each_with_object({}) { |f, acc| acc[f] = hash[f.to_s] }
+        attrs = (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS)
+          .each_with_object({}) { |f, acc| acc[f] = hash[f.to_s] }
         session = new(**attrs)
 
         Array(hash["input"]).each do |item_hash|
@@ -137,14 +129,17 @@ module PromptBuilder
     end
 
     # Create a new Session with the given options.
-    # Accepts any attribute defined in FIELDS as a keyword argument; all default
+    # Accepts keyword arguments for all typed field groups (STRING_FIELDS,
+    # FLOAT_FIELDS, INTEGER_FIELDS, BOOLEAN_FIELDS, JSONIFY_FIELDS); all default
     # to +nil+. The +input+ shorthand auto-creates a user message if provided.
     #
-    # @param attributes [Hash] keyword options; see attr_accessor declarations above
+    # @param attributes [Hash] keyword options; see attribute declarations above
     # @option attributes [String, nil] :input optional string shorthand; a user
     #   message is automatically added with this text
     def initialize(**attributes)
-      FIELDS.each { |f| instance_variable_set(:"@#{f}", coerce_field(f, attributes[f])) }
+      (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS).each do |f|
+        send(:"#{f}=", attributes[f])
+      end
       @items = []
       @tool_definitions = {}
       @response_boundary_index = 0
@@ -153,15 +148,21 @@ module PromptBuilder
 
     # Add a user message to the conversation.
     #
-    # @param content [String, Array<Content::Base>, Array<Hash>] the message content
+    # @param content [String, Content::Base, Hash, Array<Content::Base>, Array<Hash>] the message content
     # @return [Items::Message] the added message
+    # @example
+    #  session.user("Hello, how are you?")
+    #  session.user(Content::Text.new("Hello, how are you?"))
+    #  session.user(type: "text", text: "Hello, how are you?")
+    #  session.user([Content::Text.new("What is in this image?"), Content::Image.new(url: "http://example.com/image.png")])
+    #  session.user([{type: "text", text: "What is in this image?"}, {type: "image", url: "http://example.com/image.png"}])
     def user(content)
       add_item(Items::Message.new(role: "user", content: content))
     end
 
     # Add an assistant message to the conversation.
     #
-    # @param content [String, Array<Content::Base>, Array<Hash>] the message content
+    # @param content [String, Content::Base, Hash, Array<Content::Base>, Array<Hash>] the message content
     # @return [Items::Message] the added message
     def assistant(content)
       add_item(Items::Message.new(role: "assistant", content: content))
@@ -169,7 +170,7 @@ module PromptBuilder
 
     # Add a system message to the conversation.
     #
-    # @param content [String, Array<Content::Base>, Array<Hash>] the message content
+    # @param content [String, Content::Base, Hash, Array<Content::Base>, Array<Hash>] the message content
     # @return [Items::Message] the added message
     def system(content)
       add_item(Items::Message.new(role: "system", content: content))
@@ -177,7 +178,7 @@ module PromptBuilder
 
     # Add a developer message to the conversation.
     #
-    # @param content [String, Array<Content::Base>, Array<Hash>] the message content
+    # @param content [String, Content::Base, Hash, Array<Content::Base>, Array<Hash>] the message content
     # @return [Items::Message] the added message
     def developer(content)
       add_item(Items::Message.new(role: "developer", content: content))
@@ -286,14 +287,28 @@ module PromptBuilder
       end
 
       h["tools"] = tool_definitions.map(&:to_h) unless @tool_definitions.empty?
-      (FIELDS - %i[model instructions previous_response_id]).each do |f|
-        val = instance_variable_get(:"@#{f}")
-        if BOOLEAN_FIELDS.include?(f)
-          h[f.to_s] = val unless val.nil?
-        elsif val
-          h[f.to_s] = val
-        end
+
+      (STRING_FIELDS - %i[model instructions previous_response_id]).each do |f|
+        val = send(f)
+        h[f.to_s] = val if val
       end
+      FLOAT_FIELDS.each { |f|
+        val = send(f)
+        h[f.to_s] = val if val
+      }
+      INTEGER_FIELDS.each { |f|
+        val = send(f)
+        h[f.to_s] = val if val
+      }
+      BOOLEAN_FIELDS.each { |f|
+        val = send(f)
+        h[f.to_s] = val unless val.nil?
+      }
+      JSONIFY_FIELDS.each { |f|
+        val = send(f)
+        h[f.to_s] = val if val
+      }
+
       h
     end
 
@@ -309,22 +324,6 @@ module PromptBuilder
 
     private
 
-    def coerce_field(field, value)
-      return value if value.nil?
-
-      if STRING_FIELDS.include?(field)
-        value.to_s
-      elsif FLOAT_FIELDS.include?(field)
-        value.to_f
-      elsif INTEGER_FIELDS.include?(field)
-        value.to_i
-      elsif BOOLEAN_FIELDS.include?(field)
-        value
-      else
-        PromptBuilder.jsonify(value)
-      end
-    end
-
     def tool_call_has_output?(call_id)
       @items.any? { |item|
         item.is_a?(Items::FunctionCallOutput) && item.call_id == call_id
@@ -332,7 +331,8 @@ module PromptBuilder
     end
 
     def config_hash
-      CONFIG_FIELDS.each_with_object({}) { |f, acc| acc[f] = instance_variable_get(:"@#{f}") }
+      (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS - %i[previous_response_id])
+        .each_with_object({}) { |f, acc| acc[f] = send(f) }
     end
   end
 end

@@ -73,11 +73,15 @@ module PromptBuilder
         case content
         when String
           [Content::InputText.new(text: content)]
+        when Content::Base
+          [content]
+        when Hash
+          [Content::Base.from_h(content.transform_keys(&:to_s))]
         when Array
           content.map do |c|
             case c
             when Hash
-              Content::Base.from_h(c)
+              Content::Base.from_h(c.transform_keys(&:to_s))
             when Content::Base
               c
             else

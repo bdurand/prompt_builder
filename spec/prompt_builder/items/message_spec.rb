@@ -51,22 +51,108 @@ RSpec.describe PromptBuilder::Items::Message do
       expect(message.content[0].text).to eq("Hello")
     end
 
+    it "wraps a single Content::Base object into an array" do
+      content = PromptBuilder::Content::InputText.new(text: "Hello")
+      message = described_class.new(role: "user", content: content)
+      expect(message.content.length).to eq(1)
+      expect(message.content[0]).to be(content)
+    end
+
+    it "wraps a single Hash with string keys into content" do
+      message = described_class.new(role: "user", content: {"type" => "input_text", "text" => "Hello"})
+      expect(message.content.length).to eq(1)
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("Hello")
+    end
+
+    it "wraps a single Hash with symbol keys into content" do
+      message = described_class.new(role: "user", content: {type: "input_text", text: "Hello"})
+      expect(message.content.length).to eq(1)
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("Hello")
+    end
+
     it "accepts an array of content objects" do
       content = [PromptBuilder::Content::InputText.new(text: "Hello")]
       message = described_class.new(role: "user", content: content)
       expect(message.content).to eq(content)
     end
 
-    it "deserializes an array of hashes" do
+    it "deserializes an array of hashes with string keys" do
       content = [{"type" => "input_text", "text" => "Hello"}]
       message = described_class.new(role: "user", content: content)
       expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+    end
+
+    it "deserializes an array of hashes with symbol keys" do
+      content = [{type: "input_text", text: "Hello"}]
+      message = described_class.new(role: "user", content: content)
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("Hello")
     end
 
     it "raises on unsupported content type" do
       expect {
         described_class.new(role: "user", content: 42)
       }.to raise_error(PromptBuilder::InvalidItemError)
+    end
+  end
+
+  describe "message roles" do
+    it "creates a user message with a Content::Base object" do
+      content = PromptBuilder::Content::InputText.new(text: "user text")
+      message = described_class.new(role: "user", content: content)
+      expect(message.role).to eq("user")
+      expect(message.content[0].text).to eq("user text")
+    end
+
+    it "creates an assistant message with a Content::Base object" do
+      content = PromptBuilder::Content::OutputText.new(text: "assistant text")
+      message = described_class.new(role: "assistant", content: content)
+      expect(message.role).to eq("assistant")
+      expect(message.content[0].text).to eq("assistant text")
+    end
+
+    it "creates a system message with a Content::Base object" do
+      content = PromptBuilder::Content::InputText.new(text: "system text")
+      message = described_class.new(role: "system", content: content)
+      expect(message.role).to eq("system")
+      expect(message.content[0].text).to eq("system text")
+    end
+
+    it "creates a developer message with a Content::Base object" do
+      content = PromptBuilder::Content::InputText.new(text: "developer text")
+      message = described_class.new(role: "developer", content: content)
+      expect(message.role).to eq("developer")
+      expect(message.content[0].text).to eq("developer text")
+    end
+
+    it "creates a user message with a Hash" do
+      message = described_class.new(role: "user", content: {type: "input_text", text: "user hash"})
+      expect(message.role).to eq("user")
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("user hash")
+    end
+
+    it "creates an assistant message with a Hash" do
+      message = described_class.new(role: "assistant", content: {type: "output_text", text: "assistant hash"})
+      expect(message.role).to eq("assistant")
+      expect(message.content[0]).to be_a(PromptBuilder::Content::OutputText)
+      expect(message.content[0].text).to eq("assistant hash")
+    end
+
+    it "creates a system message with a Hash" do
+      message = described_class.new(role: "system", content: {type: "input_text", text: "system hash"})
+      expect(message.role).to eq("system")
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("system hash")
+    end
+
+    it "creates a developer message with a Hash" do
+      message = described_class.new(role: "developer", content: {type: "input_text", text: "developer hash"})
+      expect(message.role).to eq("developer")
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("developer hash")
     end
   end
 

@@ -4,14 +4,16 @@ module PromptBuilder
   module Serializers
     autoload :Base, File.expand_path("serializers/base", __dir__)
     autoload :ChatCompletion, File.expand_path("serializers/chat_completion", __dir__)
+    autoload :Gemini, File.expand_path("serializers/gemini", __dir__)
     autoload :Messages, File.expand_path("serializers/messages", __dir__)
     autoload :OpenResponses, File.expand_path("serializers/open_responses", __dir__)
 
     # Mapping of shorthand symbols to serializer classes.
     ALIASES = {
-      open_responses: OpenResponses,
       chat_completion: ChatCompletion,
-      messages: Messages
+      gemini: Gemini,
+      messages: Messages,
+      open_responses: OpenResponses
     }.freeze
 
     # Resolve a serializer class from a symbol or class reference.

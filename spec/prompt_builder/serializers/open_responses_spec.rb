@@ -17,6 +17,38 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
 
       expect(described_class.request_payload(session)).to eq(session.to_h)
     end
+
+    it "passes through InputImage with image_url unchanged" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
+      ))
+
+      payload = described_class.request_payload(session)
+      content = payload["input"][0]["content"][0]
+
+      expect(content["type"]).to eq("input_image")
+      expect(content["image_url"]).to eq("https://example.com/img.png")
+      expect(content).not_to have_key("data")
+      expect(content).not_to have_key("media_type")
+    end
+
+    it "converts InputImage with base64 data into a data URL for image_url" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(data: "abc123", media_type: "image/png")]
+      ))
+
+      payload = described_class.request_payload(session)
+      content = payload["input"][0]["content"][0]
+
+      expect(content["type"]).to eq("input_image")
+      expect(content["image_url"]).to eq("data:image/png;base64,abc123")
+      expect(content).not_to have_key("data")
+      expect(content).not_to have_key("media_type")
+    end
   end
 
   describe ".parse_response" do
