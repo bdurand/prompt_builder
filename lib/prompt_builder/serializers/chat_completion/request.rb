@@ -4,6 +4,40 @@ module PromptBuilder
   module Serializers
     class ChatCompletion < Base
       # Request serializer for the OpenAI Chat Completions API format.
+      #
+      # === Unsupported Open Responses features
+      #
+      # These session fields are not supported and raise +UnsupportedFormatError+:
+      # - +background+ — Chat Completions has no background/async mode
+      # - +include+ — response-field inclusion is an Open Responses-only concept
+      # - +max_tool_calls+ — per-request tool-call caps are not supported
+      # - +prompt_cache_key+ — explicit prompt cache keys are not supported
+      # - +truncation+ — server-side context truncation is not supported
+      #
+      # Partially supported session fields (unsupported keys raise +UnsupportedFormatError+):
+      # - +text+ — only the +format+ key is mapped to +response_format+
+      # - +reasoning+ — only the +effort+ key is mapped to +reasoning_effort+
+      # - +stream_options+ — only +include_usage+ and +include_obfuscation+ are supported
+      #
+      # Input content restrictions:
+      # - +InputFile+ content is not supported in any message
+      # - +InputVideo+ content is not supported in any message
+      # - +Reasoning+ items are not supported
+      # - +RefusalContent+ is not supported in request messages
+      # - +InputImage+ content is only supported in user messages (not assistant/developer/system)
+      # - Only text content is supported in tool (+FunctionCallOutput+) results
+      # - +OutputText+ with annotations is not supported
+      #
+      # === Features in Chat Completions not available through Open Responses
+      #
+      # The following Chat Completions parameters cannot be set through the Open
+      # Responses canonical format:
+      # - +seed+ — for reproducible outputs
+      # - +logit_bias+ — per-token probability adjustments
+      # - +n+ — requesting multiple response candidates
+      # - +stop+ — custom stop sequences
+      # - +prediction+ — speculative decoding hints
+      # - Audio input and audio output (model-dependent)
       class Request < Base
         SUPPORTED_MESSAGE_ROLES = %w[assistant developer system user].freeze
         SUPPORTED_REASONING_KEYS = %w[effort].freeze
@@ -33,6 +67,7 @@ module PromptBuilder
             h["store"] = session.store unless session.store.nil?
             h["metadata"] = session.metadata if session.metadata
             h["service_tier"] = session.service_tier if session.service_tier
+            h["user"] = session.safety_identifier if session.safety_identifier
             h["stream"] = session.stream unless session.stream.nil?
             h["stream_options"] = normalize_hash(session.stream_options) if session.stream_options
             h["response_format"] = extract_response_format(session.text) if session.text
@@ -59,7 +94,6 @@ module PromptBuilder
             raise_unsupported_field!("include") if session.include
             raise_unsupported_field!("background") unless session.background.nil?
             raise_unsupported_field!("max_tool_calls") if session.max_tool_calls
-            raise_unsupported_field!("safety_identifier") if session.safety_identifier
             raise_unsupported_field!("prompt_cache_key") if session.prompt_cache_key
             raise_unsupported_field!("truncation") if session.truncation
 

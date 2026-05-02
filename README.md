@@ -331,6 +331,73 @@ restored_session = PromptBuilder::Session.from_h(hash)
 
 This makes it straightforward to persist conversation state in a database or cache between requests.
 
+## Serializer Compatibility
+
+The Open Responses format is the canonical data model for this gem. When serializing to other formats, some features may not be available because the target API does not support them (raising `UnsupportedFormatError`) or because the Open Responses format does not expose parameters unique to the target API.
+
+### Session Fields
+
+The following table shows which session configuration fields are supported by each serializer. ❌ means the field raises `UnsupportedFormatError`. Partial support is noted inline.
+
+| Session Field | ChatCompletion | Messages | Gemini | Converse |
+|:---|:---:|:---:|:---:|:---:|
+| `background` | ❌ | ❌ | ❌ | ❌ |
+| `frequency_penalty` | ✅ | ❌ | ❌ | ❌ |
+| `include` | ❌ | ❌ | ❌ | ❌ |
+| `max_tool_calls` | ❌ | ❌ | ❌ | ❌ |
+| `metadata` | ✅ | `user_id` key only | ❌ | ❌ |
+| `parallel_tool_calls` | ✅ | ✅ | ❌ | ❌ |
+| `presence_penalty` | ✅ | ❌ | ❌ | ❌ |
+| `prompt_cache_key` | ❌ | ❌ | ❌ | ❌ |
+| `reasoning` | `effort` key only | ✅ | `budget_tokens` key only | ❌ |
+| `safety_identifier` | ✅ → `user` | ✅ → `metadata.user_id` | ❌ | ❌ |
+| `service_tier` | ✅ | `auto`/`standard_only` only | ❌ | ❌ |
+| `store` | ✅ | ❌ | ❌ | ❌ |
+| `stream` | ✅ | ✅ | ✅ | ❌ |
+| `stream_options` | `include_usage`/`include_obfuscation` only | ❌ | ❌ | ❌ |
+| `text` | `format` key only | `format` key only | `format` key only | ❌ |
+| `top_logprobs` | ✅ | ❌ | ❌ | ❌ |
+| `truncation` | ❌ | ❌ | ❌ | ❌ |
+
+### Content Types
+
+| Content Type | ChatCompletion | Messages | Gemini | Converse |
+|:---|:---:|:---:|:---:|:---:|
+| `InputText` | ✅ | ✅ | ✅ | ✅ |
+| `InputImage` | user messages only | user messages only | user messages only | base64 or S3 URI only |
+| `InputFile` | ❌ | user messages only¹ | user messages only | base64 or S3 URI only² |
+| `InputVideo` | ❌ | ❌ | `video_url` required | S3 URI only |
+| `OutputText` | ✅ | ✅ | ✅ | ✅ |
+| `RefusalContent` | ❌ | ❌ | ❌ | ❌ |
+| `Reasoning` items | ❌ | ✅³ | partial⁴ | ❌ |
+
+¹ Messages format treats all files as PDF documents using the Anthropic document block type.  
+² Converse format infers the document type from the filename or file URL extension.  
+³ Messages format requires a cryptographic `signature` on all `thinking` blocks.  
+⁴ Gemini format does not support reasoning blocks with signatures or `redacted_thinking` blocks.
+
+### Features Not Accessible Through Open Responses
+
+These target API features are not available through the Open Responses canonical format because Open Responses does not expose the equivalent parameters:
+
+| Feature | ChatCompletion | Messages | Gemini | Converse |
+|:---|:---:|:---:|:---:|:---:|
+| Audio input | ✅ | — | ✅ | — |
+| Audio output / TTS | ✅ | — | ✅ | — |
+| `top_k` sampling | — | ✅ | ✅ | — |
+| `seed` | ✅ | — | ✅ | — |
+| Stop sequences | ✅ | ✅ | ✅ | ✅ |
+| `logit_bias` | ✅ | — | — | — |
+| Multiple candidates (`n`) | ✅ | — | ✅ | — |
+| Speculative decoding (`prediction`) | ✅ | — | — | — |
+| Configurable safety thresholds | — | — | ✅ | — |
+| Guardrail policies | — | — | — | ✅ |
+| Cross-region routing (inference profiles) | — | — | — | ✅ |
+| Built-in web search | — | ✅ | ✅ | — |
+| Built-in code execution | — | ✅ | ✅ | — |
+| Built-in computer use | — | ✅ | — | — |
+| Built-in bash / text editor / memory tools | — | ✅ | — | — |
+
 ## Installation
 
 Add this line to your application's Gemfile:

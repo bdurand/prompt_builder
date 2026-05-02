@@ -4,6 +4,7 @@ module PromptBuilder
   module Serializers
     autoload :Base, File.expand_path("serializers/base", __dir__)
     autoload :ChatCompletion, File.expand_path("serializers/chat_completion", __dir__)
+    autoload :Converse, File.expand_path("serializers/converse", __dir__)
     autoload :Gemini, File.expand_path("serializers/gemini", __dir__)
     autoload :Messages, File.expand_path("serializers/messages", __dir__)
     autoload :OpenResponses, File.expand_path("serializers/open_responses", __dir__)
@@ -11,6 +12,7 @@ module PromptBuilder
     # Mapping of shorthand symbols to serializer classes.
     ALIASES = {
       chat_completion: ChatCompletion,
+      converse: Converse,
       gemini: Gemini,
       messages: Messages,
       open_responses: OpenResponses

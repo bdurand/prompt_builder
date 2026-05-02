@@ -1,0 +1,429 @@
+# frozen_string_literal: true
+
+require "json"
+
+module PromptBuilder
+  module Serializers
+    class Converse < Base
+      # Request serializer for the Amazon Bedrock Converse API format.
+      #
+      # === Unsupported Open Responses features
+      #
+      # These session fields are not supported and raise +UnsupportedFormatError+:
+      # - +background+ — background/async mode is not supported on the Converse endpoint
+      # - +frequency_penalty+ — not supported by the Converse API
+      # - +include+ — response-field inclusion is an Open Responses-only concept
+      # - +max_tool_calls+ — per-request tool-call caps are not supported
+      # - +metadata+ — arbitrary metadata is not supported on the Converse endpoint
+      # - +parallel_tool_calls+ — parallel tool call control is not supported
+      # - +presence_penalty+ — not supported by the Converse API
+      # - +prompt_cache_key+ — explicit prompt cache keys are not supported
+      # - +reasoning+ — extended thinking is not supported on the Converse endpoint
+      # - +safety_identifier+ — no equivalent user-safety field on the Converse endpoint
+      # - +service_tier+ — service tier selection is not supported
+      # - +store+ — server-side response storage is not supported
+      # - +stream+ — SSE streaming is handled outside the Converse request payload
+      # - +stream_options+ — stream event options are not supported
+      # - +text+ — structured response format control is not supported
+      # - +top_logprobs+ — log probability output is not supported
+      # - +truncation+ — server-side context truncation is not supported
+      #
+      # Tool choice restrictions:
+      # - +tool_choice: "none"+ is not supported by the Converse API
+      #
+      # Input content restrictions:
+      # - +Reasoning+ items are not supported
+      # - +RefusalContent+ is not supported in request messages
+      # - +InputImage+ content is only supported in user messages (not assistant)
+      # - +InputFile+ content is only supported in user messages (not assistant)
+      # - +InputVideo+ content is only supported in user messages (not assistant)
+      # - +InputImage+ requires base64 +data+ or an S3 URI (+s3://...+) — public URLs
+      #   are not accepted
+      # - +InputFile+ requires base64 +file_data+ or an S3 URI — public URLs are not
+      #   accepted; format is detected from the filename or +file_url+ extension
+      # - +InputVideo+ requires an S3 URI (+s3://...+) — public URLs are not accepted
+      # - Only text and image content is supported in tool (+FunctionCallOutput+) results
+      #
+      # === Features in Converse not available through Open Responses
+      #
+      # The following Converse parameters cannot be set through the Open Responses
+      # canonical format:
+      # - +stopSequences+ — custom stop sequences
+      # - Guardrail policies (+guardrailConfig+)
+      # - Guardrail trace and assessment events
+      # - Per-model passthrough fields (+additionalModelRequestFields+)
+      # - Cross-region routing via inference profiles
+      # - +performanceConfig+ (service tier / latency tier selection)
+      # - +requestMetadata+ (request metadata / safety identifier)
+      # - Latency metrics in the response body
+      class Request < Base
+        IMAGE_MEDIA_TYPE_FORMATS = {
+          "image/jpeg" => "jpeg",
+          "image/jpg" => "jpeg",
+          "image/png" => "png",
+          "image/gif" => "gif",
+          "image/webp" => "webp"
+        }.freeze
+
+        IMAGE_URL_EXTENSION_FORMATS = {
+          "jpg" => "jpeg",
+          "jpeg" => "jpeg",
+          "png" => "png",
+          "gif" => "gif",
+          "webp" => "webp"
+        }.freeze
+
+        DOCUMENT_FILENAME_EXTENSION_FORMATS = {
+          "pdf" => "pdf",
+          "csv" => "csv",
+          "doc" => "doc",
+          "docx" => "docx",
+          "xls" => "xls",
+          "xlsx" => "xlsx",
+          "html" => "html",
+          "htm" => "html",
+          "txt" => "txt",
+          "md" => "md",
+          "markdown" => "md"
+        }.freeze
+
+        VIDEO_URL_EXTENSION_FORMATS = {
+          "mkv" => "mkv",
+          "mov" => "mov",
+          "mp4" => "mp4",
+          "webm" => "webm",
+          "flv" => "flv",
+          "mpeg" => "mpeg",
+          "mpg" => "mpeg",
+          "wmv" => "wmv",
+          "3gp" => "three_gp"
+        }.freeze
+
+        class << self
+          private
+
+          def serialize_request(session)
+            validate_supported_session_fields!(session)
+
+            h = {}
+            h["modelId"] = session.model if session.model
+
+            system = build_system(session)
+            h["system"] = system unless system.empty?
+
+            h["messages"] = build_messages(session)
+
+            inference_config = build_inference_config(session)
+            h["inferenceConfig"] = inference_config unless inference_config.empty?
+
+            tool_config = build_tool_config(session)
+            h["toolConfig"] = tool_config if tool_config
+
+            h
+          end
+
+          def validate_supported_session_fields!(session)
+            unsupported_fields = []
+            unsupported_fields << "include" if session.include
+            unsupported_fields << "presence_penalty" if session.presence_penalty
+            unsupported_fields << "frequency_penalty" if session.frequency_penalty
+            unsupported_fields << "stream" unless session.stream.nil?
+            unsupported_fields << "stream_options" if session.stream_options
+            unsupported_fields << "background" unless session.background.nil?
+            unsupported_fields << "max_tool_calls" if session.max_tool_calls
+            unsupported_fields << "safety_identifier" if session.safety_identifier
+            unsupported_fields << "prompt_cache_key" if session.prompt_cache_key
+            unsupported_fields << "truncation" if session.truncation
+            unsupported_fields << "store" unless session.store.nil?
+            unsupported_fields << "top_logprobs" if session.top_logprobs
+            unsupported_fields << "service_tier" if session.service_tier
+            unsupported_fields << "metadata" if session.metadata
+            unsupported_fields << "parallel_tool_calls" unless session.parallel_tool_calls.nil?
+            unsupported_fields << "text" if session.text
+            unsupported_fields << "reasoning" if session.reasoning
+
+            return if unsupported_fields.empty?
+
+            raise UnsupportedFormatError,
+              "Converse format does not support session fields: #{unsupported_fields.join(", ")}"
+          end
+
+          def build_system(session)
+            parts = []
+
+            parts << {"text" => session.instructions} if session.instructions
+
+            session.items.each do |item|
+              next unless item.is_a?(Items::Message)
+              next unless item.role == "system" || item.role == "developer"
+
+              item.content.each do |content|
+                parts << {"text" => content.text} if content.is_a?(Content::InputText)
+              end
+            end
+
+            parts
+          end
+
+          def build_messages(session)
+            raw_messages = []
+
+            session.items.each do |item|
+              case item
+              when Items::Message
+                next if item.role == "system" || item.role == "developer"
+
+                role = (item.role == "assistant") ? "assistant" : "user"
+                content = item.content.map { |c| serialize_content(c, role: role) }
+                raw_messages << {"role" => role, "content" => content}
+              when Items::FunctionCall
+                raw_messages << {
+                  "role" => "assistant",
+                  "content" => [{
+                    "toolUse" => {
+                      "toolUseId" => item.call_id,
+                      "name" => item.name,
+                      "input" => item.parsed_arguments
+                    }
+                  }]
+                }
+              when Items::FunctionCallOutput
+                raw_messages << {
+                  "role" => "user",
+                  "content" => [serialize_tool_result(item)]
+                }
+              when Items::Reasoning
+                raise UnsupportedFormatError, "Converse format does not support Reasoning items"
+              end
+            end
+
+            merge_consecutive_messages(raw_messages)
+          end
+
+          def serialize_content(content, role:)
+            case content
+            when Content::InputText, Content::OutputText
+              {"text" => content.text}
+            when Content::InputImage
+              if role == "assistant"
+                raise UnsupportedFormatError,
+                  "Converse format does not support assistant InputImage content"
+              end
+
+              serialize_image(content)
+            when Content::InputFile
+              if role == "assistant"
+                raise UnsupportedFormatError,
+                  "Converse format does not support assistant InputFile content"
+              end
+
+              serialize_document(content)
+            when Content::InputVideo
+              if role == "assistant"
+                raise UnsupportedFormatError,
+                  "Converse format does not support assistant InputVideo content"
+              end
+
+              serialize_video(content)
+            when Content::RefusalContent
+              raise UnsupportedFormatError, "Converse format does not support RefusalContent"
+            else
+              raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
+            end
+          end
+
+          def serialize_image(content)
+            format = detect_image_format(content)
+            source = if content.data
+              {"bytes" => content.data}
+            elsif content.image_url&.start_with?("s3://")
+              {"s3Location" => {"uri" => content.image_url}}
+            else
+              raise UnsupportedFormatError,
+                "Converse format requires InputImage.data or an S3 URI for InputImage.image_url"
+            end
+
+            {"image" => {"format" => format, "source" => source}}
+          end
+
+          def detect_image_format(content)
+            if content.media_type
+              format = IMAGE_MEDIA_TYPE_FORMATS[content.media_type]
+              return format if format
+            end
+
+            url = content.image_url
+            if url
+              ext = File.extname(url).delete_prefix(".").downcase
+              format = IMAGE_URL_EXTENSION_FORMATS[ext]
+              return format if format
+            end
+
+            raise UnsupportedFormatError,
+              "Converse format could not detect image format; set InputImage.media_type (e.g. \"image/jpeg\")"
+          end
+
+          def serialize_document(content)
+            format = detect_document_format(content)
+            source = if content.file_data
+              {"bytes" => content.file_data}
+            elsif content.file_url&.start_with?("s3://")
+              {"s3Location" => {"uri" => content.file_url}}
+            else
+              raise UnsupportedFormatError,
+                "Converse format requires InputFile.file_data or an S3 URI for InputFile.file_url"
+            end
+
+            name = document_name(content.filename)
+            {"document" => {"format" => format, "name" => name, "source" => source}}
+          end
+
+          def detect_document_format(content)
+            [content.filename, content.file_url].each do |path|
+              next unless path
+
+              ext = File.extname(path).delete_prefix(".").downcase
+              format = DOCUMENT_FILENAME_EXTENSION_FORMATS[ext]
+              return format if format
+            end
+
+            raise UnsupportedFormatError,
+              "Converse format could not detect document format; set a file extension on InputFile.filename or InputFile.file_url"
+          end
+
+          def document_name(filename)
+            return "document" unless filename
+
+            File.basename(filename, ".*")
+          end
+
+          def serialize_video(content)
+            unless content.video_url
+              raise UnsupportedFormatError,
+                "Converse format requires InputVideo.video_url"
+            end
+
+            unless content.video_url.start_with?("s3://")
+              raise UnsupportedFormatError,
+                "Converse format requires an S3 URI for InputVideo.video_url"
+            end
+
+            ext = File.extname(content.video_url).delete_prefix(".").downcase
+            format = VIDEO_URL_EXTENSION_FORMATS[ext]
+
+            unless format
+              raise UnsupportedFormatError,
+                "Converse format could not detect video format from InputVideo.video_url extension"
+            end
+
+            {"video" => {"format" => format, "source" => {"s3Location" => {"uri" => content.video_url}}}}
+          end
+
+          def serialize_tool_result(item)
+            result = {"toolUseId" => item.call_id}
+            result["status"] = item.status if item.status
+
+            if item.output.is_a?(Array)
+              content = item.output.map { |c| serialize_tool_result_content(c) }
+              result["content"] = content unless content.empty?
+            elsif !item.output.nil? && !item.output.empty?
+              result["content"] = [{"text" => item.output}]
+            end
+
+            {"toolResult" => result}
+          end
+
+          def serialize_tool_result_content(content)
+            case content
+            when Content::InputText, Content::OutputText
+              {"text" => content.text}
+            when Content::InputImage
+              serialize_image(content)
+            else
+              raise UnsupportedFormatError,
+                "#{content.class.name.split("::").last} is not supported in tool output in Converse format"
+            end
+          end
+
+          def merge_consecutive_messages(messages)
+            return messages if messages.empty?
+
+            merged = [messages.first]
+
+            messages[1..].each do |message|
+              if merged.last["role"] == message["role"]
+                merged.last["content"].concat(message["content"])
+              else
+                merged << message
+              end
+            end
+
+            merged
+          end
+
+          def build_inference_config(session)
+            config = {}
+            config["maxTokens"] = session.max_output_tokens if session.max_output_tokens
+            config["temperature"] = session.temperature if session.temperature
+            config["topP"] = session.top_p if session.top_p
+            config
+          end
+
+          def build_tool_config(session)
+            tools = build_tools(session)
+            return nil if tools.empty? && session.tool_choice.nil?
+
+            config = {}
+            config["tools"] = tools unless tools.empty?
+            config["toolChoice"] = serialize_tool_choice(session.tool_choice, tools.empty?) if session.tool_choice
+
+            config
+          end
+
+          def build_tools(session)
+            session.tool_definitions.map do |definition|
+              tool_spec = {"name" => definition.name}
+              tool_spec["description"] = definition.description if definition.description
+              tool_spec["inputSchema"] = {
+                "json" => definition.parameters || {"type" => "object", "properties" => {}}
+              }
+              {"toolSpec" => tool_spec}
+            end
+          end
+
+          def serialize_tool_choice(choice, tools_empty)
+            if tools_empty
+              raise UnsupportedFormatError,
+                "Converse format does not support tool_choice without tools"
+            end
+
+            case choice
+            when "auto"
+              {"auto" => {}}
+            when "required"
+              {"any" => {}}
+            when "none"
+              raise UnsupportedFormatError,
+                "Converse format does not support tool_choice 'none'"
+            when Hash
+              if choice["type"] == "function"
+                unless choice["name"]
+                  raise UnsupportedFormatError,
+                    "Converse format requires tool_choice.name for function tool choices"
+                end
+
+                {"tool" => {"name" => choice["name"]}}
+              else
+                raise UnsupportedFormatError,
+                  "Converse format does not support tool_choice #{choice.inspect}"
+              end
+            else
+              raise UnsupportedFormatError,
+                "Converse format does not support tool_choice #{choice.inspect}"
+            end
+          end
+        end
+      end
+    end
+  end
+end

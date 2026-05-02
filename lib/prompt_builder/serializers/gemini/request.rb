@@ -6,6 +6,46 @@ module PromptBuilder
   module Serializers
     class Gemini < Base
       # Request serializer for the Google Gemini API format.
+      #
+      # === Unsupported Open Responses features
+      #
+      # These session fields are not supported and raise +UnsupportedFormatError+:
+      # - +background+ — Gemini has no background/async mode on the generate endpoint
+      # - +frequency_penalty+ — not supported by the Gemini generation API
+      # - +include+ — response-field inclusion is an Open Responses-only concept
+      # - +max_tool_calls+ — per-request tool-call caps are not supported
+      # - +metadata+ — arbitrary metadata is not supported
+      # - +parallel_tool_calls+ — parallel tool call control is not supported
+      # - +presence_penalty+ — not supported by the Gemini generation API
+      # - +prompt_cache_key+ — explicit prompt cache keys are not supported
+      # - +safety_identifier+ — no equivalent user-safety field on the generate endpoint
+      # - +service_tier+ — service tier selection is not supported
+      # - +store+ — server-side response storage is not supported
+      # - +stream_options+ — stream event options are not supported
+      # - +top_logprobs+ — log probability output is not supported
+      # - +truncation+ — server-side context truncation is not supported
+      #
+      # Input content restrictions:
+      # - +InputImage+ content is only supported in user messages (not assistant)
+      # - +InputFile+ content is only supported in user messages (not assistant)
+      # - +InputVideo+ requires +video_url+ (only URL-based video is supported)
+      # - +RefusalContent+ is not supported in request messages
+      # - Reasoning blocks with cryptographic signatures are not supported
+      # - +redacted_thinking+ reasoning blocks are not supported
+      #
+      # === Features in Gemini not available through Open Responses
+      #
+      # The following Gemini parameters cannot be set through the Open Responses
+      # canonical format:
+      # - +thinkingConfig.thinkingBudget+ — use +reasoning.budget_tokens+ instead
+      # - +topK+ — top-K sampling parameter
+      # - +seed+ — for reproducible outputs (model-dependent)
+      # - +stopSequences+ — custom stop sequences
+      # - +candidateCount+ — requesting multiple response candidates
+      # - +safetySettings+ — configurable harm-category safety thresholds
+      # - Video metadata controls (+videoMetadata+ offset, FPS)
+      # - Audio input (model-dependent)
+      # - Named cached content resources
       class Request < Base
         SUPPORTED_TEXT_KEYS = %w[format].freeze
         SUPPORTED_REASONING_KEYS = %w[budget_tokens].freeze
@@ -52,6 +92,8 @@ module PromptBuilder
             unsupported_fields << "store" unless session.store.nil?
             unsupported_fields << "top_logprobs" if session.top_logprobs
             unsupported_fields << "service_tier" if session.service_tier
+            unsupported_fields << "presence_penalty" if session.presence_penalty
+            unsupported_fields << "frequency_penalty" if session.frequency_penalty
             unsupported_fields << "metadata" if session.metadata
             unsupported_fields << "parallel_tool_calls" unless session.parallel_tool_calls.nil?
 
@@ -249,8 +291,6 @@ module PromptBuilder
 
             config["temperature"] = session.temperature if session.temperature
             config["top_p"] = session.top_p if session.top_p
-            config["presence_penalty"] = session.presence_penalty if session.presence_penalty
-            config["frequency_penalty"] = session.frequency_penalty if session.frequency_penalty
             config["max_output_tokens"] = session.max_output_tokens if session.max_output_tokens
 
             if session.text

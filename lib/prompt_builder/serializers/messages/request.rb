@@ -4,6 +4,49 @@ module PromptBuilder
   module Serializers
     class Messages < Base
       # Request serializer for the Anthropic Messages API format.
+      #
+      # === Unsupported Open Responses features
+      #
+      # These session fields are not supported and raise +UnsupportedFormatError+:
+      # - +frequency_penalty+ — not supported by the Messages API
+      # - +include+ — response-field inclusion is an Open Responses-only concept
+      # - +max_tool_calls+ — per-request tool-call caps are not supported
+      # - +presence_penalty+ — not supported by the Messages API
+      # - +prompt_cache_key+ — explicit prompt cache keys are not supported
+      # - +store+ — server-side response storage is not supported
+      # - +stream_options+ — stream event options are not supported
+      # - +top_logprobs+ — log probability output is not supported
+      # - +truncation+ — server-side context truncation is not supported
+      # - +background+ — background/async mode is not supported on the Messages endpoint
+      #
+      # Partially supported session fields (unsupported keys raise +UnsupportedFormatError+):
+      # - +metadata+ — only the +user_id+ key is forwarded; +safety_identifier+ is
+      #   also mapped into +metadata.user_id+ automatically
+      # - +service_tier+ — only +auto+ and +standard_only+ are accepted
+      # - +text+ — only the +format+ key is forwarded
+      # - +reasoning+ — +budget_tokens+, +display+, +effort+, and +type+ are forwarded;
+      #   +temperature+ must be unset and +top_p+ must be >= 0.95 when reasoning is enabled
+      #
+      # Input content restrictions:
+      # - +InputVideo+ content is not supported
+      # - +RefusalContent+ is not supported in request messages
+      # - +InputImage+ content is only supported in user messages (not assistant)
+      # - +InputFile+ content is only supported in user messages (not assistant)
+      # - Thinking blocks (+Reasoning+ items) require a +signature+ field
+      # - Forced tool choice (+any+/+tool+ type) is incompatible with thinking enabled
+      #
+      # === Features in the Messages API not available through Open Responses
+      #
+      # The following Messages API parameters cannot be set through the Open Responses
+      # canonical format:
+      # - +top_k+ — top-K sampling parameter
+      # - +stop_sequences+ — custom stop sequences
+      # - Web search, code execution, computer use, bash tool, text editor, and
+      #   memory built-in tools
+      # - Redacted thinking round-trip (+redacted_thinking+ blocks are supported
+      #   when they appear in conversation history but cannot be requested via OR)
+      # - Cryptographic thinking signatures (passed through in history but not
+      #   configurable as a generation parameter)
       class Request < Base
         DEFAULT_MAX_TOKENS = 4096
         SUPPORTED_METADATA_KEYS = ["user_id"].freeze
@@ -24,7 +67,8 @@ module PromptBuilder
             h["max_tokens"] = session.max_output_tokens || DEFAULT_MAX_TOKENS
             h["temperature"] = session.temperature if session.temperature
             h["top_p"] = session.top_p if session.top_p
-            h["metadata"] = serialize_metadata(session.metadata) if session.metadata
+            effective_metadata = build_effective_metadata(session)
+            h["metadata"] = effective_metadata if effective_metadata
             h["service_tier"] = serialize_service_tier(session.service_tier) if session.service_tier
             h["stream"] = session.stream unless session.stream.nil?
 
@@ -62,7 +106,6 @@ module PromptBuilder
             unsupported_fields << "stream_options" if session.stream_options
             unsupported_fields << "background" unless session.background.nil?
             unsupported_fields << "max_tool_calls" if session.max_tool_calls
-            unsupported_fields << "safety_identifier" if session.safety_identifier
             unsupported_fields << "prompt_cache_key" if session.prompt_cache_key
             unsupported_fields << "truncation" if session.truncation
             unsupported_fields << "store" unless session.store.nil?
@@ -72,6 +115,23 @@ module PromptBuilder
 
             raise UnsupportedFormatError,
               "Messages format does not support session fields: #{unsupported_fields.join(", ")}"
+          end
+
+          def build_effective_metadata(session)
+            metadata = session.metadata&.dup || {}
+
+            if session.safety_identifier
+              existing_user_id = metadata["user_id"]
+              if existing_user_id && existing_user_id != session.safety_identifier
+                raise UnsupportedFormatError,
+                  "Messages format has conflicting safety_identifier and metadata.user_id values"
+              end
+              metadata["user_id"] = session.safety_identifier
+            end
+
+            return nil if metadata.empty?
+
+            serialize_metadata(metadata)
           end
 
           def serialize_metadata(metadata)

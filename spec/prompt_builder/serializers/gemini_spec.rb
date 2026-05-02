@@ -213,20 +213,20 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h["generation_config"]["top_p"]).to eq(0.9)
     end
 
-    it "includes presence_penalty in generation_config" do
+    it "raises an error for presence_penalty" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", presence_penalty: 0.1)
       session.user("Hi")
 
-      h = described_class.request_payload(session)
-      expect(h["generation_config"]["presence_penalty"]).to eq(0.1)
+      expect { described_class.request_payload(session) }
+        .to raise_error(PromptBuilder::UnsupportedFormatError, /presence_penalty/)
     end
 
-    it "includes frequency_penalty in generation_config" do
+    it "raises an error for frequency_penalty" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", frequency_penalty: 0.2)
       session.user("Hi")
 
-      h = described_class.request_payload(session)
-      expect(h["generation_config"]["frequency_penalty"]).to eq(0.2)
+      expect { described_class.request_payload(session) }
+        .to raise_error(PromptBuilder::UnsupportedFormatError, /frequency_penalty/)
     end
 
     it "converts text format json_object to response_mime_type" do
