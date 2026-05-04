@@ -373,7 +373,7 @@ The following table shows which session configuration fields are supported by ea
 | `InputText` | ✅ | ✅ | ✅ | ✅ |
 | `InputImage` | user messages only⁷ | user messages only⁵ | user messages only⁶ | base64 or S3 URI only |
 | `InputFile` | ❌ | user messages only¹ | user messages only⁶ | base64 or S3 URI only² |
-| `InputVideo` | ❌ | ❌ | `video_url` required (gs:// or Files API) | S3 URI only |
+| `InputVideo` | ❌ | ❌ | `video_url` required (public URL, gs://, or Files API) | S3 URI only |
 | `OutputText` | ✅ | ✅ | ✅ | ✅ |
 | `RefusalContent` | dropped⁹ | dropped⁹ | dropped⁹ | dropped⁹ |
 | `Reasoning` items | ❌ | ✅³ | ✅⁴ | ❌ |
@@ -382,7 +382,7 @@ The following table shows which session configuration fields are supported by ea
 
 ¹ Messages format defaults to `application/pdf`; set `InputFile.media_type` to use a different document type.  
 ² Converse format infers the document type from the filename or file URL extension.  
-³ Messages format requires a cryptographic `signature` on all `thinking` blocks.  
+³ Messages format only emits `thinking` blocks that include a cryptographic `signature`; unsigned blocks are silently dropped.  
 ⁴ Gemini format passes `thoughtSignature` through transparently. `redacted_thinking` blocks raise.  
 ⁵ Anthropic does not support a `detail` field on images; it is silently dropped.  
 ⁶ Gemini requires a Google-hosted URI (`gs://`, `https://generativelanguage.googleapis.com/`, or `https://storage.googleapis.com/`) — arbitrary public URLs raise. For files, set `media_type` or use a recognized `filename`/`file_url` extension.  

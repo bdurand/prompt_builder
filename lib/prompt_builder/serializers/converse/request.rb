@@ -309,13 +309,24 @@ module PromptBuilder
           # collisions when multiple unnamed documents are attached.
           def document_name(content)
             source = content.filename || content.file_url
+            candidate = nil
+
             if source
               base = File.basename(source, ".*")
               sanitized = base.gsub(/[^A-Za-z0-9 \-()\[\]]/, "-")
-              sanitized = sanitized[0, 256]
-              return sanitized unless sanitized.empty?
+              candidate = sanitized[0, 256]
+              candidate = nil if candidate.empty?
             end
-            "document-#{SecureRandom.hex(4)}"
+
+            candidate ||= "document-#{SecureRandom.hex(4)}"
+
+            @document_name_counts ||= Hash.new(0)
+            @document_name_counts[candidate] += 1
+
+            return candidate if @document_name_counts[candidate] == 1
+
+            suffix = "-#{@document_name_counts[candidate]}"
+            "#{candidate[0, 256 - suffix.length]}#{suffix}"
           end
 
           def serialize_video(content)
