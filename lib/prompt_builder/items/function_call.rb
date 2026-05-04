@@ -13,7 +13,7 @@ module PromptBuilder
       # @return [String] the unique call identifier
       attr_reader :call_id
 
-      # @return [String] the JSON-encoded arguments string
+      # @return [String] the JSON-encoded arguments string (always a Hash-shaped JSON object)
       attr_reader :arguments
 
       # @return [String, nil] the item identifier
@@ -26,16 +26,20 @@ module PromptBuilder
       #
       # @param name [String] the function name
       # @param call_id [String] the unique call identifier
-      # @param arguments [String] the JSON-encoded arguments string
+      # @param arguments [String, Hash, nil] the function arguments; a String is
+      #   stored as-is (must be valid JSON), a Hash is JSON-encoded, and nil
+      #   defaults to an empty JSON object (+"{}"+ )
       # @param id [String, nil] the item identifier
       # @param status [String, nil] the call status
+      # @raise [ArgumentError] if arguments is not a String, Hash, or nil
       def initialize(name:, call_id:, arguments:, id: nil, status: nil)
         @name = name&.to_s
         @call_id = call_id&.to_s
         @arguments = case arguments
         when nil then "{}"
         when String then arguments
-        else JSON.generate(arguments)
+        when Hash then JSON.generate(arguments)
+        else raise ArgumentError, "FunctionCall arguments must be a String, Hash, or nil; got #{arguments.class}"
         end
         @id = id&.to_s
         @status = status&.to_s

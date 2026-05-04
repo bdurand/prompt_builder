@@ -76,6 +76,16 @@ RSpec.describe PromptBuilder::Items::FunctionCall do
       expect(call.arguments).to eq("{}")
       expect(call.parsed_arguments).to eq({})
     end
+
+    it "raises ArgumentError for non-Hash, non-String arguments" do
+      expect {
+        described_class.new(name: "x", call_id: "c", arguments: [1, 2, 3])
+      }.to raise_error(ArgumentError, /must be a String, Hash, or nil/)
+
+      expect {
+        described_class.new(name: "x", call_id: "c", arguments: 42)
+      }.to raise_error(ArgumentError, /must be a String, Hash, or nil/)
+    end
   end
 
   describe "round-trip" do
