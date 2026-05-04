@@ -478,6 +478,30 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(part["fileData"]["mimeType"]).to eq("application/pdf")
     end
 
+    it "raises for InputFile with file_id but no media_type" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(file_id: "files/xyz")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputFile\.media_type when using InputFile\.file_id/)
+    end
+
+    it "raises for InputFile with gs:// URL but no media_type or recognizable extension" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(file_url: "gs://bucket/file")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputFile\.media_type or a recognized filename extension/)
+    end
+
     it "converts InputVideo with URL to fileData" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(

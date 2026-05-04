@@ -106,6 +106,7 @@ module PromptBuilder
           private
 
           def serialize_request(session)
+            @document_name_counts = Hash.new(0)
             validate_supported_session_fields!(session)
 
             h = {}
@@ -320,7 +321,6 @@ module PromptBuilder
 
             candidate ||= "document-#{SecureRandom.hex(4)}"
 
-            @document_name_counts ||= Hash.new(0)
             @document_name_counts[candidate] += 1
 
             return candidate if @document_name_counts[candidate] == 1

@@ -318,7 +318,13 @@ module PromptBuilder
 
           def serialize_file(content)
             if content.file_id
-              return {"fileData" => {"mimeType" => content.media_type || file_mime_type(content), "fileUri" => content.file_id}}
+              mime = content.media_type
+              unless mime
+                raise UnsupportedFormatError,
+                  "Gemini format requires InputFile.media_type when using InputFile.file_id"
+              end
+
+              return {"fileData" => {"mimeType" => mime, "fileUri" => content.file_id}}
             end
 
             if content.file_url
@@ -329,6 +335,11 @@ module PromptBuilder
               end
 
               mime = content.media_type || file_mime_type(content)
+              unless mime
+                raise UnsupportedFormatError,
+                  "Gemini format requires InputFile.media_type or a recognized filename extension for gs:// or Files API URLs"
+              end
+
               return {"fileData" => {"mimeType" => mime, "fileUri" => content.file_url}}
             end
 
