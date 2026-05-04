@@ -19,10 +19,15 @@ module PromptBuilder
               input_tokens_details = input_tokens_details.merge("cache_creation_input_tokens" => cache_creation) if cache_creation
               input_tokens_details = input_tokens_details.merge("cached_tokens" => cache_read) if cache_read
 
+              # Anthropic reports input_tokens excluding cached/cache-creation tokens,
+              # which are billed and counted separately. Include them in the total.
+              total = usage_hash["input_tokens"].to_i + usage_hash["output_tokens"].to_i +
+                cache_creation.to_i + cache_read.to_i
+
               Usage.new(
                 input_tokens: usage_hash["input_tokens"],
                 output_tokens: usage_hash["output_tokens"],
-                total_tokens: usage_hash["input_tokens"].to_i + usage_hash["output_tokens"].to_i,
+                total_tokens: total,
                 input_tokens_details: input_tokens_details.empty? ? nil : input_tokens_details,
                 output_tokens_details: usage_hash["output_tokens_details"]
               )

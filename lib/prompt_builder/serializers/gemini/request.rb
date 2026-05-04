@@ -27,11 +27,20 @@ module PromptBuilder
       #
       # Input content restrictions:
       # - +InputImage+ content is only supported in user messages (not assistant)
+      # - +InputImage+ with +image_url+ requires either base64 +data+ or a Files API /
+      #   Cloud Storage URI (+gs://+, +https://generativelanguage.googleapis.com/+);
+      #   arbitrary public URLs are not fetched by Gemini and are rejected
       # - +InputFile+ content is only supported in user messages (not assistant)
+      # - +InputFile+ requires +media_type+ when +file_data+ is provided, or a
+      #   recognized extension on +filename+ / +file_url+
       # - +InputVideo+ requires +video_url+ (only URL-based video is supported)
-      # - +RefusalContent+ is not supported in request messages
-      # - Reasoning blocks with cryptographic signatures are not supported
+      # - +RefusalContent+ is dropped silently (a parsed Chat Completions
+      #   refusal can stay in session history without breaking subsequent
+      #   request_payload calls)
       # - +redacted_thinking+ reasoning blocks are not supported
+      # - +Reasoning+ items with +summary+ blocks are not supported
+      # - +FunctionCallOutput+ array contents must be text-only
+      # - +Compaction+ and +ItemReference+ items are not supported
       #
       # === Features in Gemini not available through Open Responses
       #
@@ -50,6 +59,27 @@ module PromptBuilder
         SUPPORTED_TEXT_KEYS = %w[format].freeze
         SUPPORTED_REASONING_KEYS = %w[budget_tokens].freeze
 
+        FILE_EXTENSION_MIME_TYPES = {
+          "pdf" => "application/pdf",
+          "txt" => "text/plain",
+          "md" => "text/markdown",
+          "markdown" => "text/markdown",
+          "html" => "text/html",
+          "htm" => "text/html",
+          "csv" => "text/csv",
+          "json" => "application/json",
+          "xml" => "application/xml",
+          "rtf" => "application/rtf"
+        }.freeze
+        private_constant :FILE_EXTENSION_MIME_TYPES
+
+        GOOGLE_FILE_URL_PREFIXES = [
+          "gs://",
+          "https://generativelanguage.googleapis.com/",
+          "https://storage.googleapis.com/"
+        ].freeze
+        private_constant :GOOGLE_FILE_URL_PREFIXES
+
         class << self
           private
 
@@ -62,20 +92,22 @@ module PromptBuilder
             h["model"] = session.model
 
             system_instruction = build_system_instruction(session)
-            h["system_instruction"] = system_instruction if system_instruction
+            h["systemInstruction"] = system_instruction if system_instruction
 
             h["contents"] = build_contents(session)
 
             generation_config = build_generation_config(session)
-            h["generation_config"] = generation_config unless generation_config.empty?
+            h["generationConfig"] = generation_config unless generation_config.empty?
 
             tools = build_tools(session)
             h["tools"] = tools unless tools.empty?
 
             tool_config = build_tool_config(session.tool_choice, tools: tools)
-            h["tool_config"] = tool_config if tool_config
+            h["toolConfig"] = tool_config if tool_config
 
-            h["stream"] = session.stream unless session.stream.nil?
+            # Gemini selects streaming via endpoint (:streamGenerateContent)
+            # rather than a request body field, so session.stream is a no-op
+            # at the payload level.
 
             h
           end
@@ -127,21 +159,25 @@ module PromptBuilder
           def build_contents(session)
             raw_contents = []
 
-            # Build a lookup map for function call names by index
-            function_call_map = {}
-            session.items.each_with_index do |item, idx|
-              if item.is_a?(Items::FunctionCall)
-                function_call_map[idx] = item.name
-              end
+            # Map call_id -> function name so we can resolve a FunctionCallOutput's
+            # name field (Gemini's functionResponse requires the function name, not
+            # the call id) without a quadratic scan per output.
+            call_id_to_name = {}
+            session.items.each do |item|
+              call_id_to_name[item.call_id] = item.name if item.is_a?(Items::FunctionCall)
             end
 
-            session.items.each_with_index do |item, idx|
+            session.items.each do |item|
               case item
               when Items::Message
                 next if item.role == "system" || item.role == "developer"
 
                 role = (item.role == "assistant") ? "model" : "user"
-                parts = item.content.map { |content| serialize_content(content, role: role) }
+                # RefusalContent is dropped silently; it can appear in history
+                # via a parsed Chat Completions response but cannot be sent.
+                visible_content = item.content.reject { |c| c.is_a?(Content::RefusalContent) }
+                next if visible_content.empty?
+                parts = visible_content.map { |content| serialize_content(content, role: role) }
                 raw_contents << {"role" => role, "parts" => parts}
               when Items::FunctionCall
                 parts = [{
@@ -152,15 +188,7 @@ module PromptBuilder
                 }]
                 raw_contents << {"role" => "model", "parts" => parts}
               when Items::FunctionCallOutput
-                # Find the prior function call to get its name
-                prior_call_idx = nil
-                session.items[0...idx].each_with_index do |prior_item, prior_idx|
-                  if prior_item.is_a?(Items::FunctionCall) && prior_item.call_id == item.call_id
-                    prior_call_idx = prior_idx
-                  end
-                end
-
-                function_name = prior_call_idx ? function_call_map[prior_call_idx] : item.call_id
+                function_name = call_id_to_name[item.call_id] || item.call_id
 
                 parts = [{
                   "functionResponse" => {
@@ -172,29 +200,36 @@ module PromptBuilder
                 }]
                 raw_contents << {"role" => "user", "parts" => parts}
               when Items::Reasoning
-                validate_reasoning!(item)
-                item.content.each do |block|
-                  next unless block["type"] == "thinking"
-
-                  parts = [{"thought" => true, "text" => block.fetch("thinking", "")}]
-                  raw_contents << {"role" => "model", "parts" => parts}
+                unless item.summary.empty?
+                  raise UnsupportedFormatError,
+                    "Gemini format cannot serialize Reasoning summary blocks; " \
+                    "Gemini requires thinking content blocks (use a Reasoning item produced by the Gemini API)"
                 end
+
+                thought_parts = item.content.map { |block| serialize_thinking_block(block) }
+                raw_contents << {"role" => "model", "parts" => thought_parts} unless thought_parts.empty?
+              when Items::Compaction
+                raise UnsupportedFormatError, "Gemini format does not support Compaction items"
+              when Items::ItemReference
+                raise UnsupportedFormatError, "Gemini format does not support ItemReference items"
               end
             end
 
             merge_consecutive_contents(raw_contents)
           end
 
-          def validate_reasoning!(item)
-            item.content.each do |block|
-              if block["type"] == "thinking" && block["signature"]
-                raise UnsupportedFormatError,
-                  "Gemini format does not support reasoning blocks with signatures"
-              end
-              if block["type"] == "redacted_thinking"
-                raise UnsupportedFormatError,
-                  "Gemini format does not support redacted_thinking blocks"
-              end
+          def serialize_thinking_block(block)
+            case block["type"]
+            when "thinking"
+              part = {"thought" => true, "text" => block.fetch("thinking", "")}
+              part["thoughtSignature"] = block["signature"] if block["signature"]
+              part
+            when "redacted_thinking"
+              raise UnsupportedFormatError,
+                "Gemini format does not support redacted_thinking blocks"
+            else
+              raise UnsupportedFormatError,
+                "Gemini format does not support reasoning block type #{block["type"].inspect}"
             end
           end
 
@@ -205,7 +240,8 @@ module PromptBuilder
                 when Content::InputText, Content::OutputText
                   content.text
                 else
-                  content.to_s
+                  raise UnsupportedFormatError,
+                    "#{content.class.name.split("::").last} is not supported in tool output in Gemini format"
                 end
               end.join("\n")
             else
@@ -223,34 +259,14 @@ module PromptBuilder
                   "Gemini format does not support assistant InputImage content"
               end
 
-              if content.image_url
-                {"fileData" => {"mimeType" => content.media_type || "image/jpeg", "fileUri" => content.image_url}}
-              elsif content.data
-                unless content.media_type
-                  raise UnsupportedFormatError,
-                    "Gemini format requires InputImage.media_type for base64 image content"
-                end
-
-                {"inlineData" => {"mimeType" => content.media_type, "data" => content.data}}
-              else
-                raise UnsupportedFormatError,
-                  "Gemini format requires InputImage.image_url or InputImage.data"
-              end
+              serialize_image(content)
             when Content::InputFile
               if role == "model"
                 raise UnsupportedFormatError,
                   "Gemini format does not support assistant InputFile content"
               end
 
-              mime_type = "application/octet-stream"
-              if content.file_url
-                {"fileData" => {"mimeType" => mime_type, "fileUri" => content.file_url}}
-              elsif content.file_data
-                {"inlineData" => {"mimeType" => mime_type, "data" => content.file_data}}
-              else
-                raise UnsupportedFormatError,
-                  "Gemini format requires InputFile.file_url or InputFile.file_data"
-              end
+              serialize_file(content)
             when Content::InputVideo
               if role == "model"
                 raise UnsupportedFormatError,
@@ -262,11 +278,101 @@ module PromptBuilder
                   "Gemini format requires InputVideo.video_url"
               end
 
-              {"fileData" => {"mimeType" => "video/mp4", "fileUri" => content.video_url}}
+              mime = video_mime_type(content.video_url)
+              {"fileData" => {"mimeType" => mime, "fileUri" => content.video_url}}
             when Content::RefusalContent
-              raise UnsupportedFormatError, "Gemini format does not support RefusalContent"
+              # Filtered out before reaching here; defensive no-op.
+              nil
             else
               raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
+            end
+          end
+
+          def serialize_image(content)
+            if content.file_id
+              return {"fileData" => {"mimeType" => content.media_type || "image/jpeg", "fileUri" => content.file_id}}
+            end
+
+            if content.image_url
+              unless google_file_uri?(content.image_url)
+                raise UnsupportedFormatError,
+                  "Gemini format does not support arbitrary public image URLs; use base64 InputImage.data, " \
+                  "an InputImage.file_id, or a gs:// / Files API InputImage.image_url"
+              end
+
+              return {"fileData" => {"mimeType" => content.media_type || "image/jpeg", "fileUri" => content.image_url}}
+            end
+
+            if content.data
+              unless content.media_type
+                raise UnsupportedFormatError,
+                  "Gemini format requires InputImage.media_type for base64 image content"
+              end
+
+              return {"inlineData" => {"mimeType" => content.media_type, "data" => content.data}}
+            end
+
+            raise UnsupportedFormatError,
+              "Gemini format requires InputImage.image_url, InputImage.data, or InputImage.file_id"
+          end
+
+          def serialize_file(content)
+            if content.file_id
+              return {"fileData" => {"mimeType" => content.media_type || file_mime_type(content), "fileUri" => content.file_id}}
+            end
+
+            if content.file_url
+              unless google_file_uri?(content.file_url)
+                raise UnsupportedFormatError,
+                  "Gemini format does not support arbitrary public file URLs; use base64 InputFile.file_data, " \
+                  "an InputFile.file_id, or a gs:// / Files API InputFile.file_url"
+              end
+
+              mime = content.media_type || file_mime_type(content)
+              return {"fileData" => {"mimeType" => mime, "fileUri" => content.file_url}}
+            end
+
+            if content.file_data
+              mime = content.media_type || file_mime_type(content)
+              unless mime
+                raise UnsupportedFormatError,
+                  "Gemini format requires InputFile.media_type or a recognized filename extension for base64 file content"
+              end
+
+              return {"inlineData" => {"mimeType" => mime, "data" => content.file_data}}
+            end
+
+            raise UnsupportedFormatError,
+              "Gemini format requires InputFile.file_url, InputFile.file_data, or InputFile.file_id"
+          end
+
+          def google_file_uri?(uri)
+            GOOGLE_FILE_URL_PREFIXES.any? { |prefix| uri.start_with?(prefix) }
+          end
+
+          def file_mime_type(content)
+            [content.filename, content.file_url].each do |path|
+              next unless path
+
+              ext = File.extname(path).delete_prefix(".").downcase
+              mime = FILE_EXTENSION_MIME_TYPES[ext]
+              return mime if mime
+            end
+            nil
+          end
+
+          def video_mime_type(video_url)
+            ext = File.extname(video_url).delete_prefix(".").downcase
+            case ext
+            when "mp4" then "video/mp4"
+            when "mov" then "video/quicktime"
+            when "webm" then "video/webm"
+            when "mkv" then "video/x-matroska"
+            when "mpeg", "mpg" then "video/mpeg"
+            when "flv" then "video/x-flv"
+            when "wmv" then "video/x-ms-wmv"
+            when "3gp" then "video/3gpp"
+            else "video/mp4"
             end
           end
 
@@ -290,8 +396,8 @@ module PromptBuilder
             config = {}
 
             config["temperature"] = session.temperature if session.temperature
-            config["top_p"] = session.top_p if session.top_p
-            config["max_output_tokens"] = session.max_output_tokens if session.max_output_tokens
+            config["topP"] = session.top_p if session.top_p
+            config["maxOutputTokens"] = session.max_output_tokens if session.max_output_tokens
 
             if session.text
               unsupported_keys = session.text.keys - SUPPORTED_TEXT_KEYS
@@ -304,11 +410,11 @@ module PromptBuilder
               if format.is_a?(Hash)
                 case format["type"]
                 when "json_object"
-                  config["response_mime_type"] = "application/json"
+                  config["responseMimeType"] = "application/json"
                 when "json_schema"
-                  config["response_mime_type"] = "application/json"
+                  config["responseMimeType"] = "application/json"
                   schema = format.dig("json_schema", "schema") || format["schema"]
-                  config["response_schema"] = schema if schema
+                  config["responseSchema"] = schema if schema
                 end
               end
             end
@@ -321,7 +427,7 @@ module PromptBuilder
               end
 
               if session.reasoning["budget_tokens"]
-                config["thinking_config"] = {"thinking_budget" => session.reasoning["budget_tokens"]}
+                config["thinkingConfig"] = {"thinkingBudget" => session.reasoning["budget_tokens"]}
               end
             end
 
@@ -333,7 +439,7 @@ module PromptBuilder
 
             [
               {
-                "function_declarations" => session.tool_definitions.map do |definition|
+                "functionDeclarations" => session.tool_definitions.map do |definition|
                   tool = {"name" => definition.name}
                   tool["description"] = definition.description if definition.description
                   tool["parameters"] = definition.parameters || {"type" => "object", "properties" => {}}
@@ -357,21 +463,22 @@ module PromptBuilder
 
             case tool_choice
             when "auto"
-              config["function_calling_config"] = {"mode" => "AUTO"}
+              config["functionCallingConfig"] = {"mode" => "AUTO"}
             when "none"
-              config["function_calling_config"] = {"mode" => "NONE"}
+              config["functionCallingConfig"] = {"mode" => "NONE"}
             when "required"
-              config["function_calling_config"] = {"mode" => "ANY"}
+              config["functionCallingConfig"] = {"mode" => "ANY"}
             when Hash
               if tool_choice["type"] == "function"
-                unless tool_choice["name"]
+                name = tool_choice["name"] || tool_choice.dig("function", "name")
+                unless name
                   raise UnsupportedFormatError,
                     "Gemini format requires tool_choice.name for function tool choices"
                 end
 
-                config["function_calling_config"] = {
+                config["functionCallingConfig"] = {
                   "mode" => "ANY",
-                  "allowed_function_names" => [tool_choice["name"]]
+                  "allowedFunctionNames" => [name]
                 }
               else
                 raise UnsupportedFormatError,

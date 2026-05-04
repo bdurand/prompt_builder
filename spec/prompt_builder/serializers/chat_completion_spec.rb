@@ -50,6 +50,73 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(tool["function"]["parameters"]).to eq({"type" => "object", "properties" => {"city" => {"type" => "string"}}})
     end
 
+    it "combines an assistant message with sibling FunctionCall items" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Weather?")
+      session.assistant("Let me check.")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "get_weather", call_id: "call_1", arguments: '{"city":"London"}'
+      ))
+
+      h = described_class.request_payload(session)
+      messages = h["messages"]
+      expect(messages.length).to eq(2)
+
+      assistant_msg = messages[1]
+      expect(assistant_msg["role"]).to eq("assistant")
+      expect(assistant_msg["content"]).to eq([{"type" => "text", "text" => "Let me check."}])
+      expect(assistant_msg["tool_calls"].length).to eq(1)
+      expect(assistant_msg["tool_calls"][0]["function"]["name"]).to eq("get_weather")
+    end
+
+    it "raises for Compaction items" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Compaction.new(encrypted_content: "abc"))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /Compaction/)
+    end
+
+    it "raises for ItemReference items" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::ItemReference.new(id: "msg_1"))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /ItemReference/)
+    end
+
+    it "emits empty string for nil FunctionCallOutput.output" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "ping", call_id: "call_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "call_1", output: nil
+      ))
+
+      h = described_class.request_payload(session)
+      tool_msg = h["messages"].last
+      expect(tool_msg["role"]).to eq("tool")
+      expect(tool_msg["content"]).to eq("")
+    end
+
+    it "raises for InputImage with file_id (Chat Completions has no image_file equivalent)" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(file_id: "file_abc123")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_id is not supported/)
+    end
+
     it "converts function call items to tool_calls on assistant messages" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.user("Weather?")
@@ -112,16 +179,19 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /InputVideo/)
     end
 
-    it "raises UnsupportedFormatError for RefusalContent in request" do
+    it "drops RefusalContent silently so a parsed refusal can stay in session history" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hello")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::RefusalContent.new(refusal: "I cannot help.")]
       ))
+      session.user("Try again")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /RefusalContent/)
+      h = described_class.request_payload(session)
+      roles = h["messages"].map { |m| m["role"] }
+      # The refusal-only assistant message is skipped entirely.
+      expect(roles).to eq(["user", "user"])
     end
 
     it "converts InputImage to image_url format" do
@@ -222,6 +292,44 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
           }
         }
       })
+    end
+
+    it "reshapes Open Responses canonical text.format json_schema into Chat Completions response_format" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-4o",
+        text: {
+          "format" => {
+            "type" => "json_schema",
+            "name" => "Person",
+            "schema" => {"type" => "object"},
+            "strict" => true,
+            "description" => "A person"
+          }
+        }
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["response_format"]).to eq({
+        "type" => "json_schema",
+        "json_schema" => {
+          "name" => "Person",
+          "schema" => {"type" => "object"},
+          "strict" => true,
+          "description" => "A person"
+        }
+      })
+    end
+
+    it "passes through json_object response_format unchanged" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-4o",
+        text: {"format" => {"type" => "json_object"}}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["response_format"]).to eq({"type" => "json_object"})
     end
 
     it "sets logprobs when top_logprobs is requested" do
@@ -504,6 +612,20 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
         "choices" => [{"message" => {"content" => "partial"}, "finish_reason" => "length"}]
       })
       expect(response.status).to eq("incomplete")
+    end
+
+    it "omits the assistant message when content is an empty string" do
+      response = described_class.parse_response({
+        "choices" => [{
+          "message" => {"role" => "assistant", "content" => "", "tool_calls" => [
+            {"id" => "call_1", "type" => "function", "function" => {"name" => "f", "arguments" => "{}"}}
+          ]},
+          "finish_reason" => "tool_calls"
+        }]
+      })
+
+      expect(response.output.length).to eq(1)
+      expect(response.output.first).to be_a(PromptBuilder::Items::FunctionCall)
     end
 
     it "maps content_filter to failed" do

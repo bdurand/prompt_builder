@@ -59,6 +59,25 @@ RSpec.describe PromptBuilder::Items::FunctionCall do
     end
   end
 
+  describe "arguments coercion" do
+    it "JSON-encodes a Hash passed as arguments" do
+      call = described_class.new(name: "x", call_id: "c", arguments: {"city" => "London"})
+      expect(call.arguments).to eq('{"city":"London"}')
+      expect(call.parsed_arguments).to eq({"city" => "London"})
+    end
+
+    it "passes through a String as-is" do
+      call = described_class.new(name: "x", call_id: "c", arguments: '{"a":1}')
+      expect(call.arguments).to eq('{"a":1}')
+    end
+
+    it "defaults nil arguments to an empty JSON object" do
+      call = described_class.new(name: "x", call_id: "c", arguments: nil)
+      expect(call.arguments).to eq("{}")
+      expect(call.parsed_arguments).to eq({})
+    end
+  end
+
   describe "round-trip" do
     it "round-trips through to_h and from_h" do
       restored = described_class.from_h(call.to_h)

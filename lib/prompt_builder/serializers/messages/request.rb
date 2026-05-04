@@ -19,21 +19,32 @@ module PromptBuilder
       # - +truncation+ — server-side context truncation is not supported
       # - +background+ — background/async mode is not supported on the Messages endpoint
       #
+      # Unsupported (raises +UnsupportedFormatError+):
+      # - +text+ — Anthropic Messages has no native response-format parameter; use a
+      #   tool with a JSON schema and force +tool_choice+ for structured output
+      # - +reasoning.effort+ — Anthropic uses +budget_tokens+, not effort levels
+      #
       # Partially supported session fields (unsupported keys raise +UnsupportedFormatError+):
       # - +metadata+ — only the +user_id+ key is forwarded; +safety_identifier+ is
       #   also mapped into +metadata.user_id+ automatically
       # - +service_tier+ — only +auto+ and +standard_only+ are accepted
-      # - +text+ — only the +format+ key is forwarded
-      # - +reasoning+ — +budget_tokens+, +display+, +effort+, and +type+ are forwarded;
+      # - +reasoning+ — +budget_tokens+, +display+, and +type+ are forwarded;
       #   +temperature+ must be unset and +top_p+ must be >= 0.95 when reasoning is enabled
       #
       # Input content restrictions:
       # - +InputVideo+ content is not supported
-      # - +RefusalContent+ is not supported in request messages
+      # - +RefusalContent+ is dropped silently (a parsed refusal can stay in
+      #   session history without breaking subsequent request_payload calls)
       # - +InputImage+ content is only supported in user messages (not assistant)
+      # - +InputImage.detail+ is not part of the Anthropic schema and is dropped
       # - +InputFile+ content is only supported in user messages (not assistant)
-      # - Thinking blocks (+Reasoning+ items) require a +signature+ field
+      # - +InputFile+ is sent as a +document+ block; +media_type+ is forwarded when
+      #   provided, otherwise +application/pdf+ is used
+      # - Thinking blocks without a +signature+ are dropped silently (cross-provider
+      #   reasoning history doesn't round-trip into Anthropic)
+      # - +Reasoning+ items with +summary+ blocks are not supported
       # - Forced tool choice (+any+/+tool+ type) is incompatible with thinking enabled
+      # - +Compaction+ and +ItemReference+ items are not supported
       #
       # === Features in the Messages API not available through Open Responses
       #
@@ -50,8 +61,7 @@ module PromptBuilder
       class Request < Base
         DEFAULT_MAX_TOKENS = 4096
         SUPPORTED_METADATA_KEYS = ["user_id"].freeze
-        SUPPORTED_TEXT_KEYS = ["format"].freeze
-        SUPPORTED_REASONING_KEYS = ["budget_tokens", "display", "effort", "type"].freeze
+        SUPPORTED_REASONING_KEYS = ["budget_tokens", "display", "type"].freeze
         SUPPORTED_TOOL_CHOICE_TYPES = ["any", "auto", "none", "tool"].freeze
 
         class << self
@@ -75,9 +85,6 @@ module PromptBuilder
             thinking = serialize_thinking(session.reasoning)
             validate_thinking_compatibility!(session, thinking) if thinking
             h["thinking"] = thinking if thinking
-
-            output_config = serialize_output_config(session.text, session.reasoning)
-            h["output_config"] = output_config unless output_config.empty?
 
             system_parts = build_system(session)
             h["system"] = system_parts unless system_parts.empty?
@@ -110,6 +117,11 @@ module PromptBuilder
             unsupported_fields << "truncation" if session.truncation
             unsupported_fields << "store" unless session.store.nil?
             unsupported_fields << "top_logprobs" if session.top_logprobs
+            unsupported_fields << "text" if session.text
+
+            if session.reasoning && session.reasoning["effort"]
+              unsupported_fields << "reasoning.effort"
+            end
 
             return if unsupported_fields.empty?
 
@@ -161,30 +173,13 @@ module PromptBuilder
             end
 
             thinking = {}
-            thinking["type"] = reasoning["type"] if reasoning["type"]
             thinking["budget_tokens"] = reasoning["budget_tokens"] if reasoning.key?("budget_tokens")
             thinking["display"] = reasoning["display"] if reasoning["display"]
-            thinking.empty? ? nil : thinking
-          end
+            return nil if thinking.empty? && !reasoning["type"]
 
-          def serialize_output_config(text, reasoning)
-            output_config = {}
-
-            if text
-              unsupported_keys = text.keys - SUPPORTED_TEXT_KEYS
-              unless unsupported_keys.empty?
-                raise UnsupportedFormatError,
-                  "Messages format does not support text.#{unsupported_keys.first}"
-              end
-
-              output_config["format"] = text["format"] if text["format"]
-            end
-
-            if reasoning && reasoning["effort"]
-              output_config["effort"] = reasoning["effort"]
-            end
-
-            output_config
+            # Anthropic requires thinking.type ("enabled") whenever thinking is configured.
+            thinking["type"] = reasoning["type"] || "enabled"
+            thinking
           end
 
           def validate_thinking_compatibility!(session, thinking)
@@ -229,7 +224,12 @@ module PromptBuilder
                 next if item.role == "system" || item.role == "developer"
 
                 role = (item.role == "assistant") ? "assistant" : "user"
-                content = item.content.map { |message_content| serialize_content(message_content, role: role) }
+                # RefusalContent is dropped silently: it can land in the session
+                # via a parsed Chat Completions response, but cannot be sent back
+                # to any provider in a request payload.
+                visible_content = item.content.reject { |c| c.is_a?(Content::RefusalContent) }
+                next if visible_content.empty?
+                content = visible_content.map { |message_content| serialize_content(message_content, role: role) }
                 raw_messages << {"role" => role, "content" => content}
               when Items::FunctionCall
                 raw_messages << {
@@ -247,10 +247,20 @@ module PromptBuilder
                   "content" => [serialize_tool_result(item)]
                 }
               when Items::Reasoning
-                content_blocks = item.content.map { |block| serialize_reasoning_block(block) }
+                unless item.summary.empty?
+                  raise UnsupportedFormatError,
+                    "Messages format cannot serialize Reasoning summary blocks; " \
+                    "Anthropic requires signed thinking blocks (use a Reasoning item produced by the Messages API)"
+                end
+
+                content_blocks = item.content.map { |block| serialize_reasoning_block(block) }.compact
                 unless content_blocks.empty?
                   raw_messages << {"role" => "assistant", "content" => content_blocks}
                 end
+              when Items::Compaction
+                raise UnsupportedFormatError, "Messages format does not support Compaction items"
+              when Items::ItemReference
+                raise UnsupportedFormatError, "Messages format does not support ItemReference items"
               end
             end
 
@@ -270,19 +280,17 @@ module PromptBuilder
               end
 
               if content.image_url
-                image = {
+                {
                   "type" => "image",
                   "source" => {"type" => "url", "url" => content.image_url}
                 }
-                image["detail"] = content.detail if content.detail
-                image
               elsif content.data
                 unless content.media_type
                   raise UnsupportedFormatError,
                     "Messages format requires InputImage.media_type for base64 image content"
                 end
 
-                image = {
+                {
                   "type" => "image",
                   "source" => {
                     "type" => "base64",
@@ -290,8 +298,6 @@ module PromptBuilder
                     "data" => content.data
                   }
                 }
-                image["detail"] = content.detail if content.detail
-                image
               else
                 raise UnsupportedFormatError,
                   "Messages format requires InputImage.image_url or InputImage.data"
@@ -312,7 +318,7 @@ module PromptBuilder
                   "type" => "document",
                   "source" => {
                     "type" => "base64",
-                    "media_type" => "application/pdf",
+                    "media_type" => content.media_type || "application/pdf",
                     "data" => content.file_data
                   }
                 }
@@ -326,7 +332,8 @@ module PromptBuilder
             when Content::InputVideo
               raise UnsupportedFormatError, "Messages format does not support InputVideo content"
             when Content::RefusalContent
-              raise UnsupportedFormatError, "Messages format does not support RefusalContent"
+              # Filtered out before reaching here; treat as a defensive no-op.
+              nil
             else
               raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
             end
@@ -337,22 +344,27 @@ module PromptBuilder
               "type" => "tool_result",
               "tool_use_id" => item.call_id
             }
-            if item.output.is_a?(Array)
-              content = item.output.map { |c| serialize_content(c, role: "user") }
-              result["content"] = content unless content.empty?
-            elsif !item.output.nil? && !item.output.empty?
-              result["content"] = item.output
+            content = if item.output.is_a?(Array)
+              item.output.map { |c| serialize_content(c, role: "user") }
+            elsif !item.output.nil?
+              # String outputs are passed through directly per Anthropic's schema.
+              item.output
             end
+
+            # Anthropic requires tool_result.content; collapse missing/empty
+            # array outputs to a single empty text block.
+            content = [{"type" => "text", "text" => ""}] if content.nil? || (content.is_a?(Array) && content.empty?)
+            result["content"] = content
             result
           end
 
           def serialize_reasoning_block(block)
             case block["type"]
             when "thinking"
-              unless block["signature"]
-                raise UnsupportedFormatError,
-                  "Messages format requires reasoning.signature for thinking blocks"
-              end
+              # Anthropic only accepts thinking blocks it has signed. Unsigned
+              # thinking from cross-provider history (e.g. parsed from a Gemini
+              # response) is dropped rather than rejected.
+              return nil unless block["signature"]
 
               {
                 "type" => "thinking",
@@ -396,7 +408,6 @@ module PromptBuilder
               tool = {"name" => definition.name}
               tool["description"] = definition.description if definition.description
               tool["input_schema"] = definition.parameters || {"type" => "object", "properties" => {}}
-              tool["strict"] = definition.strict if definition.strict
               tool
             end
           end
@@ -443,12 +454,13 @@ module PromptBuilder
               {"type" => "none"}
             when Hash
               if choice["type"] == "function"
-                unless choice["name"]
+                name = choice["name"] || choice.dig("function", "name")
+                unless name
                   raise UnsupportedFormatError,
                     "Messages format requires tool_choice.name for function tool choices"
                 end
 
-                {"type" => "tool", "name" => choice["name"]}
+                {"type" => "tool", "name" => name}
               else
                 validate_tool_choice_hash!(choice)
                 choice.dup

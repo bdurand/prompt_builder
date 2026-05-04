@@ -49,6 +49,64 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(content).not_to have_key("data")
       expect(content).not_to have_key("media_type")
     end
+
+    it "strips canonical-only data/media_type keys when image_url is also set" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(
+          image_url: "https://example.com/img.png",
+          data: "abc123",
+          media_type: "image/png"
+        )]
+      ))
+
+      payload = described_class.request_payload(session)
+      content = payload["input"][0]["content"][0]
+
+      expect(content["image_url"]).to eq("https://example.com/img.png")
+      expect(content).not_to have_key("data")
+      expect(content).not_to have_key("media_type")
+    end
+
+    it "raises when InputImage has only base64 data without media_type" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(data: "abc")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /InputImage\.media_type/)
+    end
+
+    it "raises when InputImage has neither image_url, file_id, nor data" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(media_type: "image/png")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /image_url, InputImage\.file_id, or InputImage\.data/)
+    end
+
+    it "transforms base64 InputImage inside FunctionCallOutput content" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "c1",
+        output: [PromptBuilder::Content::InputImage.new(data: "abc", media_type: "image/png")]
+      ))
+
+      payload = described_class.request_payload(session)
+      content = payload["input"][0]["output"][0]
+
+      expect(content["image_url"]).to eq("data:image/png;base64,abc")
+      expect(content).not_to have_key("data")
+      expect(content).not_to have_key("media_type")
+    end
   end
 
   describe ".parse_response" do

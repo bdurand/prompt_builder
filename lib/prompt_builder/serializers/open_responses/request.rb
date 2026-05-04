@@ -29,21 +29,44 @@ module PromptBuilder
 
             input.each do |item|
               next unless item.is_a?(Hash)
-              content = item["content"]
-              next unless content.is_a?(Array)
 
-              content.each_with_index do |block, idx|
-                next unless block.is_a?(Hash) && block["type"] == "input_image"
-                next if block["image_url"] || block["file_id"]
-
-                data = block["data"]
-                media_type = block["media_type"]
-                next unless data && media_type
-
-                content[idx] = block
-                  .except("data", "media_type")
-                  .merge("image_url" => "data:#{media_type};base64,#{data}")
+              if item["type"] == "function_call_output" && item["output"].is_a?(Array)
+                transform_content_blocks!(item["output"])
+              else
+                content = item["content"]
+                transform_content_blocks!(content) if content.is_a?(Array)
               end
+            end
+          end
+
+          def transform_content_blocks!(blocks)
+            blocks.each_with_index do |block, idx|
+              next unless block.is_a?(Hash) && block["type"] == "input_image"
+
+              if block["image_url"] || block["file_id"]
+                # The canonical model can carry stray data/media_type alongside
+                # image_url/file_id; the Open Responses API doesn't define them.
+                if block.key?("data") || block.key?("media_type")
+                  blocks[idx] = block.except("data", "media_type")
+                end
+                next
+              end
+
+              data = block["data"]
+              unless data
+                raise UnsupportedFormatError,
+                  "Open Responses format requires InputImage.image_url, InputImage.file_id, or InputImage.data"
+              end
+
+              media_type = block["media_type"]
+              unless media_type
+                raise UnsupportedFormatError,
+                  "Open Responses format requires InputImage.media_type when using base64 InputImage.data"
+              end
+
+              blocks[idx] = block
+                .except("data", "media_type")
+                .merge("image_url" => "data:#{media_type};base64,#{data}")
             end
           end
         end

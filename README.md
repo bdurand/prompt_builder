@@ -253,13 +253,20 @@ session.user([
   PromptBuilder::Content::InputFile.new(file_url: "https://example.com/report.pdf")
 ])
 
-# Base64-encoded file with a filename
+# Base64-encoded file with a filename and media type
 session.user([
   PromptBuilder::Content::InputText.new(text: "What does this spreadsheet contain?"),
   PromptBuilder::Content::InputFile.new(
     file_data: Base64.strict_encode64(File.read("data.csv")),
-    filename: "data.csv"
+    filename: "data.csv",
+    media_type: "text/csv"
   )
+])
+
+# Reference a previously uploaded file by id (OpenAI Files API, Gemini Files API)
+session.user([
+  PromptBuilder::Content::InputText.new(text: "Summarize this."),
+  PromptBuilder::Content::InputFile.new(file_id: "file_abc123", media_type: "application/pdf")
 ])
 ```
 
@@ -349,13 +356,13 @@ The following table shows which session configuration fields are supported by ea
 | `parallel_tool_calls` | ✅ | ✅ | ❌ | ❌ |
 | `presence_penalty` | ✅ | ❌ | ❌ | ❌ |
 | `prompt_cache_key` | ❌ | ❌ | ❌ | ❌ |
-| `reasoning` | `effort` key only | ✅ | `budget_tokens` key only | ❌ |
+| `reasoning` | `effort` key only | `budget_tokens`/`display`/`type` only | `budget_tokens` key only | ❌ |
 | `safety_identifier` | ✅ → `user` | ✅ → `metadata.user_id` | ❌ | ❌ |
 | `service_tier` | ✅ | `auto`/`standard_only` only | ❌ | ❌ |
 | `store` | ✅ | ❌ | ❌ | ❌ |
-| `stream` | ✅ | ✅ | ✅ | ❌ |
+| `stream` | ✅ | ✅ | endpoint-selected⁸ | ❌ |
 | `stream_options` | `include_usage`/`include_obfuscation` only | ❌ | ❌ | ❌ |
-| `text` | `format` key only | `format` key only | `format` key only | ❌ |
+| `text` | `format` key only | ❌ | `format` key only | ❌ |
 | `top_logprobs` | ✅ | ❌ | ❌ | ❌ |
 | `truncation` | ❌ | ❌ | ❌ | ❌ |
 
@@ -364,17 +371,24 @@ The following table shows which session configuration fields are supported by ea
 | Content Type | ChatCompletion | Messages | Gemini | Converse |
 |:---|:---:|:---:|:---:|:---:|
 | `InputText` | ✅ | ✅ | ✅ | ✅ |
-| `InputImage` | user messages only | user messages only | user messages only | base64 or S3 URI only |
-| `InputFile` | ❌ | user messages only¹ | user messages only | base64 or S3 URI only² |
-| `InputVideo` | ❌ | ❌ | `video_url` required | S3 URI only |
+| `InputImage` | user messages only⁷ | user messages only⁵ | user messages only⁶ | base64 or S3 URI only |
+| `InputFile` | ❌ | user messages only¹ | user messages only⁶ | base64 or S3 URI only² |
+| `InputVideo` | ❌ | ❌ | `video_url` required (gs:// or Files API) | S3 URI only |
 | `OutputText` | ✅ | ✅ | ✅ | ✅ |
-| `RefusalContent` | ❌ | ❌ | ❌ | ❌ |
-| `Reasoning` items | ❌ | ✅³ | partial⁴ | ❌ |
+| `RefusalContent` | dropped⁹ | dropped⁹ | dropped⁹ | dropped⁹ |
+| `Reasoning` items | ❌ | ✅³ | ✅⁴ | ❌ |
+| `Compaction` items | ❌ | ❌ | ❌ | ❌ |
+| `ItemReference` items | ❌ | ❌ | ❌ | ❌ |
 
-¹ Messages format treats all files as PDF documents using the Anthropic document block type.  
+¹ Messages format defaults to `application/pdf`; set `InputFile.media_type` to use a different document type.  
 ² Converse format infers the document type from the filename or file URL extension.  
 ³ Messages format requires a cryptographic `signature` on all `thinking` blocks.  
-⁴ Gemini format does not support reasoning blocks with signatures or `redacted_thinking` blocks.
+⁴ Gemini format passes `thoughtSignature` through transparently. `redacted_thinking` blocks raise.  
+⁵ Anthropic does not support a `detail` field on images; it is silently dropped.  
+⁶ Gemini requires a Google-hosted URI (`gs://`, `https://generativelanguage.googleapis.com/`, or `https://storage.googleapis.com/`) — arbitrary public URLs raise. For files, set `media_type` or use a recognized `filename`/`file_url` extension.  
+⁷ Chat Completions does not accept `InputImage.file_id` — the `image_file` content type is Assistants API only. Use `image_url` or base64 `data` instead. `InputFile` content has no Chat Completions equivalent.  
+⁸ Gemini selects streaming by endpoint (`:streamGenerateContent`), not a request body field, so `session.stream` is silently ignored when serializing to Gemini.  
+⁹ `RefusalContent` blocks are dropped silently from request messages so a parsed Chat Completions refusal can sit in session history without breaking subsequent `request_payload` calls. A message left empty after stripping is omitted entirely.
 
 ### Features Not Accessible Through Open Responses
 

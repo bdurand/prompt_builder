@@ -32,7 +32,11 @@ module PromptBuilder
       def initialize(name:, call_id:, arguments:, id: nil, status: nil)
         @name = name&.to_s
         @call_id = call_id&.to_s
-        @arguments = arguments&.to_s
+        @arguments = case arguments
+        when nil then "{}"
+        when String then arguments
+        else JSON.generate(arguments)
+        end
         @id = id&.to_s
         @status = status&.to_s
       end

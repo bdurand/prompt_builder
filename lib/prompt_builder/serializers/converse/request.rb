@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "securerandom"
 
 module PromptBuilder
   module Serializers
@@ -33,7 +34,9 @@ module PromptBuilder
       #
       # Input content restrictions:
       # - +Reasoning+ items are not supported
-      # - +RefusalContent+ is not supported in request messages
+      # - +RefusalContent+ is dropped silently (a parsed Chat Completions
+      #   refusal can stay in session history without breaking subsequent
+      #   request_payload calls)
       # - +InputImage+ content is only supported in user messages (not assistant)
       # - +InputFile+ content is only supported in user messages (not assistant)
       # - +InputVideo+ content is only supported in user messages (not assistant)
@@ -174,7 +177,11 @@ module PromptBuilder
                 next if item.role == "system" || item.role == "developer"
 
                 role = (item.role == "assistant") ? "assistant" : "user"
-                content = item.content.map { |c| serialize_content(c, role: role) }
+                # RefusalContent is dropped silently; it can land in history via
+                # a parsed Chat Completions response but cannot be sent back.
+                visible_content = item.content.reject { |c| c.is_a?(Content::RefusalContent) }
+                next if visible_content.empty?
+                content = visible_content.map { |c| serialize_content(c, role: role) }
                 raw_messages << {"role" => role, "content" => content}
               when Items::FunctionCall
                 raw_messages << {
@@ -194,6 +201,10 @@ module PromptBuilder
                 }
               when Items::Reasoning
                 raise UnsupportedFormatError, "Converse format does not support Reasoning items"
+              when Items::Compaction
+                raise UnsupportedFormatError, "Converse format does not support Compaction items"
+              when Items::ItemReference
+                raise UnsupportedFormatError, "Converse format does not support ItemReference items"
               end
             end
 
@@ -226,7 +237,8 @@ module PromptBuilder
 
               serialize_video(content)
             when Content::RefusalContent
-              raise UnsupportedFormatError, "Converse format does not support RefusalContent"
+              # Filtered out before reaching here; defensive no-op.
+              nil
             else
               raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
             end
@@ -274,7 +286,7 @@ module PromptBuilder
                 "Converse format requires InputFile.file_data or an S3 URI for InputFile.file_url"
             end
 
-            name = document_name(content.filename)
+            name = document_name(content)
             {"document" => {"format" => format, "name" => name, "source" => source}}
           end
 
@@ -291,10 +303,19 @@ module PromptBuilder
               "Converse format could not detect document format; set a file extension on InputFile.filename or InputFile.file_url"
           end
 
-          def document_name(filename)
-            return "document" unless filename
-
-            File.basename(filename, ".*")
+          # Bedrock requires document.name to be unique within a request and to
+          # match /^[A-Za-z0-9 \-\(\)\[\]]{1,256}$/. Prefer the filename, fall
+          # back to the file_url basename, then a random suffix to avoid
+          # collisions when multiple unnamed documents are attached.
+          def document_name(content)
+            source = content.filename || content.file_url
+            if source
+              base = File.basename(source, ".*")
+              sanitized = base.gsub(/[^A-Za-z0-9 \-()\[\]]/, "-")
+              sanitized = sanitized[0, 256]
+              return sanitized unless sanitized.empty?
+            end
+            "document-#{SecureRandom.hex(4)}"
           end
 
           def serialize_video(content)
@@ -321,16 +342,39 @@ module PromptBuilder
 
           def serialize_tool_result(item)
             result = {"toolUseId" => item.call_id}
-            result["status"] = item.status if item.status
 
-            if item.output.is_a?(Array)
-              content = item.output.map { |c| serialize_tool_result_content(c) }
-              result["content"] = content unless content.empty?
+            status = converse_tool_result_status(item.status)
+            result["status"] = status if status
+
+            content = if item.output.is_a?(Array)
+              item.output.map { |c| serialize_tool_result_content(c) }
             elsif !item.output.nil? && !item.output.empty?
-              result["content"] = [{"text" => item.output}]
+              [{"text" => item.output}]
+            else
+              []
             end
 
+            # Bedrock requires toolResult.content to be a non-empty array.
+            content = [{"text" => ""}] if content.empty?
+            result["content"] = content
+
             {"toolResult" => result}
+          end
+
+          # Bedrock toolResult.status only accepts "success" or "error". Map
+          # Open Responses-style status values to that shape; pass through
+          # already-valid values; ignore everything else.
+          def converse_tool_result_status(status)
+            case status
+            when nil, ""
+              nil
+            when "success", "error"
+              status
+            when "failed", "incomplete"
+              "error"
+            when "completed"
+              "success"
+            end
           end
 
           def serialize_tool_result_content(content)
@@ -407,12 +451,13 @@ module PromptBuilder
                 "Converse format does not support tool_choice 'none'"
             when Hash
               if choice["type"] == "function"
-                unless choice["name"]
+                name = choice["name"] || choice.dig("function", "name")
+                unless name
                   raise UnsupportedFormatError,
                     "Converse format requires tool_choice.name for function tool choices"
                 end
 
-                {"tool" => {"name" => choice["name"]}}
+                {"tool" => {"name" => name}}
               else
                 raise UnsupportedFormatError,
                   "Converse format does not support tool_choice #{choice.inspect}"

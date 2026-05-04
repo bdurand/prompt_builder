@@ -71,10 +71,12 @@ module PromptBuilder
             parts.each do |part|
               if part["thought"]
                 flush_text_contents!(output, text_contents)
-                reasoning_contents << {
+                block = {
                   "type" => "thinking",
                   "thinking" => part["text"] || ""
                 }
+                block["signature"] = part["thoughtSignature"] if part["thoughtSignature"]
+                reasoning_contents << block
               elsif part["functionCall"]
                 flush_text_contents!(output, text_contents)
                 flush_reasoning_contents!(output, reasoning_contents)

@@ -21,7 +21,7 @@ module PromptBuilder
                   role: "assistant",
                   content: [Content::RefusalContent.new(refusal: message["refusal"])]
                 )
-              elsif message["content"]
+              elsif message["content"] && !message["content"].empty?
                 output << Items::Message.new(
                   role: "assistant",
                   content: [Content::OutputText.new(text: message["content"], logprobs: logprobs_content)]

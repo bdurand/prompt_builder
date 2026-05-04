@@ -184,6 +184,36 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(tool_result["status"]).to eq("error")
     end
 
+    it "maps Open Responses status values to Bedrock toolResult status" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "ping", call_id: "call_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "call_1", output: "fine", status: "completed"
+      ))
+
+      h = described_class.request_payload(session)
+      tool_result = h["messages"][2]["content"][0]["toolResult"]
+      expect(tool_result["status"]).to eq("success")
+    end
+
+    it "always emits a non-empty toolResult content array even when output is nil" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "ping", call_id: "call_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "call_1", output: nil
+      ))
+
+      h = described_class.request_payload(session)
+      tool_result = h["messages"][2]["content"][0]["toolResult"]
+      expect(tool_result["content"]).to eq([{"text" => ""}])
+    end
+
     it "converts InputImage with base64 data" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
@@ -257,7 +287,39 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(document["source"]).to eq({"s3Location" => {"uri" => "s3://my-bucket/docs/report.pdf"}})
     end
 
-    it "detects document format from file_url extension when no filename is set" do
+    it "sanitizes document name to match Bedrock's allowed character set" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(file_data: "x", filename: "my_report.v2.pdf")]
+      ))
+
+      h = described_class.request_payload(session)
+      document = h["messages"][0]["content"][0]["document"]
+      expect(document["name"]).to eq("my-report-v2")
+    end
+
+    it "raises for Compaction items" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Compaction.new(encrypted_content: "abc"))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /Compaction/)
+    end
+
+    it "raises for ItemReference items" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::ItemReference.new(id: "msg_1"))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /ItemReference/)
+    end
+
+    it "detects document format and name from file_url extension when no filename is set" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
@@ -267,7 +329,22 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       h = described_class.request_payload(session)
       document = h["messages"][0]["content"][0]["document"]
       expect(document["format"]).to eq("csv")
-      expect(document["name"]).to eq("document")
+      expect(document["name"]).to eq("data")
+    end
+
+    it "derives distinct document names from file_url basenames for multiple unnamed documents" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [
+          PromptBuilder::Content::InputFile.new(file_url: "s3://bucket/q1.pdf"),
+          PromptBuilder::Content::InputFile.new(file_url: "s3://bucket/q2.pdf")
+        ]
+      ))
+
+      h = described_class.request_payload(session)
+      names = h["messages"][0]["content"].map { |c| c["document"]["name"] }
+      expect(names).to eq(["q1", "q2"])
     end
 
     it "converts InputVideo with S3 URI" do
@@ -305,6 +382,18 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(
         model: "amazon.nova-pro-v1:0",
         tool_choice: {"type" => "function", "name" => "get_weather"}
+      )
+      session.register_tool("get_weather") { |_| "ok" }
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["toolConfig"]["toolChoice"]).to eq({"tool" => {"name" => "get_weather"}})
+    end
+
+    it "accepts the nested OpenAI tool_choice shape" do
+      session = PromptBuilder::Session.new(
+        model: "amazon.nova-pro-v1:0",
+        tool_choice: {"type" => "function", "function" => {"name" => "get_weather"}}
       )
       session.register_tool("get_weather") { |_| "ok" }
       session.user("Hi")
@@ -403,16 +492,18 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /Reasoning/)
     end
 
-    it "raises for RefusalContent" do
+    it "drops RefusalContent silently so a parsed refusal can stay in session history" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hello")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::RefusalContent.new(refusal: "I cannot help.")]
       ))
+      session.user("Try again")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /RefusalContent/)
+      h = described_class.request_payload(session)
+      # The refusal-only assistant message is skipped; the two user messages merge.
+      expect(h["messages"].map { |m| m["role"] }).to eq(["user"])
     end
 
     it "raises for InputImage with a non-S3 URL" do
