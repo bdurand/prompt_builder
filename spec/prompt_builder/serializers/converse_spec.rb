@@ -31,6 +31,66 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       }.to raise_error(PromptBuilder::InvalidStateError)
     end
 
+    it "raises when there are no user/assistant messages" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-lite-v1:0", instructions: "Be helpful")
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /at least one user\/assistant message/)
+    end
+
+    it "raises when the first message is not from the user" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-lite-v1:0")
+      session.assistant("Out of order")
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /first message to have role/)
+    end
+
+    it "infers document format from media_type when no filename extension is provided" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [
+          PromptBuilder::Content::InputText.new(text: "Read this"),
+          PromptBuilder::Content::InputFile.new(file_data: "AAAA", media_type: "application/pdf")
+        ]
+      ))
+
+      h = described_class.request_payload(session)
+      doc = h["messages"][0]["content"].find { |c| c["document"] }
+      expect(doc["document"]["format"]).to eq("pdf")
+    end
+
+    it "scopes document_name counters per request (no leakage across calls)" do
+      build = lambda do
+        session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+        session.add_item(PromptBuilder::Items::Message.new(
+          role: "user",
+          content: [PromptBuilder::Content::InputFile.new(file_data: "AA", filename: "report.pdf")]
+        ))
+        described_class.request_payload(session)
+      end
+
+      h1 = build.call
+      h2 = build.call
+      name1 = h1["messages"][0]["content"][0]["document"]["name"]
+      name2 = h2["messages"][0]["content"][0]["document"]["name"]
+      expect(name1).to eq("report")
+      expect(name2).to eq("report")
+    end
+
+    it "raises when FunctionCall arguments are not a JSON object" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Pick a color")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "pick", call_id: "tool_1", arguments: '"red"'
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /JSON object/)
+    end
+
     it "omits inferenceConfig when no inference fields are set" do
       session = PromptBuilder::Session.new(model: "amazon.nova-lite-v1:0")
       session.user("Hi")
@@ -790,6 +850,23 @@ RSpec.describe PromptBuilder::Serializers::Converse do
 
       expect(response.output).to be_empty
       expect(response.status).to eq("completed")
+    end
+
+    it "raises for unrecognized response content blocks (e.g. citationsContent)" do
+      expect {
+        described_class.parse_response({
+          "output" => {
+            "message" => {
+              "role" => "assistant",
+              "content" => [
+                {"text" => "Per the docs:"},
+                {"citationsContent" => {"citations" => []}}
+              ]
+            }
+          },
+          "stopReason" => "end_turn"
+        })
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /citationsContent/)
     end
 
     it "can be added to a session" do

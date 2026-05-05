@@ -76,12 +76,12 @@ module PromptBuilder
         when Content::Base
           [content]
         when Hash
-          [Content::Base.from_h(content.transform_keys(&:to_s))]
+          [normalize_hash_content(content)]
         when Array
           content.map do |c|
             case c
             when Hash
-              Content::Base.from_h(c.transform_keys(&:to_s))
+              normalize_hash_content(c)
             when Content::Base
               c
             else
@@ -91,6 +91,15 @@ module PromptBuilder
         else
           raise InvalidItemError, "Unsupported content type: #{content.class}"
         end
+      end
+
+      def normalize_hash_content(hash)
+        hash = hash.transform_keys(&:to_s)
+        unless hash["type"]
+          raise InvalidItemError,
+            "Content hash is missing required \"type\" key: #{hash.inspect}"
+        end
+        Content::Base.from_h(hash)
       end
     end
   end

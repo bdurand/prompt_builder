@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "json"
+require "json-schema"
 
 RSpec.describe PromptBuilder::Serializers::OpenResponses do
   describe ".request_payload" do
@@ -208,6 +210,115 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(item.id).to eq("comp_1")
       expect(item.encrypted_content).to eq("encrypted_data")
       expect(item.created_by).to eq("assistant")
+    end
+  end
+
+  describe "schema validation" do
+    schema_path = File.expand_path("../../open_responses_schema.json", __dir__)
+    schema = JSON.parse(File.read(schema_path))
+    fragment = "#/components/schemas/CreateResponseBody"
+
+    it "produces a payload exercising every Open Responses feature that conforms to the OpenAPI schema" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-5.4",
+        instructions: "You are a helpful assistant.",
+        temperature: 0.7,
+        top_p: 0.9,
+        presence_penalty: 0.1,
+        frequency_penalty: 0.2,
+        max_output_tokens: 1024,
+        max_tool_calls: 4,
+        top_logprobs: 5,
+        parallel_tool_calls: true,
+        stream: false,
+        background: false,
+        store: true,
+        truncation: "auto",
+        service_tier: "auto",
+        safety_identifier: "user_42",
+        prompt_cache_key: "cache_key_1",
+        include: ["reasoning.encrypted_content", "message.output_text.logprobs"],
+        tool_choice: "auto",
+        metadata: {"session" => "abc", "tag" => "demo"},
+        text: {"format" => {"type" => "text"}, "verbosity" => "medium"},
+        stream_options: {"include_obfuscation" => true},
+        reasoning: {"effort" => "medium", "summary" => "auto"}
+      )
+
+      session.register_tool(
+        "get_weather",
+        description: "Look up the weather for a city.",
+        parameters: {
+          "type" => "object",
+          "properties" => {"city" => {"type" => "string"}},
+          "required" => ["city"]
+        },
+        strict: true
+      )
+
+      session.system("Stay concise.")
+      session.developer("Use metric units.")
+      session.user([
+        PromptBuilder::Content::InputText.new(text: "Describe these inputs."),
+        PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png", detail: "high"),
+        PromptBuilder::Content::InputImage.new(file_id: "file_abc"),
+        PromptBuilder::Content::InputImage.new(data: "aGVsbG8=", media_type: "image/png"),
+        PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf", filename: "doc.pdf"),
+        PromptBuilder::Content::InputFile.new(file_id: "file_xyz")
+      ])
+
+      session.add_item(PromptBuilder::Items::Reasoning.new(
+        id: "rs_1",
+        encrypted_content: "encrypted_reasoning_blob",
+        summary: [{"type" => "summary_text", "text" => "Considered the request."}]
+      ))
+
+      session.assistant([
+        PromptBuilder::Content::OutputText.new(text: "Here is the result."),
+        PromptBuilder::Content::RefusalContent.new(refusal: "Cannot share private data.")
+      ])
+
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        id: "fc_1",
+        call_id: "call_1",
+        name: "get_weather",
+        arguments: {"city" => "Paris"},
+        status: "completed"
+      ))
+
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        id: "fco_1",
+        call_id: "call_1",
+        status: "completed",
+        output: [
+          PromptBuilder::Content::InputText.new(text: "Sunny, 22C"),
+          PromptBuilder::Content::InputImage.new(data: "aW1n", media_type: "image/png"),
+          PromptBuilder::Content::InputFile.new(file_url: "https://example.com/forecast.pdf"),
+          PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/clip.mp4")
+        ]
+      ))
+
+      session.add_item(PromptBuilder::Items::Compaction.new(
+        id: "cmp_1",
+        encrypted_content: "compacted_blob"
+      ))
+
+      session.add_item(PromptBuilder::Items::ItemReference.new(id: "msg_prior_1"))
+
+      payload = described_class.request_payload(session)
+      errors = JSON::Validator.fully_validate(schema, payload, fragment: fragment)
+
+      expect(errors).to be_empty, -> { "Payload failed schema validation:\n#{errors.join("\n")}\n\nPayload:\n#{JSON.pretty_generate(payload)}" }
+    end
+
+    it "rejects malformed payloads against the schema (sanity check)" do
+      bad_payload = {
+        "input" => [
+          {"type" => "message", "role" => "alien", "content" => "hi"}
+        ]
+      }
+      errors = JSON::Validator.fully_validate(schema, bad_payload, fragment: fragment)
+      expect(errors).not_to be_empty
     end
   end
 end

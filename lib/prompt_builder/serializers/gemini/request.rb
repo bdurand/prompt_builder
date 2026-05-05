@@ -11,18 +11,15 @@ module PromptBuilder
       #
       # These session fields are not supported and raise +UnsupportedFormatError+:
       # - +background+ — Gemini has no background/async mode on the generate endpoint
-      # - +frequency_penalty+ — not supported by the Gemini generation API
       # - +include+ — response-field inclusion is an Open Responses-only concept
       # - +max_tool_calls+ — per-request tool-call caps are not supported
       # - +metadata+ — arbitrary metadata is not supported
       # - +parallel_tool_calls+ — parallel tool call control is not supported
-      # - +presence_penalty+ — not supported by the Gemini generation API
       # - +prompt_cache_key+ — explicit prompt cache keys are not supported
       # - +safety_identifier+ — no equivalent user-safety field on the generate endpoint
       # - +service_tier+ — service tier selection is not supported
       # - +store+ — server-side response storage is not supported
       # - +stream_options+ — stream event options are not supported
-      # - +top_logprobs+ — log probability output is not supported
       # - +truncation+ — server-side context truncation is not supported
       #
       # Input content restrictions:
@@ -47,14 +44,29 @@ module PromptBuilder
       # The following Gemini parameters cannot be set through the Open Responses
       # canonical format:
       # - +thinkingConfig.thinkingBudget+ — use +reasoning.budget_tokens+ instead
+      # - +thinkingConfig.includeThoughts+ — request that the model emit thought
+      #   parts in its response
       # - +topK+ — top-K sampling parameter
       # - +seed+ — for reproducible outputs (model-dependent)
       # - +stopSequences+ — custom stop sequences
       # - +candidateCount+ — requesting multiple response candidates
+      # - +responseModalities+ — selecting TEXT/IMAGE/AUDIO output channels
+      # - +responseJsonSchema+ — newer JSON Schema variant of +responseSchema+
       # - +safetySettings+ — configurable harm-category safety thresholds
-      # - Video metadata controls (+videoMetadata+ offset, FPS)
-      # - Audio input (model-dependent)
-      # - Named cached content resources
+      # - +mediaResolution+ — controls token cost of image/video inputs
+      # - +audioTimestamp+, +speechConfig+ — audio output configuration
+      # - +enableEnhancedCivicAnswers+
+      # - +routingConfig+, +modelSelectionConfig+
+      # - Video metadata controls (+videoMetadata+ offset, FPS) on +Part+s
+      # - Audio input (model-dependent; can be sent as +InputFile+ with an
+      #   audio MIME type but is not officially supported)
+      # - Built-in Gemini tools: +googleSearch+ / +googleSearchRetrieval+,
+      #   +codeExecution+, +urlContext+, +computerUse+, +fileSearch+,
+      #   +googleMaps+, +mcpServers+
+      # - +functionCallingConfig.mode = VALIDATED+
+      # - +toolConfig.retrievalConfig+, +includeServerSideToolInvocations+
+      # - +cachedContent+ — referencing a CachedContent resource by name
+      # - Top-level +labels+ (Vertex flavor only)
       class Request < Base
         SUPPORTED_TEXT_KEYS = %w[format].freeze
         SUPPORTED_REASONING_KEYS = %w[budget_tokens].freeze
@@ -122,10 +134,7 @@ module PromptBuilder
             unsupported_fields << "prompt_cache_key" if session.prompt_cache_key
             unsupported_fields << "truncation" if session.truncation
             unsupported_fields << "store" unless session.store.nil?
-            unsupported_fields << "top_logprobs" if session.top_logprobs
             unsupported_fields << "service_tier" if session.service_tier
-            unsupported_fields << "presence_penalty" if session.presence_penalty
-            unsupported_fields << "frequency_penalty" if session.frequency_penalty
             unsupported_fields << "metadata" if session.metadata
             unsupported_fields << "parallel_tool_calls" unless session.parallel_tool_calls.nil?
 
@@ -183,19 +192,22 @@ module PromptBuilder
                 parts = [{
                   "functionCall" => {
                     "name" => item.name,
-                    "args" => item.parsed_arguments
+                    "args" => parse_function_call_args(item)
                   }
                 }]
                 raw_contents << {"role" => "model", "parts" => parts}
               when Items::FunctionCallOutput
-                function_name = call_id_to_name[item.call_id] || item.call_id
+                function_name = call_id_to_name[item.call_id]
+                unless function_name
+                  raise UnsupportedFormatError,
+                    "Gemini format requires a matching FunctionCall for FunctionCallOutput #{item.call_id.inspect}; " \
+                    "Gemini's functionResponse.name must reference a previously-declared tool name"
+                end
 
                 parts = [{
                   "functionResponse" => {
                     "name" => function_name,
-                    "response" => {
-                      "result" => serialize_function_output(item.output)
-                    }
+                    "response" => serialize_function_output(item.output)
                   }
                 }]
                 raw_contents << {"role" => "user", "parts" => parts}
@@ -233,9 +245,14 @@ module PromptBuilder
             end
           end
 
+          # Gemini's functionResponse.response is a structured Struct (object).
+          # When the tool produced a JSON object, return it directly so callers
+          # can roundtrip structured output without lossy stringification; for
+          # plain strings or arrays of text, wrap in {"result" => ...} so the
+          # response is still a valid object.
           def serialize_function_output(output)
             if output.is_a?(Array)
-              output.map do |content|
+              text = output.map do |content|
                 case content
                 when Content::InputText, Content::OutputText
                   content.text
@@ -244,9 +261,31 @@ module PromptBuilder
                     "#{content.class.name.split("::").last} is not supported in tool output in Gemini format"
                 end
               end.join("\n")
+              {"result" => text}
             else
-              output || ""
+              raw = output || ""
+              if raw.is_a?(String) && !raw.empty?
+                begin
+                  parsed = JSON.parse(raw)
+                  return parsed if parsed.is_a?(Hash)
+                rescue JSON::ParserError
+                  # fall through to wrapping
+                end
+              end
+              {"result" => raw}
             end
+          end
+
+          def parse_function_call_args(item)
+            parsed = item.parsed_arguments
+            unless parsed.is_a?(Hash)
+              raise UnsupportedFormatError,
+                "Gemini format requires FunctionCall arguments to be a JSON object"
+            end
+            parsed
+          rescue PromptBuilder::InvalidItemError => e
+            raise UnsupportedFormatError,
+              "Gemini format could not parse FunctionCall arguments: #{e.message}"
           end
 
           def serialize_content(content, role:)
@@ -276,6 +315,12 @@ module PromptBuilder
               unless content.video_url
                 raise UnsupportedFormatError,
                   "Gemini format requires InputVideo.video_url"
+              end
+
+              unless google_file_uri?(content.video_url)
+                raise UnsupportedFormatError,
+                  "Gemini format does not support arbitrary public video URLs; use a gs:// or " \
+                  "Files API InputVideo.video_url"
               end
 
               mime = video_mime_type(content.video_url)
@@ -409,6 +454,13 @@ module PromptBuilder
             config["temperature"] = session.temperature if session.temperature
             config["topP"] = session.top_p if session.top_p
             config["maxOutputTokens"] = session.max_output_tokens if session.max_output_tokens
+            config["presencePenalty"] = session.presence_penalty if session.presence_penalty
+            config["frequencyPenalty"] = session.frequency_penalty if session.frequency_penalty
+
+            if session.top_logprobs
+              config["responseLogprobs"] = true
+              config["logprobs"] = session.top_logprobs
+            end
 
             if session.text
               unsupported_keys = session.text.keys - SUPPORTED_TEXT_KEYS
@@ -420,12 +472,17 @@ module PromptBuilder
               format = session.text["format"]
               if format.is_a?(Hash)
                 case format["type"]
+                when "text"
+                  config["responseMimeType"] = "text/plain"
                 when "json_object"
                   config["responseMimeType"] = "application/json"
                 when "json_schema"
                   config["responseMimeType"] = "application/json"
                   schema = format.dig("json_schema", "schema") || format["schema"]
                   config["responseSchema"] = schema if schema
+                else
+                  raise UnsupportedFormatError,
+                    "Gemini format does not support text.format type #{format["type"].inspect}"
                 end
               end
             end

@@ -225,20 +225,20 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h["generationConfig"]["topP"]).to eq(0.9)
     end
 
-    it "raises an error for presence_penalty" do
+    it "maps presence_penalty to generationConfig.presencePenalty" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", presence_penalty: 0.1)
       session.user("Hi")
 
-      expect { described_class.request_payload(session) }
-        .to raise_error(PromptBuilder::UnsupportedFormatError, /presence_penalty/)
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["presencePenalty"]).to eq(0.1)
     end
 
-    it "raises an error for frequency_penalty" do
+    it "maps frequency_penalty to generationConfig.frequencyPenalty" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", frequency_penalty: 0.2)
       session.user("Hi")
 
-      expect { described_class.request_payload(session) }
-        .to raise_error(PromptBuilder::UnsupportedFormatError, /frequency_penalty/)
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["frequencyPenalty"]).to eq(0.2)
     end
 
     it "converts text format json_object to responseMimeType" do
@@ -502,17 +502,29 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputFile\.media_type or a recognized filename extension/)
     end
 
-    it "converts InputVideo with URL to fileData" do
+    it "converts InputVideo with a Google-hosted URL to fileData" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputVideo.new(video_url: "gs://my-bucket/video.mp4")]
+      ))
+
+      h = described_class.request_payload(session)
+      part = h["contents"][0]["parts"][0]
+      expect(part["fileData"]["fileUri"]).to eq("gs://my-bucket/video.mp4")
+      expect(part["fileData"]["mimeType"]).to eq("video/mp4")
+    end
+
+    it "raises for InputVideo with an arbitrary public URL" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/video.mp4")]
       ))
 
-      h = described_class.request_payload(session)
-      part = h["contents"][0]["parts"][0]
-      expect(part["fileData"]["fileUri"]).to eq("https://example.com/video.mp4")
-      expect(part["fileData"]["mimeType"]).to eq("video/mp4")
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /arbitrary public video URLs/)
     end
 
     it "raises for InputVideo without URL" do
@@ -772,17 +784,16 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool output in Gemini/)
     end
 
-    it "falls back to call_id when function name cannot be resolved" do
+    it "raises when FunctionCallOutput cannot be matched to a FunctionCall" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.user("Weather?")
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
         call_id: "unknown_call", output: "result"
       ))
 
-      h = described_class.request_payload(session)
-      # FunctionCallOutput has "user" role and merges with preceding user message
-      func_response_part = h["contents"][0]["parts"].find { |p| p["functionResponse"] }
-      expect(func_response_part["functionResponse"]["name"]).to eq("unknown_call")
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /matching FunctionCall/)
     end
 
     it "wraps multiple tools in a single tools array element" do
@@ -853,13 +864,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /store/)
     end
 
-    it "raises for unsupported session fields: top_logprobs, service_tier, metadata" do
-      session = PromptBuilder::Session.new(model: "gemini-2.0-flash", top_logprobs: 5)
-      session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /top_logprobs/)
-
+    it "raises for unsupported session fields: service_tier, metadata" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", service_tier: "auto")
       session.user("Hi")
       expect {
@@ -871,6 +876,38 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect {
         described_class.request_payload(session)
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /metadata/)
+    end
+
+    it "maps top_logprobs to responseLogprobs and logprobs" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash", top_logprobs: 5)
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["responseLogprobs"]).to eq(true)
+      expect(h["generationConfig"]["logprobs"]).to eq(5)
+    end
+
+    it "maps text format text to responseMimeType text/plain" do
+      session = PromptBuilder::Session.new(
+        model: "gemini-2.0-flash",
+        text: {"format" => {"type" => "text"}}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["responseMimeType"]).to eq("text/plain")
+    end
+
+    it "raises for unknown text.format type" do
+      session = PromptBuilder::Session.new(
+        model: "gemini-2.0-flash",
+        text: {"format" => {"type" => "json_array"}}
+      )
+      session.user("Hi")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format type "json_array"/)
     end
 
     it "can be resolved via symbol alias" do
@@ -912,6 +949,154 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
   end
 
   describe ".parse_response" do
+    it "preserves responseId" do
+      response_hash = {
+        "responseId" => "resp_xyz",
+        "modelVersion" => "gemini-2.0-flash",
+        "candidates" => [
+          {"content" => {"parts" => [{"text" => "ok"}]}, "finishReason" => "STOP"}
+        ]
+      }
+      response = described_class.parse_response(response_hash)
+      expect(response.id).to eq("resp_xyz")
+    end
+
+    it "marks safety-blocked prompts as failed even when candidates is empty" do
+      response_hash = {
+        "candidates" => [],
+        "promptFeedback" => {"blockReason" => "SAFETY"}
+      }
+      response = described_class.parse_response(response_hash)
+      expect(response.status).to eq("failed")
+    end
+
+    it "maps newer FinishReason values to failed" do
+      %w[BLOCKLIST PROHIBITED_CONTENT SPII MALFORMED_FUNCTION_CALL IMAGE_SAFETY LANGUAGE
+        UNEXPECTED_TOOL_CALL TOO_MANY_TOOL_CALLS MODEL_ARMOR].each do |reason|
+        response = described_class.parse_response({
+          "candidates" => [{"content" => {"parts" => [{"text" => ""}]}, "finishReason" => reason}]
+        })
+        expect(response.status).to eq("failed"), "expected #{reason} to map to failed"
+      end
+    end
+
+    it "treats FINISH_REASON_UNSPECIFIED as nil status" do
+      response = described_class.parse_response({
+        "candidates" => [{"content" => {"parts" => [{"text" => "x"}]}, "finishReason" => "FINISH_REASON_UNSPECIFIED"}]
+      })
+      expect(response.status).to be_nil
+    end
+
+    it "raises on unknown response Part shapes (executableCode, codeExecutionResult, inlineData, fileData)" do
+      %w[executableCode codeExecutionResult inlineData fileData toolCall toolResponse].each do |key|
+        response_hash = {
+          "candidates" => [
+            {
+              "content" => {"parts" => [{key => {"foo" => "bar"}}]},
+              "finishReason" => "STOP"
+            }
+          ]
+        }
+        expect {
+          described_class.parse_response(response_hash)
+        }.to raise_error(PromptBuilder::UnsupportedFormatError, /response part #{Regexp.escape(key.inspect)}/),
+          "expected #{key} part to raise"
+      end
+    end
+
+    it "raises on response Part with no recognized content key" do
+      response_hash = {
+        "candidates" => [
+          {
+            "content" => {"parts" => [{"unknownKey" => "x"}]},
+            "finishReason" => "STOP"
+          }
+        ]
+      }
+      expect {
+        described_class.parse_response(response_hash)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /unknownKey/)
+    end
+
+    it "preserves text parts whose text is an empty string" do
+      response_hash = {
+        "candidates" => [
+          {"content" => {"parts" => [{"text" => ""}]}, "finishReason" => "STOP"}
+        ]
+      }
+      response = described_class.parse_response(response_hash)
+      expect(response.output.length).to eq(1)
+      expect(response.output[0].content[0].text).to eq("")
+    end
+
+    it "surfaces grounding, citation, safety, and logprobs metadata on provider_data" do
+      response_hash = {
+        "responseId" => "resp_xyz",
+        "createTime" => "2026-05-04T12:00:00Z",
+        "promptFeedback" => {"safetyRatings" => [{"category" => "HARM_CATEGORY_HARASSMENT", "probability" => "NEGLIGIBLE"}]},
+        "candidates" => [
+          {
+            "index" => 0,
+            "content" => {"parts" => [{"text" => "ok"}]},
+            "finishReason" => "STOP",
+            "finishMessage" => "natural stop",
+            "safetyRatings" => [{"category" => "HARM_CATEGORY_HATE_SPEECH", "probability" => "LOW"}],
+            "citationMetadata" => {"citationSources" => [{"uri" => "https://example.com"}]},
+            "groundingMetadata" => {"webSearchQueries" => ["weather paris"]},
+            "urlContextMetadata" => {"urls" => ["https://example.com"]},
+            "avgLogprobs" => -0.5,
+            "logprobsResult" => {"chosenCandidates" => []}
+          }
+        ]
+      }
+
+      response = described_class.parse_response(response_hash)
+      data = response.provider_data
+      expect(data["create_time"]).to eq("2026-05-04T12:00:00Z")
+      expect(data["prompt_feedback"]).to be_a(Hash)
+      expect(data["index"]).to eq(0)
+      expect(data["safety_ratings"][0]["category"]).to eq("HARM_CATEGORY_HATE_SPEECH")
+      expect(data["citation_metadata"]["citationSources"][0]["uri"]).to eq("https://example.com")
+      expect(data["grounding_metadata"]["webSearchQueries"]).to eq(["weather paris"])
+      expect(data["url_context_metadata"]["urls"]).to eq(["https://example.com"])
+      expect(data["avg_logprobs"]).to eq(-0.5)
+      expect(data["logprobs_result"]).to eq({"chosenCandidates" => []})
+      expect(data["finish_message"]).to eq("natural stop")
+    end
+
+    it "leaves provider_data nil when no metadata is present" do
+      response_hash = {
+        "candidates" => [{"content" => {"parts" => [{"text" => "x"}]}, "finishReason" => "STOP"}]
+      }
+      response = described_class.parse_response(response_hash)
+      expect(response.provider_data).to be_nil
+    end
+
+    it "surfaces additional usage breakdowns (tool-use prompt tokens and modality details)" do
+      response_hash = {
+        "candidates" => [{"content" => {"parts" => [{"text" => "ok"}]}, "finishReason" => "STOP"}],
+        "usageMetadata" => {
+          "promptTokenCount" => 100,
+          "candidatesTokenCount" => 10,
+          "totalTokenCount" => 110,
+          "toolUsePromptTokenCount" => 7,
+          "promptTokensDetails" => [{"modality" => "TEXT", "tokenCount" => 100}],
+          "cacheTokensDetails" => [{"modality" => "TEXT", "tokenCount" => 50}],
+          "candidatesTokensDetails" => [{"modality" => "TEXT", "tokenCount" => 10}],
+          "toolUsePromptTokensDetails" => [{"modality" => "TEXT", "tokenCount" => 7}]
+        }
+      }
+
+      response = described_class.parse_response(response_hash)
+      input_details = response.usage.input_tokens_details
+      output_details = response.usage.output_tokens_details
+      expect(input_details["tool_use_prompt_tokens"]).to eq(7)
+      expect(input_details["prompt_tokens_details"]).to eq([{"modality" => "TEXT", "tokenCount" => 100}])
+      expect(input_details["cache_tokens_details"]).to eq([{"modality" => "TEXT", "tokenCount" => 50}])
+      expect(input_details["tool_use_prompt_tokens_details"]).to eq([{"modality" => "TEXT", "tokenCount" => 7}])
+      expect(output_details["candidates_tokens_details"]).to eq([{"modality" => "TEXT", "tokenCount" => 10}])
+    end
+
     it "parses basic text response" do
       response_hash = {
         "modelVersion" => "gemini-2.0-flash",
@@ -971,7 +1156,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       func_call = response.output[0]
       expect(func_call).to be_a(PromptBuilder::Items::FunctionCall)
       expect(func_call.name).to eq("get_weather")
-      expect(func_call.call_id).to eq("gemini_call_0")
+      expect(func_call.call_id).to match(/\Agemini_call_[0-9a-f]+_0\z/)
       expect(func_call.parsed_arguments).to eq({"city" => "London"})
     end
 
@@ -1183,10 +1368,14 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
       response = described_class.parse_response(response_hash)
       expect(response.tool_calls.length).to eq(2)
-      expect(response.tool_calls[0].call_id).to eq("gemini_call_0")
+      expect(response.tool_calls[0].call_id).to match(/\Agemini_call_[0-9a-f]+_0\z/)
       expect(response.tool_calls[0].name).to eq("get_weather")
-      expect(response.tool_calls[1].call_id).to eq("gemini_call_1")
+      expect(response.tool_calls[1].call_id).to match(/\Agemini_call_[0-9a-f]+_1\z/)
       expect(response.tool_calls[1].name).to eq("get_time")
+      # Both calls must share the same response-scoped seed
+      seed1 = response.tool_calls[0].call_id[%r{^gemini_call_([0-9a-f]+)_}, 1]
+      seed2 = response.tool_calls[1].call_id[%r{^gemini_call_([0-9a-f]+)_}, 1]
+      expect(seed1).to eq(seed2)
     end
 
     it "handles empty functionCall args" do

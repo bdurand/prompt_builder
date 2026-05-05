@@ -15,6 +15,15 @@ RSpec.describe PromptBuilder::Items::FunctionCallOutput do
       })
     end
 
+    it "serializes a nil output as an empty string" do
+      output = described_class.new(call_id: "call_123", output: nil)
+      expect(output.to_h).to eq({
+        "type" => "function_call_output",
+        "call_id" => "call_123",
+        "output" => ""
+      })
+    end
+
     it "serializes array output as an array of content hashes" do
       output = described_class.new(
         call_id: "call_123",

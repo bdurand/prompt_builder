@@ -37,14 +37,18 @@ module PromptBuilder
       #   session history without breaking subsequent request_payload calls)
       # - +InputImage+ content is only supported in user messages (not assistant)
       # - +InputImage.detail+ is not part of the Anthropic schema and is dropped
+      # - +InputImage.file_id+ is mapped to a +file+ source (Anthropic Files API beta)
       # - +InputFile+ content is only supported in user messages (not assistant)
       # - +InputFile+ is sent as a +document+ block; +media_type+ is forwarded when
-      #   provided, otherwise +application/pdf+ is used
+      #   provided, otherwise +application/pdf+ is used for base64 sources
+      # - +InputFile.file_id+ is mapped to a +file+ source (Anthropic Files API beta)
       # - Thinking blocks without a +signature+ are dropped silently (cross-provider
       #   reasoning history doesn't round-trip into Anthropic)
       # - +Reasoning+ items with +summary+ blocks are not supported
       # - Forced tool choice (+any+/+tool+ type) is incompatible with thinking enabled
       # - +Compaction+ and +ItemReference+ items are not supported
+      # - +FunctionCallOutput.status+ values +incomplete+, +failed+, and +error+
+      #   are mapped to +tool_result.is_error: true+
       #
       # === Features in the Messages API not available through Open Responses
       #
@@ -52,12 +56,20 @@ module PromptBuilder
       # canonical format:
       # - +top_k+ — top-K sampling parameter
       # - +stop_sequences+ — custom stop sequences
+      # - +mcp_servers+ — MCP connector beta parameter
+      # - +container+ — code execution container reuse parameter
+      # - +cache_control+ markers on system blocks, message content blocks,
+      #   tool definitions, or document blocks (prompt caching)
+      # - Citations on documents and tool_result content blocks
+      # - +search_result+ content blocks
       # - Web search, code execution, computer use, bash tool, text editor, and
       #   memory built-in tools
       # - Redacted thinking round-trip (+redacted_thinking+ blocks are supported
       #   when they appear in conversation history but cannot be requested via OR)
       # - Cryptographic thinking signatures (passed through in history but not
       #   configurable as a generation parameter)
+      # - +anthropic-beta+ headers and API versioning (this gem produces no HTTP
+      #   request — set headers in your HTTP client)
       class Request < Base
         DEFAULT_MAX_TOKENS = 4096
         SUPPORTED_METADATA_KEYS = ["user_id"].freeze
@@ -89,7 +101,16 @@ module PromptBuilder
             system_parts = build_system(session)
             h["system"] = system_parts unless system_parts.empty?
 
-            h["messages"] = build_messages(session)
+            messages = build_messages(session)
+            if messages.empty?
+              raise UnsupportedFormatError,
+                "Messages format requires at least one user/assistant message"
+            end
+            unless messages.first["role"] == "user"
+              raise UnsupportedFormatError,
+                "Messages format requires the first message to have role \"user\""
+            end
+            h["messages"] = messages
 
             tools = build_tools(session)
             h["tools"] = tools unless tools.empty?
@@ -179,6 +200,14 @@ module PromptBuilder
 
             # Anthropic requires thinking.type ("enabled") whenever thinking is configured.
             thinking["type"] = reasoning["type"] || "enabled"
+
+            # Anthropic rejects thinking blocks that don't carry a budget_tokens
+            # value when type is "enabled".
+            if thinking["type"] == "enabled" && !thinking.key?("budget_tokens")
+              raise UnsupportedFormatError,
+                "Messages format requires reasoning.budget_tokens when thinking is enabled"
+            end
+
             thinking
           end
 
@@ -298,9 +327,14 @@ module PromptBuilder
                     "data" => content.data
                   }
                 }
+              elsif content.file_id
+                {
+                  "type" => "image",
+                  "source" => {"type" => "file", "file_id" => content.file_id}
+                }
               else
                 raise UnsupportedFormatError,
-                  "Messages format requires InputImage.image_url or InputImage.data"
+                  "Messages format requires InputImage.image_url, InputImage.data, or InputImage.file_id"
               end
             when Content::InputFile
               if role == "assistant"
@@ -322,9 +356,14 @@ module PromptBuilder
                     "data" => content.file_data
                   }
                 }
+              elsif content.file_id
+                document = {
+                  "type" => "document",
+                  "source" => {"type" => "file", "file_id" => content.file_id}
+                }
               else
                 raise UnsupportedFormatError,
-                  "Messages format requires InputFile.file_url or InputFile.file_data"
+                  "Messages format requires InputFile.file_url, InputFile.file_data, or InputFile.file_id"
               end
 
               document["title"] = content.filename if content.filename
@@ -339,13 +378,19 @@ module PromptBuilder
             end
           end
 
+          # FunctionCallOutput.status values that map to tool_result.is_error.
+          # "incomplete" and "failed" cover the OR canonical statuses; "error"
+          # is accepted as a convenience alias.
+          ERROR_TOOL_OUTPUT_STATUSES = %w[incomplete failed error].freeze
+          private_constant :ERROR_TOOL_OUTPUT_STATUSES
+
           def serialize_tool_result(item)
             result = {
               "type" => "tool_result",
               "tool_use_id" => item.call_id
             }
             content = if item.output.is_a?(Array)
-              item.output.map { |c| serialize_content(c, role: "user") }
+              item.output.map { |c| serialize_tool_result_content(c) }
             elsif !item.output.nil?
               # String outputs are passed through directly per Anthropic's schema.
               item.output
@@ -355,7 +400,23 @@ module PromptBuilder
             # array outputs to a single empty text block.
             content = [{"type" => "text", "text" => ""}] if content.nil? || (content.is_a?(Array) && content.empty?)
             result["content"] = content
+            result["is_error"] = true if ERROR_TOOL_OUTPUT_STATUSES.include?(item.status)
             result
+          end
+
+          # Anthropic's tool_result.content only accepts text and image blocks.
+          # Document blocks are rejected by the API.
+          def serialize_tool_result_content(content)
+            case content
+            when Content::InputText, Content::OutputText
+              {"type" => "text", "text" => content.text}
+            when Content::InputImage
+              serialize_content(content, role: "user")
+            else
+              raise UnsupportedFormatError,
+                "#{content.class.name.split("::").last} is not supported in tool_result.content " \
+                "in Messages format; Anthropic only accepts text and image blocks here"
+            end
           end
 
           def serialize_reasoning_block(block)

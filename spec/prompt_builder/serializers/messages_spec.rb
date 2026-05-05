@@ -40,6 +40,48 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       }.to raise_error(PromptBuilder::InvalidStateError)
     end
 
+    it "raises when there are no user/assistant messages" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", instructions: "Be helpful")
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /at least one user\/assistant message/)
+    end
+
+    it "raises when the first message is not from the user" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.assistant("Out of order")
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /first message to have role/)
+    end
+
+    it "raises when reasoning is enabled without budget_tokens" do
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        reasoning: {"type" => "enabled"}
+      )
+      session.user("Hi")
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /budget_tokens when thinking is enabled/)
+    end
+
+    it "raises when a tool_result includes a document content block" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.user("Read this")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "fetch", call_id: "toolu_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "toolu_1",
+        output: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool_result.content/)
+    end
+
     it "merges system and developer messages into top-level system" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", instructions: "Base instruction")
       session.system("Extra system context")
@@ -186,6 +228,85 @@ RSpec.describe PromptBuilder::Serializers::Messages do
         "media_type" => "application/pdf",
         "data" => "abc123"
       })
+    end
+
+    it "converts InputImage.file_id to a file source (Anthropic Files API)" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(file_id: "file_abc123")]
+      ))
+
+      h = described_class.request_payload(session)
+      content = h["messages"][0]["content"][0]
+      expect(content["type"]).to eq("image")
+      expect(content["source"]).to eq({"type" => "file", "file_id" => "file_abc123"})
+    end
+
+    it "converts InputFile.file_id to a file source (Anthropic Files API)" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(file_id: "file_xyz789")]
+      ))
+
+      h = described_class.request_payload(session)
+      content = h["messages"][0]["content"][0]
+      expect(content["type"]).to eq("document")
+      expect(content["source"]).to eq({"type" => "file", "file_id" => "file_xyz789"})
+    end
+
+    it "raises with a clear message when InputImage has no usable source" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /image_url, InputImage\.data, or InputImage\.file_id/)
+    end
+
+    it "raises with a clear message when InputFile has no usable source" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_url, InputFile\.file_data, or InputFile\.file_id/)
+    end
+
+    it "marks tool_result as is_error when FunctionCallOutput.status is failed" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.user("Run it")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "run", call_id: "toolu_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "toolu_1", output: "boom", status: "failed"
+      ))
+
+      h = described_class.request_payload(session)
+      tool_result = h["messages"][2]["content"][0]
+      expect(tool_result["is_error"]).to be true
+    end
+
+    it "does not set is_error for completed tool outputs" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.user("Run it")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "run", call_id: "toolu_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "toolu_1", output: "ok", status: "completed"
+      ))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][2]["content"][0]).not_to have_key("is_error")
     end
 
     it "honors InputFile.media_type for base64 documents" do
@@ -664,6 +785,71 @@ RSpec.describe PromptBuilder::Serializers::Messages do
         "usage" => {"input_tokens" => 10, "output_tokens" => 100}
       })
       expect(response.status).to eq("incomplete")
+    end
+
+    it "maps stop_sequence and pause_turn stop reasons to completed" do
+      stop_seq = described_class.parse_response({
+        "stop_reason" => "stop_sequence",
+        "stop_sequence" => "<<END>>",
+        "content" => [{"type" => "text", "text" => "stopped"}]
+      })
+      expect(stop_seq.status).to eq("completed")
+      expect(stop_seq.incomplete_details).to eq({"stop_sequence" => "<<END>>"})
+
+      pause = described_class.parse_response({
+        "stop_reason" => "pause_turn",
+        "content" => [{"type" => "text", "text" => "pausing"}]
+      })
+      expect(pause.status).to eq("completed")
+    end
+
+    it "maps refusal stop_reason to failed" do
+      response = described_class.parse_response({
+        "stop_reason" => "refusal",
+        "content" => [{"type" => "text", "text" => "I cannot help with that."}]
+      })
+      expect(response.status).to eq("failed")
+    end
+
+    it "parses usage.service_tier and usage.cache_creation breakdown into input_tokens_details" do
+      response = described_class.parse_response({
+        "id" => "msg_999",
+        "type" => "message",
+        "stop_reason" => "end_turn",
+        "content" => [{"type" => "text", "text" => "ok"}],
+        "usage" => {
+          "input_tokens" => 5,
+          "output_tokens" => 2,
+          "cache_creation_input_tokens" => 80,
+          "cache_read_input_tokens" => 20,
+          "cache_creation" => {"ephemeral_5m_input_tokens" => 60, "ephemeral_1h_input_tokens" => 20},
+          "service_tier" => "priority"
+        }
+      })
+
+      details = response.usage.input_tokens_details
+      expect(details["cache_creation_input_tokens"]).to eq(80)
+      expect(details["cached_tokens"]).to eq(20)
+      expect(details["cache_creation"]).to eq({"ephemeral_5m_input_tokens" => 60, "ephemeral_1h_input_tokens" => 20})
+      expect(details["service_tier"]).to eq("priority")
+    end
+
+    it "raises on unknown content block types" do
+      expect {
+        described_class.parse_response({
+          "stop_reason" => "end_turn",
+          "content" => [{"type" => "mystery_block"}]
+        })
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /mystery_block/)
+    end
+
+    it "raises with a built-in tool message for server_tool_use blocks" do
+      expect {
+        described_class.parse_response({
+          "stop_reason" => "end_turn",
+          "content" => [{"type" => "server_tool_use", "name" => "web_search", "input" => {}}]
+        })
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /built-in tools/)
     end
 
     it "can be added to a session" do

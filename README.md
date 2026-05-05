@@ -355,15 +355,15 @@ The following table shows which session configuration fields are supported by ea
 | `metadata` | ✅ | `user_id` key only | ❌ | ❌ |
 | `parallel_tool_calls` | ✅ | ✅ | ❌ | ❌ |
 | `presence_penalty` | ✅ | ❌ | ❌ | ❌ |
-| `prompt_cache_key` | ❌ | ❌ | ❌ | ❌ |
+| `prompt_cache_key` | ✅ | ❌ | ❌ | ❌ |
 | `reasoning` | `effort` key only | `budget_tokens`/`display`/`type` only | `budget_tokens` key only | ❌ |
-| `safety_identifier` | ✅ → `user` | ✅ → `metadata.user_id` | ❌ | ❌ |
+| `safety_identifier` | ✅ | ✅ → `metadata.user_id` | ❌ | ❌ |
 | `service_tier` | ✅ | `auto`/`standard_only` only | ❌ | ❌ |
 | `store` | ✅ | ❌ | ❌ | ❌ |
 | `stream` | ✅ | ✅ | endpoint-selected⁸ | ❌ |
 | `stream_options` | `include_usage`/`include_obfuscation` only | ❌ | ❌ | ❌ |
-| `text` | `format` key only | ❌ | `format` key only | ❌ |
-| `top_logprobs` | ✅ | ❌ | ❌ | ❌ |
+| `text` | `format`/`verbosity` only | ❌ | `format` key only | ❌ |
+| `top_logprobs` | ✅ | ❌ | ✅ → `responseLogprobs`/`logprobs` | ❌ |
 | `truncation` | ❌ | ❌ | ❌ | ❌ |
 
 ### Content Types
@@ -372,23 +372,25 @@ The following table shows which session configuration fields are supported by ea
 |:---|:---:|:---:|:---:|:---:|
 | `InputText` | ✅ | ✅ | ✅ | ✅ |
 | `InputImage` | user messages only⁷ | user messages only⁵ | user messages only⁶ | base64 or S3 URI only |
-| `InputFile` | ❌ | user messages only¹ | user messages only⁶ | base64 or S3 URI only² |
+| `InputFile` | user messages only¹⁰ | user messages only¹ | user messages only⁶ | base64 or S3 URI only² |
 | `InputVideo` | ❌ | ❌ | `video_url` required (public URL, gs://, or Files API) | S3 URI only |
-| `OutputText` | ✅ | ✅ | ✅ | ✅ |
+| `OutputText` | ✅ (annotations dropped on request)¹¹ | ✅ | ✅ | ✅ |
 | `RefusalContent` | dropped⁹ | dropped⁹ | dropped⁹ | dropped⁹ |
 | `Reasoning` items | ❌ | ✅³ | ✅⁴ | ❌ |
 | `Compaction` items | ❌ | ❌ | ❌ | ❌ |
 | `ItemReference` items | ❌ | ❌ | ❌ | ❌ |
 
-¹ Messages format defaults to `application/pdf`; set `InputFile.media_type` to use a different document type.  
+¹ Messages format defaults to `application/pdf` for base64 sources; set `InputFile.media_type` to use a different document type. `file_id` is mapped to a `file` source for the Anthropic Files API beta — set the appropriate `anthropic-beta: files-api-2025-04-14` header in your HTTP client.  
 ² Converse format infers the document type from the filename or file URL extension.  
 ³ Messages format only emits `thinking` blocks that include a cryptographic `signature`; unsigned blocks are silently dropped.  
 ⁴ Gemini format passes `thoughtSignature` through transparently. `redacted_thinking` blocks raise.  
-⁵ Anthropic does not support a `detail` field on images; it is silently dropped.  
+⁵ Anthropic does not support a `detail` field on images; it is silently dropped. `file_id` is mapped to a `file` source (Anthropic Files API beta).  
 ⁶ Gemini requires a Google-hosted URI (`gs://`, `https://generativelanguage.googleapis.com/`, or `https://storage.googleapis.com/`) — arbitrary public URLs raise. For files, set `media_type` or use a recognized `filename`/`file_url` extension.  
-⁷ Chat Completions does not accept `InputImage.file_id` — the `image_file` content type is Assistants API only. Use `image_url` or base64 `data` instead. `InputFile` content has no Chat Completions equivalent.  
+⁷ Chat Completions does not accept `InputImage.file_id` — the `image_file` content type is Assistants API only. Use `image_url` or base64 `data` instead.  
 ⁸ Gemini selects streaming by endpoint (`:streamGenerateContent`), not a request body field, so `session.stream` is silently ignored when serializing to Gemini.  
-⁹ `RefusalContent` blocks are dropped silently from request messages so a parsed Chat Completions refusal can sit in session history without breaking subsequent `request_payload` calls. A message left empty after stripping is omitted entirely.
+⁹ `RefusalContent` blocks are dropped silently from request messages so a parsed Chat Completions refusal can sit in session history without breaking subsequent `request_payload` calls. A message left empty after stripping is omitted entirely.  
+¹⁰ Chat Completions sends `InputFile` as a `{"type": "file", "file": {...}}` content block. `file_id` (Files API) and base64 `file_data` (with optional `filename`/`media_type`; defaults to `application/pdf`) are supported. `file_url` raises because Chat Completions has no remote-URL form for files.  
+¹¹ `OutputText.annotations` (e.g. URL citations from `web_search_options`) are parsed onto the assistant message and round-trip through session history, but are dropped silently on request serialization since Chat Completions has no request-side equivalent.
 
 ### Features Not Accessible Through Open Responses
 
@@ -398,19 +400,169 @@ These target API features are not available through the Open Responses canonical
 |:---|:---:|:---:|:---:|:---:|
 | Audio input | ✅ | — | ✅ | — |
 | Audio output / TTS | ✅ | — | ✅ | — |
+| Output `modalities` selection | ✅ | — | ✅ | — |
 | `top_k` sampling | — | ✅ | ✅ | — |
 | `seed` | ✅ | — | ✅ | — |
 | Stop sequences | ✅ | ✅ | ✅ | ✅ |
 | `logit_bias` | ✅ | — | — | — |
 | Multiple candidates (`n`) | ✅ | — | ✅ | — |
 | Speculative decoding (`prediction`) | ✅ | — | — | — |
+| `tool_choice` `allowed_tools` shape | ✅ | — | — | — |
+| Custom (non-function) tool types | ✅ | — | — | — |
+| Built-in web search (`web_search_options`) | ✅ | ✅ | ✅ | — |
 | Configurable safety thresholds | — | — | ✅ | — |
-| Guardrail policies | — | — | — | ✅ |
+| Guardrail policies (`guardrailConfig`, `guardContent`) | — | — | — | ✅ |
 | Cross-region routing (inference profiles) | — | — | — | ✅ |
-| Built-in web search | — | ✅ | ✅ | — |
+| Prompt caching (`cache_control` markers) | — | ✅ | — | — |
+| Prompt caching (`cachePoint` blocks) | — | — | — | ✅ |
+| Citations on documents and tool results | — | ✅ | — | ✅ |
+| Bedrock Prompt Management variables (`promptVariables`) | — | — | — | ✅ |
+| `search_result` content blocks | — | ✅ | — | — |
+| MCP connectors (`mcp_servers`) | — | ✅ | — | — |
+| Code execution `container` reuse | — | ✅ | — | — |
+| Beta API headers (`anthropic-beta`, etc.) | — | ✅ | ✅ | — |
 | Built-in code execution | — | ✅ | ✅ | — |
-| Built-in computer use | — | ✅ | — | — |
+| Built-in computer use | — | ✅ | ✅ | — |
 | Built-in bash / text editor / memory tools | — | ✅ | — | — |
+| Built-in URL context retrieval (`urlContext`) | — | — | ✅ | — |
+| Built-in Google Maps grounding | — | — | ✅ | — |
+| Built-in semantic file search (`fileSearch`) | — | — | ✅ | — |
+| Context caching (`cachedContent` resource) | — | — | ✅ | — |
+| Tool-call mode `VALIDATED` | — | — | ✅ | — |
+| `toolConfig.retrievalConfig` / `includeServerSideToolInvocations` | — | — | ✅ | — |
+| `responseJsonSchema` (newer JSON Schema variant) | — | — | ✅ | — |
+| `mediaResolution` (image/video token budget) | — | — | ✅ | — |
+| `audioTimestamp`, `speechConfig` | — | — | ✅ | — |
+| `enableEnhancedCivicAnswers` | — | — | ✅ | — |
+| `routingConfig` / `modelSelectionConfig` | — | — | ✅ | — |
+| `thinkingConfig.includeThoughts` (request thought parts) | — | — | ✅ | — |
+| Per-Part `videoMetadata` (offset/FPS) | — | — | ✅ | — |
+| Top-level `labels` (Vertex flavor) | — | — | ✅ | — |
+
+For Messages specifically:
+- **Prompt caching** — Anthropic's `cache_control: {"type": "ephemeral"}` markers on system blocks, message content blocks, tool definitions, and document blocks have no Open Responses equivalent. The `prompt_cache_key` session field raises `UnsupportedFormatError` rather than silently doing nothing.
+- **Citations** — both the `citations: {"enabled": true}` opt-in on documents/tool results and the `citations` array returned on response text blocks are not modeled by this gem. Response text blocks with citations are parsed but the citation data is dropped.
+- **API versioning / beta headers** — this gem produces no HTTP, so `anthropic-version`, `anthropic-beta`, and similar headers must be set on your HTTP client. Features behind a beta header (Files API, MCP, code execution containers, extended caching, etc.) still produce valid request payloads through this gem when their request-body shape is supported.
+
+### Chat Completions-specific notes
+
+Request-side mappings worth calling out:
+
+| Canonical field / value | Chat Completions mapping |
+|:---|:---|
+| `instructions` | leading `{"role": "system", "content": ...}` message (use `session.developer(...)` if your model prefers `developer`) |
+| `max_output_tokens` | `max_completion_tokens` |
+| `safety_identifier` | `safety_identifier` (the legacy `user` field is not used) |
+| `text.format` | `response_format` (the OR-canonical flat `json_schema` is reshaped into `{"type": "json_schema", "json_schema": {...}}`) |
+| `text.verbosity` | top-level `verbosity` |
+| `reasoning.effort` | `reasoning_effort` |
+| `tool_choice: {"type": "function", "name": ...}` | `{"type": "function", "function": {"name": ...}}` |
+| `InputFile.file_id` | `{"type": "file", "file": {"file_id": ...}}` |
+| `InputFile.file_data` (+ optional `filename`/`media_type`) | `{"type": "file", "file": {"filename": ..., "file_data": "data:<media_type>;base64,..."}}` (defaults to `application/pdf`) |
+| `InputImage.data` (+ `media_type`) | `{"type": "image_url", "image_url": {"url": "data:<media_type>;base64,..."}}` |
+
+Response-side limitations:
+
+- Only `choices[0]` is parsed. Callers using `n > 1` will not see additional candidates.
+- Streaming chunks (`chat.completion.chunk` deltas) are not parsed — this gem expects a fully assembled non-streaming response body.
+- `system_fingerprint` is dropped (no canonical Open Responses slot).
+- `service_tier` is populated when present on the response.
+- `message.annotations` (URL citations from `web_search_options`) are copied onto `OutputText.annotations`.
+- `finish_reason` mappings: `stop`/`tool_calls`/`function_call` → `completed`, `length` → `incomplete`, `content_filter` → `failed`. The legacy `function_call` reason is included so older models still surface as completed.
+
+### Anthropic Messages-specific mappings
+
+A few features map between the canonical Open Responses format and the Messages API in non-obvious ways:
+
+| Canonical field / value | Messages mapping |
+|:---|:---|
+| `InputImage.file_id` | `{"type": "image", "source": {"type": "file", "file_id": ...}}` (Files API beta) |
+| `InputFile.file_id` | `{"type": "document", "source": {"type": "file", "file_id": ...}}` (Files API beta) |
+| `FunctionCallOutput.status` ∈ `incomplete`, `failed`, `error` | `tool_result.is_error: true` |
+| `safety_identifier` | `metadata.user_id` |
+| `parallel_tool_calls: false` | `tool_choice.disable_parallel_tool_use: true` (forces `tool_choice.type` to `auto` if unset) |
+| `reasoning.budget_tokens` | `thinking.budget_tokens` (with `thinking.type` defaulted to `enabled`) |
+| `tool_choice: "required"` | `{"type": "any"}` |
+| `tool_choice: {"type": "function", "name": ...}` | `{"type": "tool", "name": ...}` |
+
+Response stop reasons are mapped to Open Responses statuses as follows: `end_turn`, `tool_use`, `stop_sequence`, and `pause_turn` → `completed`; `max_tokens` → `incomplete`; `refusal` → `failed`. When `stop_sequence` is matched, the matched text is exposed via `response.incomplete_details["stop_sequence"]`. Additional usage details (`cache_creation` breakdown, `service_tier`, cache token counts) are surfaced through `response.usage.input_tokens_details`.
+
+Built-in tool response content blocks (`server_tool_use`, `web_search_tool_result`, `code_execution_tool_result`, `mcp_tool_use`, `mcp_tool_result`, `container_upload`, `search_result`) raise `UnsupportedFormatError` on parse rather than being silently dropped, since dropping them would lose information from the assistant turn and break round-tripping.
+
+### Gemini-specific notes
+
+Request-side mappings worth calling out:
+
+| Canonical field / value | Gemini mapping |
+|:---|:---|
+| `instructions` + `system`/`developer` messages | merged into `systemInstruction.parts[]` |
+| `max_output_tokens` | `generationConfig.maxOutputTokens` |
+| `temperature` / `top_p` | `generationConfig.temperature` / `topP` |
+| `presence_penalty` / `frequency_penalty` | `generationConfig.presencePenalty` / `frequencyPenalty` |
+| `top_logprobs: N` | `generationConfig.{responseLogprobs: true, logprobs: N}` |
+| `text.format == "text"` | `generationConfig.responseMimeType = "text/plain"` |
+| `text.format == "json_object"` | `generationConfig.responseMimeType = "application/json"` |
+| `text.format == "json_schema"` | `generationConfig.responseMimeType = "application/json"` + `responseSchema` (read from `format.json_schema.schema` or `format.schema`) |
+| `reasoning.budget_tokens` | `generationConfig.thinkingConfig.thinkingBudget` |
+| `tool_choice: "auto"` / `"none"` / `"required"` | `toolConfig.functionCallingConfig.mode = AUTO` / `NONE` / `ANY` |
+| `tool_choice: {"type": "function", "name": ...}` | `mode = ANY` + `allowedFunctionNames: [name]` |
+| Tool definitions | single `tools[0].functionDeclarations[]` entry |
+
+Content and message restrictions:
+
+- Assistant messages map to `role: "model"`; consecutive same-role turns are merged automatically.
+- `InputImage`, `InputFile`, and `InputVideo` are only supported in user messages; the same content on an assistant message raises.
+- `InputImage` accepts a `gs://` / `https://generativelanguage.googleapis.com/` / `https://storage.googleapis.com/` URL, base64 `data` (with required `media_type`), or a Files API `file_id`. Arbitrary public URLs raise — Gemini will not fetch them.
+- `InputFile` accepts the same URL prefixes, base64 `file_data`, or `file_id`. `media_type` is required when not inferable from a `filename` or URL extension. Recognized extensions: `pdf`, `txt`, `md`/`markdown`, `html`/`htm`, `csv`, `json`, `xml`, `rtf`.
+- `InputVideo` requires `video_url` pointing at a Google-hosted URI; raw bytes are not modeled.
+- `RefusalContent` is dropped silently so a parsed Chat Completions refusal can sit in session history without breaking subsequent serialization.
+- `Reasoning` items round-trip via `parts[].thought` with `thoughtSignature` preserved. `redacted_thinking` and `summary` blocks raise; unknown reasoning block types raise rather than being silently dropped.
+- `FunctionCall.arguments` must parse to a JSON object — Gemini's `functionCall.args` is a Struct.
+- `FunctionCallOutput` content must be text-only (`InputText`/`OutputText` or a plain string). When `output` parses to a JSON object it is forwarded as the `functionResponse.response` Struct; otherwise it is wrapped as `{"result": ...}`. The output must reference a prior `FunctionCall` so its `name` can be resolved (Gemini's `functionResponse.name` is the tool name, not the call id).
+- `Compaction` and `ItemReference` items raise.
+- `tool_choice` without registered tools raises (except `tool_choice: "none"`).
+
+Response-side limitations:
+
+- Unknown response `Part` shapes (`inlineData`, `fileData`, `executableCode`, `codeExecutionResult`, `videoMetadata`, server-side `toolCall`/`toolResponse`, or any `Part` without a recognized content key) raise `UnsupportedFormatError` rather than being silently dropped.
+- Only `candidates[0]` is parsed. When `candidateCount > 1`, additional candidates are dropped (their index is preserved on `provider_data`).
+- Function-call `id` from the response is dropped; the parser synthesizes `gemini_call_<seed>_<n>` so multiple calls in one response share a deterministic seed.
+- `finishReason` mappings: `STOP` → `completed`; `MAX_TOKENS` → `incomplete`; `SAFETY`, `RECITATION`, `OTHER`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `MALFORMED_FUNCTION_CALL`, `IMAGE_SAFETY`, `LANGUAGE`, `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS`, `MODEL_ARMOR` → `failed`. `FINISH_REASON_UNSPECIFIED` is treated as nil.
+- An empty `candidates` array combined with `promptFeedback.blockReason` is mapped to `failed`.
+- `usageMetadata.cachedContentTokenCount`, `toolUsePromptTokenCount`, `promptTokensDetails`, `cacheTokensDetails`, and `toolUsePromptTokensDetails` populate `response.usage.input_tokens_details`. `thoughtsTokenCount` and `candidatesTokensDetails` populate `response.usage.output_tokens_details`.
+- Response metadata with no canonical Open Responses slot is exposed on `response.provider_data`: `groundingMetadata`, `citationMetadata`, `urlContextMetadata`, `urlRetrievalMetadata`, `safetyRatings`, `groundingAttributions`, `avgLogprobs`, `logprobsResult`, `finishMessage`, candidate `index`, top-level `createTime`, and full `promptFeedback`. Streaming chunks are not parsed — this gem expects a fully assembled non-streaming response body.
+
+### Converse-specific notes
+
+Request-side restrictions worth calling out:
+
+| Canonical field / value | Converse mapping |
+|:---|:---|
+| `instructions` + `system`/`developer` messages | merged into top-level `system` array |
+| `max_output_tokens` | `inferenceConfig.maxTokens` |
+| `temperature` / `top_p` | `inferenceConfig.temperature` / `inferenceConfig.topP` |
+| `tool_choice: "required"` | `{"any": {}}` |
+| `tool_choice: {"type": "function", "name": ...}` | `{"tool": {"name": ...}}` |
+
+Content and message restrictions:
+
+- The first message must have role `user`; the request raises if it doesn't. Consecutive same-role messages are merged automatically.
+- `InputImage` requires either base64 `data` or an `s3://` URI; arbitrary public URLs raise. `file_id` and `detail` have no Converse equivalent and are ignored or rejected.
+- `InputFile` requires either base64 `file_data` or an `s3://` URI; document `name` is auto-derived from `filename` / `file_url` and sanitized to Bedrock's allowed character set (`[A-Za-z0-9 \-()\[\]]{1,256}`), with collisions disambiguated within a single request.
+- `InputVideo` requires an `s3://` URI; raw bytes (`source.bytes`) cannot be sent because the canonical `InputVideo` content type does not model byte data.
+- `InputImage`, `InputFile`, and `InputVideo` are only supported in user messages; the same content on an assistant message raises. `RefusalContent` is dropped silently so a parsed Chat Completions refusal can sit in session history without breaking subsequent serialization.
+- `Reasoning` items raise on the request side, so multi-turn extended-thinking + tool-use loops are not supported through this serializer (the response parser does decode `reasoningContent` blocks back into `Reasoning` items, but they cannot be sent back).
+- `Compaction` and `ItemReference` items raise.
+- `FunctionCall.arguments` must parse to a JSON object; non-object JSON values raise (Bedrock's `toolUse.input` requires an object).
+- `FunctionCallOutput.output` content is restricted to `InputText`/`OutputText` and `InputImage`. The Converse `toolResult.content` block also accepts `document`, `video`, and `json`; all three raise here. `FunctionCallOutput.status` is mapped: `completed` → `success`, `failed`/`incomplete` → `error`, anything else passes through or is dropped.
+- `tool_choice: "none"` and `tool_choice` without registered tools both raise.
+
+Response-side limitations:
+
+- Unknown content block keys (e.g. `citationsContent`, `guardContent`) raise `UnsupportedFormatError` rather than being silently dropped.
+- `metrics.latencyMs`, `trace` (guardrail and reasoning trace events), `additionalModelResponseFields`, and `performanceConfig` echoes are dropped.
+- `stopReason` mappings: `end_turn` / `tool_use` / `stop_sequence` → `completed`, `max_tokens` → `incomplete`, `guardrail_intervened` / `content_filtered` → `failed`. Unlike the Messages serializer, the matched stop sequence text is not surfaced separately because Converse does not echo it back.
+- `usage.cacheReadInputTokens` and `usage.cacheWriteInputTokens` populate `response.usage.input_tokens_details["cached_tokens"]` and `["cache_creation_input_tokens"]`. Cache writes still require `cachePoint` markers in the request, which this gem cannot produce.
 
 ## Installation
 

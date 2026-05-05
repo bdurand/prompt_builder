@@ -54,6 +54,12 @@ module PromptBuilder
             end
           end
 
+          # Converse response ContentBlock keys this gem understands. Additional
+          # variants (citationsContent, guardContent, etc.) are surfaced as
+          # UnsupportedFormatError so they aren't silently dropped.
+          KNOWN_CONTENT_BLOCK_KEYS = %w[text toolUse reasoningContent].freeze
+          private_constant :KNOWN_CONTENT_BLOCK_KEYS
+
           def build_output_items(content_blocks)
             output = []
             text_contents = []
@@ -78,11 +84,24 @@ module PromptBuilder
 
                 reasoning = block["reasoningContent"]
                 if reasoning["reasoningText"]
-                  reasoning_contents << {
+                  thinking_block = {
                     "type" => "thinking",
                     "thinking" => reasoning["reasoningText"]["text"] || ""
                   }
+                  signature = reasoning["reasoningText"]["signature"]
+                  thinking_block["signature"] = signature if signature
+                  reasoning_contents << thinking_block
+                elsif reasoning["redactedContent"]
+                  reasoning_contents << {
+                    "type" => "redacted_thinking",
+                    "data" => reasoning["redactedContent"]
+                  }
                 end
+              else
+                unknown_keys = block.keys - KNOWN_CONTENT_BLOCK_KEYS
+                raise UnsupportedFormatError,
+                  "Converse format does not recognize content block #{unknown_keys.inspect}; " \
+                  "known keys are #{KNOWN_CONTENT_BLOCK_KEYS.join(", ")}"
               end
             end
 

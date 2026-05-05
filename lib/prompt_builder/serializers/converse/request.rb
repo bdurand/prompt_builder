@@ -106,8 +106,11 @@ module PromptBuilder
           private
 
           def serialize_request(session)
-            @document_name_counts = Hash.new(0)
             validate_supported_session_fields!(session)
+
+            # document_name_counts is scoped per request (passed through the
+            # build chain) so concurrent serializations don't share counter state.
+            ctx = {document_name_counts: Hash.new(0)}
 
             h = {}
             h["modelId"] = session.model if session.model
@@ -115,7 +118,16 @@ module PromptBuilder
             system = build_system(session)
             h["system"] = system unless system.empty?
 
-            h["messages"] = build_messages(session)
+            messages = build_messages(session, ctx)
+            if messages.empty?
+              raise UnsupportedFormatError,
+                "Converse format requires at least one user/assistant message"
+            end
+            unless messages.first["role"] == "user"
+              raise UnsupportedFormatError,
+                "Converse format requires the first message to have role \"user\""
+            end
+            h["messages"] = messages
 
             inference_config = build_inference_config(session)
             h["inferenceConfig"] = inference_config unless inference_config.empty?
@@ -169,7 +181,7 @@ module PromptBuilder
             parts
           end
 
-          def build_messages(session)
+          def build_messages(session, ctx)
             raw_messages = []
 
             session.items.each do |item|
@@ -182,7 +194,7 @@ module PromptBuilder
                 # a parsed Chat Completions response but cannot be sent back.
                 visible_content = item.content.reject { |c| c.is_a?(Content::RefusalContent) }
                 next if visible_content.empty?
-                content = visible_content.map { |c| serialize_content(c, role: role) }
+                content = visible_content.map { |c| serialize_content(c, role: role, ctx: ctx) }
                 raw_messages << {"role" => role, "content" => content}
               when Items::FunctionCall
                 raw_messages << {
@@ -191,14 +203,14 @@ module PromptBuilder
                     "toolUse" => {
                       "toolUseId" => item.call_id,
                       "name" => item.name,
-                      "input" => item.parsed_arguments
+                      "input" => parse_tool_use_input(item)
                     }
                   }]
                 }
               when Items::FunctionCallOutput
                 raw_messages << {
                   "role" => "user",
-                  "content" => [serialize_tool_result(item)]
+                  "content" => [serialize_tool_result(item, ctx)]
                 }
               when Items::Reasoning
                 raise UnsupportedFormatError, "Converse format does not support Reasoning items"
@@ -212,7 +224,21 @@ module PromptBuilder
             merge_consecutive_messages(raw_messages)
           end
 
-          def serialize_content(content, role:)
+          # Bedrock toolUse.input must be a JSON object. Wrap parser errors as
+          # UnsupportedFormatError and reject non-object JSON values.
+          def parse_tool_use_input(item)
+            parsed = item.parsed_arguments
+            unless parsed.is_a?(Hash)
+              raise UnsupportedFormatError,
+                "Converse format requires FunctionCall arguments to be a JSON object"
+            end
+            parsed
+          rescue PromptBuilder::InvalidItemError => e
+            raise UnsupportedFormatError,
+              "Converse format could not parse FunctionCall arguments: #{e.message}"
+          end
+
+          def serialize_content(content, role:, ctx: nil)
             case content
             when Content::InputText, Content::OutputText
               {"text" => content.text}
@@ -229,7 +255,7 @@ module PromptBuilder
                   "Converse format does not support assistant InputFile content"
               end
 
-              serialize_document(content)
+              serialize_document(content, ctx)
             when Content::InputVideo
               if role == "assistant"
                 raise UnsupportedFormatError,
@@ -276,7 +302,19 @@ module PromptBuilder
               "Converse format could not detect image format; set InputImage.media_type (e.g. \"image/jpeg\")"
           end
 
-          def serialize_document(content)
+          DOCUMENT_MEDIA_TYPE_FORMATS = {
+            "application/pdf" => "pdf",
+            "text/csv" => "csv",
+            "application/msword" => "doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => "docx",
+            "application/vnd.ms-excel" => "xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => "xlsx",
+            "text/html" => "html",
+            "text/plain" => "txt",
+            "text/markdown" => "md"
+          }.freeze
+
+          def serialize_document(content, ctx)
             format = detect_document_format(content)
             source = if content.file_data
               {"bytes" => content.file_data}
@@ -287,11 +325,16 @@ module PromptBuilder
                 "Converse format requires InputFile.file_data or an S3 URI for InputFile.file_url"
             end
 
-            name = document_name(content)
+            name = document_name(content, ctx)
             {"document" => {"format" => format, "name" => name, "source" => source}}
           end
 
           def detect_document_format(content)
+            if content.media_type
+              format = DOCUMENT_MEDIA_TYPE_FORMATS[content.media_type]
+              return format if format
+            end
+
             [content.filename, content.file_url].each do |path|
               next unless path
 
@@ -301,14 +344,16 @@ module PromptBuilder
             end
 
             raise UnsupportedFormatError,
-              "Converse format could not detect document format; set a file extension on InputFile.filename or InputFile.file_url"
+              "Converse format could not detect document format; set InputFile.media_type or a recognized file extension on InputFile.filename or InputFile.file_url"
           end
 
           # Bedrock requires document.name to be unique within a request and to
           # match /^[A-Za-z0-9 \-\(\)\[\]]{1,256}$/. Prefer the filename, fall
           # back to the file_url basename, then a random suffix to avoid
-          # collisions when multiple unnamed documents are attached.
-          def document_name(content)
+          # collisions when multiple unnamed documents are attached. The counter
+          # state lives on the per-request `ctx` Hash so concurrent calls don't
+          # share state.
+          def document_name(content, ctx)
             source = content.filename || content.file_url
             candidate = nil
 
@@ -321,11 +366,12 @@ module PromptBuilder
 
             candidate ||= "document-#{SecureRandom.hex(4)}"
 
-            @document_name_counts[candidate] += 1
+            counts = ctx[:document_name_counts]
+            counts[candidate] += 1
 
-            return candidate if @document_name_counts[candidate] == 1
+            return candidate if counts[candidate] == 1
 
-            suffix = "-#{@document_name_counts[candidate]}"
+            suffix = "-#{counts[candidate]}"
             "#{candidate[0, 256 - suffix.length]}#{suffix}"
           end
 
@@ -351,7 +397,7 @@ module PromptBuilder
             {"video" => {"format" => format, "source" => {"s3Location" => {"uri" => content.video_url}}}}
           end
 
-          def serialize_tool_result(item)
+          def serialize_tool_result(item, _ctx)
             result = {"toolUseId" => item.call_id}
 
             status = converse_tool_result_status(item.status)

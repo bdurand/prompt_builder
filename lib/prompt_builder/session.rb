@@ -203,7 +203,11 @@ module PromptBuilder
     # @return [void]
     def add_response(response)
       response.output.each { |item| @items << item }
-      @previous_response_id = response.id unless local_state?
+      # Only refresh previous_response_id when the session is already in
+      # server-state mode AND the response actually carries an id; otherwise
+      # leave the existing pointer alone (responses from formats that don't
+      # populate `id` would otherwise silently drop us back into local state).
+      @previous_response_id = response.id if !local_state? && response.id
       @response_boundary_index = @items.length
     end
 

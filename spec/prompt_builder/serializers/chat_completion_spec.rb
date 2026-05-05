@@ -155,7 +155,53 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /Reasoning items/)
     end
 
-    it "raises UnsupportedFormatError for InputFile content" do
+    it "converts InputFile with file_id to a file content block" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(file_id: "file-abc123")]
+      ))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]["content"]).to eq([
+        {"type" => "file", "file" => {"file_id" => "file-abc123"}}
+      ])
+    end
+
+    it "converts InputFile with base64 file_data to a data-URL file block" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(
+          file_data: "JVBERi0xLjQK",
+          filename: "report.pdf",
+          media_type: "application/pdf"
+        )]
+      ))
+
+      h = described_class.request_payload(session)
+      block = h["messages"][0]["content"][0]
+      expect(block["type"]).to eq("file")
+      expect(block["file"]["filename"]).to eq("report.pdf")
+      expect(block["file"]["file_data"]).to eq("data:application/pdf;base64,JVBERi0xLjQK")
+    end
+
+    it "defaults media_type to application/pdf when InputFile.file_data is given without media_type" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(
+          file_data: "JVBERi0xLjQK",
+          filename: "report.pdf"
+        )]
+      ))
+
+      h = described_class.request_payload(session)
+      block = h["messages"][0]["content"][0]
+      expect(block["file"]["file_data"]).to start_with("data:application/pdf;base64,")
+    end
+
+    it "raises UnsupportedFormatError for InputFile.file_url" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
@@ -164,7 +210,19 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_url is not supported/)
+    end
+
+    it "raises UnsupportedFormatError for InputFile in non-user messages" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "assistant",
+        content: [PromptBuilder::Content::InputFile.new(file_id: "file-abc")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /assistant.*InputFile/)
     end
 
     it "raises UnsupportedFormatError for InputVideo content" do
@@ -377,8 +435,6 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
         include: ["reasoning.encrypted_content"],
         background: true,
         max_tool_calls: 2,
-        safety_identifier: "user-123",
-        prompt_cache_key: "cache-key",
         truncation: "auto"
       )
       session.user("Hi")
@@ -388,19 +444,56 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /include/)
     end
 
+    it "passes through prompt_cache_key" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", prompt_cache_key: "ck-abc")
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["prompt_cache_key"]).to eq("ck-abc")
+    end
+
+    it "passes safety_identifier through directly (not via legacy user)" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", safety_identifier: "user-123")
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["safety_identifier"]).to eq("user-123")
+      expect(h).not_to have_key("user")
+    end
+
+    it "maps text.verbosity to top-level verbosity" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", text: {"verbosity" => "low"})
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["verbosity"]).to eq("low")
+    end
+
+    it "maps both text.format and text.verbosity together" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-4o",
+        text: {"format" => {"type" => "json_object"}, "verbosity" => "high"}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["response_format"]).to eq({"type" => "json_object"})
+      expect(h["verbosity"]).to eq("high")
+    end
+
     it "raises when text config includes unsupported keys" do
       session = PromptBuilder::Session.new(
         model: "gpt-4o",
         text: {
           "format" => {"type" => "json_object"},
-          "verbosity" => "high"
+          "stop" => "STOP"
         }
       )
       session.user("Hi")
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.verbosity/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.stop/)
     end
 
     it "raises when reasoning includes unsupported keys" do
@@ -452,16 +545,15 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /assistant.*InputImage/)
     end
 
-    it "raises for output text annotations" do
+    it "drops OutputText annotations silently so a parsed citation can round-trip" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::OutputText.new(text: "Hi", annotations: [{"type" => "citation"}])]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /annotations/)
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]["content"]).to eq([{"type" => "text", "text" => "Hi"}])
     end
 
     it "converts array output on FunctionCallOutput to content parts" do
@@ -614,6 +706,27 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(response.status).to eq("incomplete")
     end
 
+    it "parses content returned as an array of content blocks" do
+      response = described_class.parse_response({
+        "choices" => [{
+          "message" => {
+            "role" => "assistant",
+            "content" => [
+              {"type" => "text", "text" => "Hello "},
+              {"type" => "text", "text" => "world"}
+            ]
+          },
+          "finish_reason" => "stop"
+        }]
+      })
+
+      expect(response.output.length).to eq(1)
+      msg = response.output[0]
+      expect(msg).to be_a(PromptBuilder::Items::Message)
+      texts = msg.content.map(&:text)
+      expect(texts).to eq(["Hello ", "world"])
+    end
+
     it "omits the assistant message when content is an empty string" do
       response = described_class.parse_response({
         "choices" => [{
@@ -676,6 +789,81 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       msg = response.output[0]
       expect(msg.content[0]).to be_a(PromptBuilder::Content::OutputText)
       expect(msg.content[0].logprobs).to eq(logprob_data)
+    end
+
+    it "copies message.annotations onto OutputText (string content form)" do
+      response = described_class.parse_response({
+        "choices" => [{
+          "message" => {
+            "role" => "assistant",
+            "content" => "See [example.com](https://example.com)",
+            "annotations" => [
+              {"type" => "url_citation",
+               "url_citation" => {"url" => "https://example.com", "title" => "Example"}}
+            ]
+          },
+          "finish_reason" => "stop"
+        }]
+      })
+
+      out = response.output[0].content[0]
+      expect(out).to be_a(PromptBuilder::Content::OutputText)
+      expect(out.annotations.length).to eq(1)
+      expect(out.annotations[0]["type"]).to eq("url_citation")
+    end
+
+    it "copies message.annotations onto OutputText (array content form)" do
+      response = described_class.parse_response({
+        "choices" => [{
+          "message" => {
+            "role" => "assistant",
+            "content" => [{"type" => "text", "text" => "Hi"}],
+            "annotations" => [{"type" => "url_citation"}]
+          },
+          "finish_reason" => "stop"
+        }]
+      })
+
+      out = response.output[0].content[0]
+      expect(out.annotations).to eq([{"type" => "url_citation"}])
+    end
+
+    it "round-trips an assistant message with annotations through request_payload" do
+      response = described_class.parse_response({
+        "choices" => [{
+          "message" => {
+            "role" => "assistant",
+            "content" => "Hi",
+            "annotations" => [{"type" => "url_citation"}]
+          },
+          "finish_reason" => "stop"
+        }]
+      })
+
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hello")
+      session.add_response(response)
+      session.user("Follow-up")
+
+      h = described_class.request_payload(session)
+      assistant_msg = h["messages"].find { |m| m["role"] == "assistant" }
+      expect(assistant_msg["content"]).to eq([{"type" => "text", "text" => "Hi"}])
+    end
+
+    it "populates service_tier from the response" do
+      response = described_class.parse_response({
+        "service_tier" => "default",
+        "choices" => [{"message" => {"content" => "Hi"}, "finish_reason" => "stop"}]
+      })
+
+      expect(response.service_tier).to eq("default")
+    end
+
+    it "maps the legacy function_call finish_reason to completed" do
+      response = described_class.parse_response({
+        "choices" => [{"message" => {"content" => "Hi"}, "finish_reason" => "function_call"}]
+      })
+      expect(response.status).to eq("completed")
     end
 
     it "parses prompt_tokens_details and completion_tokens_details into usage" do

@@ -116,18 +116,22 @@ module PromptBuilder
     # @!attribute [r] usage
     #   @return [Usage, nil] token usage statistics
     FIELDS.each { |f| attr_reader f }
-    attr_reader :text_config, :output, :usage
+    attr_reader :text_config, :output, :usage, :provider_data
 
     BOOLEAN_FIELDS.each { |f| alias_method("#{f}?", f) }
 
     # Create a new Response.
     #
     # @param attributes [Hash] response attributes
+    # @option attributes [Hash, nil] :provider_data provider-specific response
+    #   metadata that has no canonical Open Responses slot (e.g. Gemini grounding
+    #   and citation metadata, candidate safety ratings, logprobs results)
     def initialize(**attributes)
       FIELDS.each { |f| instance_variable_set(:"@#{f}", coerce_field(f, attributes[f])) }
       @text_config = PromptBuilder.jsonify(attributes[:text_config])
       @output = attributes[:output] || []
       @usage = attributes[:usage]
+      @provider_data = PromptBuilder.jsonify(attributes[:provider_data])
     end
 
     class << self
@@ -151,7 +155,7 @@ module PromptBuilder
         usage = hash["usage"] ? Usage.from_h(hash["usage"]) : nil
 
         attrs = FIELDS.each_with_object({}) { |f, acc| acc[f] = hash[f.to_s] }
-        new(**attrs, text_config: hash["text"], output: output, usage: usage)
+        new(**attrs, text_config: hash["text"], output: output, usage: usage, provider_data: hash["provider_data"])
       end
     end
 
@@ -220,6 +224,7 @@ module PromptBuilder
       h["text"] = @text_config if @text_config
       h["output"] = @output.map(&:to_h) unless @output.empty?
       h["usage"] = @usage.to_h if @usage
+      h["provider_data"] = @provider_data if @provider_data && !@provider_data.empty?
       h
     end
 

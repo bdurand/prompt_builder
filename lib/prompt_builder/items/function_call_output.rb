@@ -48,14 +48,15 @@ module PromptBuilder
         end
       end
 
-      # Serialize to a Hash with string keys.
+      # Serialize to a Hash with string keys. A nil output is emitted as an
+      # empty string so the on-the-wire shape matches the Open Responses API.
       #
       # @return [Hash]
       def to_h
         hash = {
           "type" => "function_call_output",
           "call_id" => @call_id,
-          "output" => @output.is_a?(Array) ? @output.map(&:to_h) : @output
+          "output" => serialize_output
         }
         hash["id"] = @id if @id
         hash["status"] = @status if @status
@@ -63,6 +64,14 @@ module PromptBuilder
       end
 
       private
+
+      def serialize_output
+        case @output
+        when nil then ""
+        when Array then @output.map(&:to_h)
+        else @output
+        end
+      end
 
       def normalize_output(output)
         case output
@@ -72,7 +81,12 @@ module PromptBuilder
           output.map do |c|
             case c
             when Hash
-              Content::Base.from_h(c)
+              hash = c.transform_keys(&:to_s)
+              unless hash["type"]
+                raise InvalidItemError,
+                  "Output content hash is missing required \"type\" key: #{hash.inspect}"
+              end
+              Content::Base.from_h(hash)
             when Content::Base
               c
             else
