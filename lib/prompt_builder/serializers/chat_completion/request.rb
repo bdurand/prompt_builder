@@ -90,7 +90,8 @@ module PromptBuilder
             end
 
             if session.reasoning
-              h["reasoning_effort"] = normalize_hash(session.reasoning)["effort"] if normalize_hash(session.reasoning)["effort"]
+              effort = normalize_hash(session.reasoning)["effort"]
+              h["reasoning_effort"] = effort if effort
             end
 
             tools = build_tools(session)

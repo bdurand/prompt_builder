@@ -139,7 +139,8 @@ module PromptBuilder
       #
       # @param hash [Hash] the API response hash (typically from JSON.parse)
       # @param serializer_class [Class, Symbol] a serializer class (e.g. Serializers::ChatCompletion)
-      #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+)
+      #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+,
+      #   +:gemini+, +:converse+)
       # @return [Response]
       # @raise [ArgumentError] if a symbol is given that does not map to a known serializer
       def parse(hash, serializer_class)

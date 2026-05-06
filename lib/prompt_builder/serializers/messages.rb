@@ -8,8 +8,6 @@ module PromptBuilder
       autoload :Request, File.expand_path("messages/request", __dir__)
       autoload :Response, File.expand_path("messages/response", __dir__)
 
-      DEFAULT_MAX_TOKENS = Request::DEFAULT_MAX_TOKENS
-
       class << self
         # Export a session to Messages request payload.
         #

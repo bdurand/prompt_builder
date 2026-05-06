@@ -21,6 +21,7 @@ This gem does **not** include any HTTP client code. It is designed to be used wi
 - [Content Types](#content-types)
 - [Configuration Options](#configuration-options)
 - [Serialization and Persistence](#serialization-and-persistence)
+- [Serializer Compatibility](#serializer-compatibility)
 
 ### Sessions
 
@@ -61,7 +62,7 @@ Messages support the roles `user`, `assistant`, `system`, and `developer`.
 
 ### Serializing Requests
 
-Once you've built a session, serialize it to a request payload for the API you want to call. Three formats are supported:
+Once you've built a session, serialize it to a request payload for the API you want to call. Five target formats are supported:
 
 **OpenAI Responses API** (the canonical format):
 
@@ -81,6 +82,18 @@ payload = session.request_payload(:chat_completion)
 
 ```ruby
 payload = session.request_payload(:messages)
+```
+
+**Google Gemini API**:
+
+```ruby
+payload = session.request_payload(:gemini)
+```
+
+**Amazon Bedrock Converse API**:
+
+```ruby
+payload = session.request_payload(:converse)
 ```
 
 The payload is a plain Ruby `Hash` that you can convert to JSON and send to the API with any HTTP client:
@@ -113,6 +126,12 @@ response = PromptBuilder::Response.parse(JSON.parse(response_body), :chat_comple
 
 # Anthropic Messages API
 response = PromptBuilder::Response.parse(JSON.parse(response_body), :messages)
+
+# Google Gemini API
+response = PromptBuilder::Response.parse(JSON.parse(response_body), :gemini)
+
+# Amazon Bedrock Converse API
+response = PromptBuilder::Response.parse(JSON.parse(response_body), :converse)
 ```
 
 You can also pass a serializer class directly:
@@ -157,17 +176,19 @@ loop do
   response = PromptBuilder::Response.parse(response_body, :chat_completion)
 
   session.add_response(response)
-  break unless response.has_tool_calls?
 
-  # Invoke tool handlers and add their outputs back to the conversation
-  session.items.each do |item|
-    next unless item.is_a?(PromptBuilder::Items::FunctionCall)
-    result = call_tool(item.name, item.parsed_arguments)  # Your dispatch logic
-    session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: item.call_id, output: result.to_s))
+  unless response.has_tool_calls?
+    puts response.text
+    break
+  end
+
+  # Invoke tool handlers for each tool call in this response and append the
+  # output back to the session before the next iteration.
+  response.tool_calls.each do |call|
+    result = call_tool(call.name, call.parsed_arguments)  # Your dispatch logic
+    session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: call.call_id, output: result.to_s))
   end
 end
-
-puts session.items.last.content.first.text
 ```
 
 The `add_response` method appends the model's output items (messages, tool calls, reasoning, etc.) to the session's conversation history. You add `FunctionCallOutput` items manually after invoking each tool, then loop until the model produces a final text response.

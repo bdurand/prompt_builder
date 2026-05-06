@@ -210,7 +210,7 @@ module PromptBuilder
               when Items::FunctionCallOutput
                 raw_messages << {
                   "role" => "user",
-                  "content" => [serialize_tool_result(item, ctx)]
+                  "content" => [serialize_tool_result(item)]
                 }
               when Items::Reasoning
                 raise UnsupportedFormatError, "Converse format does not support Reasoning items"
@@ -397,7 +397,7 @@ module PromptBuilder
             {"video" => {"format" => format, "source" => {"s3Location" => {"uri" => content.video_url}}}}
           end
 
-          def serialize_tool_result(item, _ctx)
+          def serialize_tool_result(item)
             result = {"toolUseId" => item.call_id}
 
             status = converse_tool_result_status(item.status)

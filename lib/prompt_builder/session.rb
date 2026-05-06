@@ -152,10 +152,16 @@ module PromptBuilder
     # @return [Items::Message] the added message
     # @example
     #  session.user("Hello, how are you?")
-    #  session.user(Content::Text.new("Hello, how are you?"))
-    #  session.user(type: "text", text: "Hello, how are you?")
-    #  session.user([Content::Text.new("What is in this image?"), Content::Image.new(url: "http://example.com/image.png")])
-    #  session.user([{type: "text", text: "What is in this image?"}, {type: "image", url: "http://example.com/image.png"}])
+    #  session.user(Content::InputText.new(text: "Hello, how are you?"))
+    #  session.user(type: "input_text", text: "Hello, how are you?")
+    #  session.user([
+    #    Content::InputText.new(text: "What is in this image?"),
+    #    Content::InputImage.new(image_url: "http://example.com/image.png")
+    #  ])
+    #  session.user([
+    #    {type: "input_text", text: "What is in this image?"},
+    #    {type: "input_image", image_url: "http://example.com/image.png"}
+    #  ])
     def user(content)
       add_item(Items::Message.new(role: "user", content: content))
     end
@@ -202,12 +208,12 @@ module PromptBuilder
     # @param response [Response] the API response
     # @return [void]
     def add_response(response)
-      response.output.each { |item| @items << item }
+      @items.concat(response.output)
       # Only refresh previous_response_id when the session is already in
       # server-state mode AND the response actually carries an id; otherwise
       # leave the existing pointer alone (responses from formats that don't
       # populate `id` would otherwise silently drop us back into local state).
-      @previous_response_id = response.id if !local_state? && response.id
+      self.previous_response_id = response.id if !local_state? && response.id
       @response_boundary_index = @items.length
     end
 
@@ -319,7 +325,8 @@ module PromptBuilder
     # Export this session to an alternate API format using the given serializer.
     #
     # @param serializer_class [Class, Symbol] a serializer class (e.g. Serializers::ChatCompletion)
-    #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+)
+    #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+,
+    #   +:gemini+, +:converse+)
     # @return [Hash] the serialized request payload
     # @raise [ArgumentError] if a symbol is given that does not map to a known serializer
     def request_payload(serializer_class)
@@ -327,12 +334,6 @@ module PromptBuilder
     end
 
     private
-
-    def tool_call_has_output?(call_id)
-      @items.any? { |item|
-        item.is_a?(Items::FunctionCallOutput) && item.call_id == call_id
-      }
-    end
 
     def config_hash
       (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS - %i[previous_response_id])

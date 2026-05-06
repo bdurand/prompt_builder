@@ -14,8 +14,8 @@ module PromptBuilder
       # @return [String, nil] the function call output status
       attr_reader :status
 
-      # @return [String, Array<Content::Base>] the output from the function; either a plain
-      #   string or an array of content objects
+      # @return [String, Array<Content::Base>, nil] the output from the function; either a plain
+      #   string, an array of content objects, or nil (serialized as +""+)
       attr_reader :output
 
       # Create a new FunctionCallOutput item.
@@ -23,7 +23,8 @@ module PromptBuilder
       # @param id [String, nil] the function call output identifier
       # @param call_id [String] the call identifier
       # @param status [String, nil] the function call output status
-      # @param output [String, Array<Content::Base>] the function output
+      # @param output [String, Array<Content::Base, Hash>, nil] the function output;
+      #   Hash elements in an array are normalized into +Content::Base+ objects
       def initialize(call_id:, output:, id: nil, status: nil)
         @id = id&.to_s
         @call_id = call_id&.to_s

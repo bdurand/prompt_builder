@@ -21,7 +21,7 @@ module PromptBuilder
     # Resolve a serializer class from a symbol or class reference.
     #
     # @param serializer [Class, Symbol] a serializer class or a symbol shorthand
-    #   (+:open_responses+, +:chat_completion+, +:messages+)
+    #   (+:open_responses+, +:chat_completion+, +:messages+, +:gemini+, +:converse+)
     # @return [Class] the resolved serializer class
     # @raise [ArgumentError] if a symbol is given that does not map to a known serializer
     def self.resolve(serializer)
