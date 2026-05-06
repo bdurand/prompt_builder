@@ -16,10 +16,11 @@ module PromptBuilder
     # @param parameters [Hash, nil] the JSON Schema for parameters
     # @param strict [Boolean] whether strict mode is enabled
     # @param callable [#call, nil] a callable handler (alternative to block)
+    # @param extra [Hash] provider-specific extra keyword arguments (e.g. cache_control)
     # @yield [Hash] the parsed arguments when the tool is invoked
     # @yieldreturn [Object] the tool output (String, Hash, Array, or any object)
     # @return [Tools::Definition] the registered definition
-    def register(name, description: nil, parameters: nil, strict: false, callable: nil, &handler)
+    def register(name, description: nil, parameters: nil, strict: false, callable: nil, **extra, &handler)
       name = name.to_s
       raise ArgumentError.new("Tool name is required") if name.empty?
 
@@ -27,7 +28,8 @@ module PromptBuilder
         name: name,
         description: description,
         parameters: parameters,
-        strict: strict
+        strict: strict,
+        **extra
       )
       @definitions[name] = definition
       @handlers[name] = callable || handler

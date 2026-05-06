@@ -148,7 +148,22 @@ module PromptBuilder
             tool_config = build_tool_config(session)
             h["toolConfig"] = tool_config if tool_config
 
+            # Session extra: recognized keys for Converse API
+            apply_session_extra!(h, session.extra) if session.extra
+
             h
+          end
+
+          def apply_session_extra!(h, extra)
+            if extra.key?("stop_sequences")
+              inference_config = h["inferenceConfig"] ||= {}
+              inference_config["stopSequences"] = extra["stop_sequences"]
+            end
+            h["guardrailConfig"] = extra["guardrail_config"] if extra.key?("guardrail_config")
+            h["additionalModelRequestFields"] = extra["additional_model_request_fields"] if extra.key?("additional_model_request_fields")
+            h["additionalModelResponseFieldPaths"] = extra["additional_model_response_field_paths"] if extra.key?("additional_model_response_field_paths")
+            h["performanceConfig"] = extra["performance_config"] if extra.key?("performance_config")
+            h["promptVariables"] = extra["prompt_variables"] if extra.key?("prompt_variables")
           end
 
           def validate_supported_session_fields!(session)
@@ -186,6 +201,9 @@ module PromptBuilder
 
               item.content.each do |content|
                 parts << serialize_system_content(content)
+                if content.respond_to?(:extra) && content.extra && content.extra["cache_point"]
+                  parts << {"cachePoint" => {"type" => "default"}}
+                end
               end
             end
 
@@ -203,7 +221,13 @@ module PromptBuilder
                 role = (item.role == "assistant") ? "assistant" : "user"
                 visible_content = item.content
                 next if visible_content.empty?
-                content = visible_content.map { |c| serialize_content(c, role: role, ctx: ctx) }
+                content = []
+                visible_content.each do |c|
+                  content << serialize_content(c, role: role, ctx: ctx)
+                  if c.respond_to?(:extra) && c.extra && c.extra["cache_point"]
+                    content << {"cachePoint" => {"type" => "default"}}
+                  end
+                end
                 raw_messages << {"role" => role, "content" => content}
               when Items::FunctionCall
                 raw_messages << {

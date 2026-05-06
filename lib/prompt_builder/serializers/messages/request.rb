@@ -98,6 +98,9 @@ module PromptBuilder
             h["service_tier"] = serialize_service_tier(session.service_tier) if session.service_tier
             h["stream"] = session.stream unless session.stream.nil?
 
+            # Session extra: recognized keys for Messages API
+            apply_session_extra!(h, session.extra) if session.extra
+
             output_config = build_output_config(session)
             h["output_config"] = output_config unless output_config.empty?
 
@@ -131,6 +134,12 @@ module PromptBuilder
             h["tool_choice"] = tool_choice if tool_choice
 
             h
+          end
+
+          def apply_session_extra!(h, extra)
+            h["top_k"] = extra["top_k"] if extra.key?("top_k")
+            h["stop_sequences"] = extra["stop_sequences"] if extra.key?("stop_sequences")
+            h["cache_control"] = extra["cache_control"] if extra.key?("cache_control")
           end
 
           def validate_supported_session_fields!(session)
@@ -313,7 +322,13 @@ module PromptBuilder
               next unless item.role == "system" || item.role == "developer"
 
               item.content.each do |content|
-                parts << {"type" => "text", "text" => content.text} if content.is_a?(Content::InputText)
+                if content.is_a?(Content::InputText)
+                  part = {"type" => "text", "text" => content.text}
+                  if content.extra && content.extra["cache_control"]
+                    part["cache_control"] = content.extra["cache_control"]
+                  end
+                  parts << part
+                end
               end
             end
 
@@ -373,6 +388,18 @@ module PromptBuilder
           end
 
           def serialize_content(content, role:)
+            block = serialize_content_block(content, role: role)
+            return nil unless block
+
+            # Apply cache_control from content extra if present
+            if content.respond_to?(:extra) && content.extra && content.extra["cache_control"]
+              block["cache_control"] = content.extra["cache_control"]
+            end
+
+            block
+          end
+
+          def serialize_content_block(content, role:)
             case content
             when Content::InputText
               {"type" => "text", "text" => content.text}
@@ -448,6 +475,10 @@ module PromptBuilder
               end
 
               document["title"] = content.filename if content.filename
+              # Apply citations opt-in from extra
+              if content.extra && content.extra["citations"]
+                document["citations"] = content.extra["citations"]
+              end
               document
             when Content::InputVideo
               raise UnsupportedFormatError, "Messages format does not support InputVideo content"
@@ -551,6 +582,7 @@ module PromptBuilder
               tool["description"] = definition.description if definition.description
               tool["input_schema"] = definition.parameters || {"type" => "object", "properties" => {}}
               tool["strict"] = true if definition.strict
+              tool["cache_control"] = definition.extra["cache_control"] if definition.extra["cache_control"]
               tool
             end
           end

@@ -106,6 +106,11 @@ module PromptBuilder
     # @return [Array<Items::Base>] all conversation items
     attr_reader :items
 
+    # @return [Hash, nil] provider-specific extra data for serializers.
+    #   Recognized keys vary by target format. Unrecognized keys are silently
+    #   ignored by each serializer.
+    attr_reader :extra
+
     class << self
       # Deserialize a Session from a Hash produced by +to_h+ or parsed JSON.
       # Reconstructs all config fields and conversation items. Tool definitions
@@ -117,6 +122,7 @@ module PromptBuilder
       def from_h(hash)
         attrs = (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS)
           .each_with_object({}) { |f, acc| acc[f] = hash[f.to_s] }
+        attrs[:extra] = hash["extra"] if hash["extra"]
         session = new(**attrs)
 
         Array(hash["input"]).each do |item_hash|
@@ -125,7 +131,8 @@ module PromptBuilder
 
         Array(hash["tools"]).each do |tool_hash|
           defn = Tools::Definition.from_h(tool_hash)
-          session.register_tool(defn.name, description: defn.description, parameters: defn.parameters, strict: defn.strict)
+          extra = defn.extra.transform_keys(&:to_sym)
+          session.register_tool(defn.name, description: defn.description, parameters: defn.parameters, strict: defn.strict, **extra)
         end
 
         session
@@ -140,10 +147,13 @@ module PromptBuilder
     # @param attributes [Hash] keyword options; see attribute declarations above
     # @option attributes [String, nil] :input optional string shorthand; a user
     #   message is automatically added with this text
+    # @option attributes [Hash, nil] :extra provider-specific extra data for
+    #   serializers; recognized keys vary by target format
     def initialize(**attributes)
       (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS).each do |f|
         send(:"#{f}=", attributes[f])
       end
+      @extra = PromptBuilder.jsonify(attributes[:extra]) if attributes[:extra]
       @items = []
       @tool_definitions = {}
       @response_boundary_index = 0
@@ -227,13 +237,15 @@ module PromptBuilder
     # @param description [String, nil] the tool description
     # @param parameters [Hash, nil] the JSON Schema for parameters
     # @param strict [Boolean] whether strict mode is enabled
+    # @param extra [Hash] provider-specific extra keyword arguments (e.g. cache_control)
     # @return [Tools::Definition] the registered definition
-    def register_tool(name, description: nil, parameters: nil, strict: false)
+    def register_tool(name, description: nil, parameters: nil, strict: false, **extra)
       definition = Tools::Definition.new(
         name: name,
         description: description,
         parameters: parameters,
-        strict: strict
+        strict: strict,
+        **extra
       )
       @tool_definitions[name] = definition
       definition
@@ -245,11 +257,13 @@ module PromptBuilder
     # @return [void]
     def register_tools(registry)
       registry.definitions.each do |defn|
+        extra = defn.extra.transform_keys(&:to_sym)
         register_tool(
           defn.name,
           description: defn.description,
           parameters: defn.parameters,
-          strict: defn.strict
+          strict: defn.strict,
+          **extra
         )
       end
     end
@@ -267,11 +281,13 @@ module PromptBuilder
     def clone_config
       session = Session.new(**config_hash)
       @tool_definitions.each do |name, defn|
+        extra = defn.extra.transform_keys(&:to_sym)
         session.register_tool(
           name,
           description: defn.description,
           parameters: defn.parameters,
-          strict: defn.strict
+          strict: defn.strict,
+          **extra
         )
       end
       session
@@ -322,6 +338,7 @@ module PromptBuilder
         val = send(f)
         h[f.to_s] = val if val
       }
+      h["extra"] = @extra if @extra
 
       h
     end
@@ -340,8 +357,10 @@ module PromptBuilder
     private
 
     def config_hash
-      (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS - %i[previous_response_id])
+      h = (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS - %i[previous_response_id])
         .each_with_object({}) { |f, acc| acc[f] = send(f) }
+      h[:extra] = @extra if @extra
+      h
     end
   end
 end

@@ -137,11 +137,28 @@ module PromptBuilder
             tool_config = build_tool_config(session.tool_choice, tools: tools)
             h["toolConfig"] = tool_config if tool_config
 
+            # Session extra: recognized keys for Gemini API
+            apply_session_extra!(h, session.extra) if session.extra
+
             # Gemini selects streaming via endpoint (:streamGenerateContent)
             # rather than a request body field, so session.stream is a no-op
             # at the payload level.
 
             h
+          end
+
+          def apply_session_extra!(h, extra)
+            h["safetySettings"] = extra["safety_settings"] if extra.key?("safety_settings")
+            h["cachedContent"] = extra["cached_content"] if extra.key?("cached_content")
+            # Generation config extras
+            generation_config = h["generationConfig"] ||= {}
+            generation_config["stopSequences"] = extra["stop_sequences"] if extra.key?("stop_sequences")
+            generation_config["topK"] = extra["top_k"] if extra.key?("top_k")
+            generation_config["seed"] = extra["seed"] if extra.key?("seed")
+            generation_config["candidateCount"] = extra["candidate_count"] if extra.key?("candidate_count")
+            generation_config["responseModalities"] = extra["response_modalities"] if extra.key?("response_modalities")
+            generation_config["mediaResolution"] = extra["media_resolution"] if extra.key?("media_resolution")
+            h.delete("generationConfig") if generation_config.empty?
           end
 
           def validate_supported_session_fields!(session)

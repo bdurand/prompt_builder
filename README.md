@@ -347,6 +347,117 @@ session = PromptBuilder::Session.new(
 )
 ```
 
+### Provider-Specific Extra Parameters
+
+The `extra` attribute on sessions, content blocks, and tool definitions lets you pass provider-specific parameters that are not part of the Open Responses canonical format. Each serializer recognizes a defined set of `extra` keys and maps them to the appropriate location in the target format. Unrecognized keys are silently ignored.
+
+#### Session Extra
+
+Pass provider-specific top-level request parameters via `session.extra`:
+
+```ruby
+# Anthropic Messages: top_k, stop_sequences, cache_control
+session = PromptBuilder::Session.new(
+  model: "claude-sonnet-4-20250514",
+  extra: {
+    "top_k" => 40,
+    "stop_sequences" => ["\n\nHuman:"],
+    "cache_control" => {"type" => "ephemeral"}
+  }
+)
+
+# OpenAI Chat Completions: stop, seed, logit_bias, n, web_search_options
+session = PromptBuilder::Session.new(
+  model: "gpt-4o",
+  extra: {
+    "stop" => ["END", "\n\n"],
+    "seed" => 42,
+    "web_search_options" => {"search_context_size" => "medium"}
+  }
+)
+
+# Google Gemini: safety_settings, cached_content, stop_sequences, top_k, seed
+session = PromptBuilder::Session.new(
+  model: "gemini-2.0-flash",
+  extra: {
+    "safety_settings" => [
+      {"category" => "HARM_CATEGORY_HATE_SPEECH", "threshold" => "BLOCK_ONLY_HIGH"}
+    ],
+    "cached_content" => "cachedContents/abc123",
+    "stop_sequences" => ["END"],
+    "top_k" => 40,
+    "seed" => 42
+  }
+)
+
+# Amazon Bedrock Converse: stop_sequences, guardrail_config, additional_model_request_fields
+session = PromptBuilder::Session.new(
+  model: "anthropic.claude-v2",
+  extra: {
+    "stop_sequences" => ["\n\nHuman:"],
+    "guardrail_config" => {
+      "guardrailIdentifier" => "my-guardrail",
+      "guardrailVersion" => "1"
+    },
+    "additional_model_request_fields" => {"top_k" => 50}
+  }
+)
+```
+
+#### Content Extra
+
+Content blocks support provider-specific attributes via keyword arguments that are captured in the `extra` hash:
+
+```ruby
+# Anthropic Messages: cache_control on content blocks for prompt caching
+session.system([
+  PromptBuilder::Content::InputText.new(
+    text: "You are an assistant with a large knowledge base...",
+    cache_control: {"type" => "ephemeral"}
+  )
+])
+
+# Anthropic Messages: citations opt-in on document blocks
+session.user([
+  PromptBuilder::Content::InputFile.new(
+    file_url: "https://example.com/report.pdf",
+    citations: {"enabled" => true}
+  ),
+  PromptBuilder::Content::InputText.new(text: "Summarize with citations.")
+])
+
+# Bedrock Converse: cache_point markers
+session.user([
+  PromptBuilder::Content::InputText.new(
+    text: "Long context that should be cached...",
+    cache_point: true
+  )
+])
+```
+
+#### Tool Definition Extra
+
+Tool definitions accept provider-specific parameters as keyword arguments:
+
+```ruby
+# Anthropic Messages: cache_control on tool definitions
+session.register_tool(
+  "search",
+  description: "Search the knowledge base.",
+  parameters: {"type" => "object", "properties" => {"query" => {"type" => "string"}}},
+  cache_control: {"type" => "ephemeral"}
+)
+```
+
+#### Recognized Extra Keys by Serializer
+
+| Serializer | Session Extra Keys | Content Extra Keys | Tool Extra Keys |
+|:---|:---|:---|:---|
+| **Chat Completions** | `stop`, `seed`, `logit_bias`, `n`, `prediction`, `web_search_options`, `modalities`, `audio` | `file_id`, `media_type` | — |
+| **Messages** | `top_k`, `stop_sequences`, `cache_control` | `cache_control`, `citations`, `file_id`, `media_type` | `cache_control` |
+| **Gemini** | `safety_settings`, `cached_content`, `stop_sequences`, `top_k`, `seed`, `candidate_count`, `response_modalities`, `media_resolution` | `file_id`, `media_type`, `thought_signature` | — |
+| **Converse** | `stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables` | `media_type`, `cache_point` | — |
+
 ### Serialization and Persistence
 
 Sessions and responses can be serialized to and from Hashes for storage or transmission:
@@ -375,7 +486,7 @@ The following table shows which session configuration fields are supported by ea
 | `frequency_penalty` | ✅ | ❌ | ✅ → `generationConfig.frequencyPenalty` | ❌ |
 | `include` | ❌ | ❌ | ❌ | ❌ |
 | `max_tool_calls` | ❌ | ❌ | ❌ | ❌ |
-| `metadata` | ✅ | `user_id` key only | ❌ | ✅ → `requestMetadata`¹² |
+| `metadata` | ✅ | `user_id` key only | ❌ | ✅ → `requestMetadata`¹³ |
 | `parallel_tool_calls` | ✅ | ✅ | ❌ | ❌ |
 | `presence_penalty` | ✅ | ❌ | ✅ → `generationConfig.presencePenalty` | ❌ |
 | `prompt_cache_key` | ✅ | ❌ | ❌ | ❌ |
@@ -416,7 +527,7 @@ The following table shows which session configuration fields are supported by ea
 ¹⁰ Chat Completions sends `InputFile` as a `{"type": "file", "file": {...}}` content block. `file_id` (Files API) and base64 `file_data` (with optional `filename`/`media_type`; defaults to `application/pdf`) are supported. `file_url` raises because Chat Completions has no remote-URL form for files.
 ¹¹ `OutputText.annotations` (e.g. URL citations from `web_search_options`) are parsed onto the assistant message and round-trip through session history, but are dropped silently on Chat Completions request serialization since Chat Completions has no request-side equivalent. Converse raises for `OutputText.annotations` or `OutputText.logprobs` because they have no Converse request-side equivalent.
 ¹² Messages text-block `citations` are parsed into `OutputText.annotations` and emitted back as `citations` when serializing Messages history. Document/tool-result citation opt-ins are still not modeled.
-¹² Converse `requestMetadata` only accepts string key/value pairs. This serializer stringifies scalar metadata values and raises for nested arrays or objects.
+¹³ Converse `requestMetadata` only accepts string key/value pairs. This serializer stringifies scalar metadata values and raises for nested arrays or objects.
 
 ### Features Not Accessible Through Open Responses
 

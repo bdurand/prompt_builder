@@ -102,7 +102,21 @@ module PromptBuilder
               h["tool_choice"] = serialize_tool_choice(session.tool_choice, tools.empty?)
             end
 
+            # Session extra: recognized keys for Chat Completions API
+            apply_session_extra!(h, session.extra) if session.extra
+
             h
+          end
+
+          def apply_session_extra!(h, extra)
+            h["stop"] = extra["stop"] if extra.key?("stop")
+            h["seed"] = extra["seed"] if extra.key?("seed")
+            h["logit_bias"] = extra["logit_bias"] if extra.key?("logit_bias")
+            h["n"] = extra["n"] if extra.key?("n")
+            h["prediction"] = extra["prediction"] if extra.key?("prediction")
+            h["web_search_options"] = extra["web_search_options"] if extra.key?("web_search_options")
+            h["modalities"] = extra["modalities"] if extra.key?("modalities")
+            h["audio"] = extra["audio"] if extra.key?("audio")
           end
 
           def validate_session!(session)
