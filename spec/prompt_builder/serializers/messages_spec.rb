@@ -153,6 +153,19 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["messages"][0]["content"][1]["text"]).to eq("Second")
     end
 
+    it "maps OutputText annotations to Anthropic text citations" do
+      citation = {"type" => "char_location", "start_char_index" => 0, "end_char_index" => 5}
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "assistant",
+        content: [PromptBuilder::Content::OutputText.new(text: "Hello", annotations: [citation])]
+      ))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][1]["content"][0]["citations"]).to eq([citation])
+    end
+
     it "serializes Anthropic thinking blocks with signatures" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.user("Think hard")
@@ -187,7 +200,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(data: "abc123", media_type: "image/png")]
+        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
       ))
 
       h = described_class.request_payload(session)
@@ -265,7 +278,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /image_url, InputImage\.data, or InputImage\.file_id/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /image_url.*or file_id in extra/)
     end
 
     it "raises with a clear message when InputFile has no usable source" do
@@ -277,7 +290,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_url, InputFile\.file_data, or InputFile\.file_id/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_url, InputFile\.file_data, or file_id in extra/)
     end
 
     it "marks tool_result as is_error when FunctionCallOutput.status is failed" do
@@ -400,17 +413,52 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["stream"]).to be true
     end
 
-    it "drops the unsupported strict field on tool definitions" do
+    it "maps strict tool definitions" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.register_tool("get_weather", strict: true) { |_| "sunny" }
       session.user("Hi")
 
       h = described_class.request_payload(session)
-      expect(h["tools"][0]).not_to have_key("strict")
+      expect(h["tools"][0]["strict"]).to be true
       expect(h["tools"][0]["input_schema"]).to eq({"type" => "object", "properties" => {}})
     end
 
-    it "raises for the text session field (no native equivalent in Anthropic)" do
+    it "maps text.format json_schema to output_config.format" do
+      schema = {
+        "type" => "object",
+        "properties" => {"forecast" => {"type" => "string"}},
+        "required" => ["forecast"],
+        "additionalProperties" => false
+      }
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        text: {"format" => {"type" => "json_schema", "schema" => schema}}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["output_config"]["format"]).to eq({
+        "type" => "json_schema",
+        "schema" => schema
+      })
+    end
+
+    it "maps nested json_schema text.format to output_config.format" do
+      schema = {"type" => "object"}
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        text: {"format" => {"type" => "json_schema", "json_schema" => {"schema" => schema}}}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["output_config"]["format"]).to eq({
+        "type" => "json_schema",
+        "schema" => schema
+      })
+    end
+
+    it "raises for text.format json_object" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_object"}}
@@ -419,19 +467,67 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support session fields.*text/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /json_schema/)
     end
 
-    it "raises for reasoning.effort (Anthropic uses budget_tokens)" do
+    it "raises for unsupported text.format keys" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
-        reasoning: {"effort" => "high"}
+        text: {"format" => {"type" => "json_schema", "schema" => {"type" => "object"}, "name" => "Weather"}}
+      )
+      session.user("Hi")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format\.name/)
+    end
+
+    it "raises for unsupported nested text.format json_schema keys" do
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        text: {"format" => {"type" => "json_schema", "json_schema" => {"name" => "Weather", "schema" => {"type" => "object"}}}}
+      )
+      session.user("Hi")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format\.json_schema\.name/)
+    end
+
+    it "maps reasoning.effort to output_config.effort" do
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        reasoning: {"effort" => "medium"}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["output_config"]).to eq({"effort" => "medium"})
+      expect(h).not_to have_key("thinking")
+    end
+
+    it "raises for unsupported reasoning.effort values" do
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        reasoning: {"effort" => "tiny"}
       )
       session.user("Hi")
 
       expect {
         described_class.request_payload(session)
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /reasoning\.effort/)
+    end
+
+    it "maps adaptive thinking without budget_tokens" do
+      session = PromptBuilder::Session.new(
+        model: "claude-opus-4-7",
+        reasoning: {"type" => "adaptive", "display" => "omitted", "effort" => "xhigh"}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["thinking"]).to eq({"type" => "adaptive", "display" => "omitted"})
+      expect(h["output_config"]).to eq({"effort" => "xhigh"})
     end
 
     it "defaults thinking.type to 'enabled' when only budget_tokens is provided" do
@@ -823,6 +919,8 @@ RSpec.describe PromptBuilder::Serializers::Messages do
           "cache_creation_input_tokens" => 80,
           "cache_read_input_tokens" => 20,
           "cache_creation" => {"ephemeral_5m_input_tokens" => 60, "ephemeral_1h_input_tokens" => 20},
+          "inference_geo" => "us",
+          "server_tool_use" => {"web_search_requests" => 1, "web_fetch_requests" => 2},
           "service_tier" => "priority"
         }
       })
@@ -831,7 +929,33 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(details["cache_creation_input_tokens"]).to eq(80)
       expect(details["cached_tokens"]).to eq(20)
       expect(details["cache_creation"]).to eq({"ephemeral_5m_input_tokens" => 60, "ephemeral_1h_input_tokens" => 20})
+      expect(details["inference_geo"]).to eq("us")
+      expect(details["server_tool_use"]).to eq({"web_search_requests" => 1, "web_fetch_requests" => 2})
       expect(details["service_tier"]).to eq("priority")
+    end
+
+    it "preserves text citations as output annotations" do
+      citation = {"type" => "char_location", "start_char_index" => 0, "end_char_index" => 5}
+
+      response = described_class.parse_response({
+        "stop_reason" => "end_turn",
+        "content" => [{"type" => "text", "text" => "Hello", "citations" => [citation]}]
+      })
+
+      expect(response.output[0].content[0].annotations).to eq([citation])
+    end
+
+    it "preserves stop_details on refusals" do
+      stop_details = {"type" => "refusal", "category" => "safety", "explanation" => "blocked"}
+
+      response = described_class.parse_response({
+        "stop_reason" => "refusal",
+        "stop_details" => stop_details,
+        "content" => [{"type" => "text", "text" => "I cannot help."}]
+      })
+
+      expect(response.status).to eq("failed")
+      expect(response.incomplete_details).to eq({"stop_details" => stop_details})
     end
 
     it "raises on unknown content block types" do

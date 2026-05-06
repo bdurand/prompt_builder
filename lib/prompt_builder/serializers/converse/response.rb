@@ -37,7 +37,9 @@ module PromptBuilder
               model: nil,
               output: build_output_items(content_blocks),
               status: map_stop_reason(hash["stopReason"]),
-              usage: usage
+              usage: usage,
+              service_tier: hash.dig("serviceTier", "type"),
+              extra: provider_data(hash)
             )
           end
 
@@ -49,9 +51,21 @@ module PromptBuilder
               "incomplete"
             when "guardrail_intervened", "content_filtered"
               "failed"
+            when "malformed_model_output", "malformed_tool_use"
+              "failed"
+            when "model_context_window_exceeded"
+              "incomplete"
             else
               reason
             end
+          end
+
+          def provider_data(hash)
+            data = {}
+            %w[additionalModelResponseFields metrics performanceConfig serviceTier trace].each do |key|
+              data[key] = hash[key] if hash[key]
+            end
+            data
           end
 
           # Converse response ContentBlock keys this gem understands. Additional

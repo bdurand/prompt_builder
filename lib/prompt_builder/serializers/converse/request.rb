@@ -15,37 +15,39 @@ module PromptBuilder
       # - +frequency_penalty+ — not supported by the Converse API
       # - +include+ — response-field inclusion is an Open Responses-only concept
       # - +max_tool_calls+ — per-request tool-call caps are not supported
-      # - +metadata+ — arbitrary metadata is not supported on the Converse endpoint
       # - +parallel_tool_calls+ — parallel tool call control is not supported
       # - +presence_penalty+ — not supported by the Converse API
-      # - +prompt_cache_key+ — explicit prompt cache keys are not supported
+      # - +prompt_cache_key+ / +prompt_cache_retention+ — explicit prompt cache keys are not supported
       # - +reasoning+ — extended thinking is not supported on the Converse endpoint
       # - +safety_identifier+ — no equivalent user-safety field on the Converse endpoint
-      # - +service_tier+ — service tier selection is not supported
       # - +store+ — server-side response storage is not supported
       # - +stream+ — SSE streaming is handled outside the Converse request payload
       # - +stream_options+ — stream event options are not supported
-      # - +text+ — structured response format control is not supported
       # - +top_logprobs+ — log probability output is not supported
       # - +truncation+ — server-side context truncation is not supported
+      #
+      # Partially supported session fields:
+      # - +metadata+ — values must be scalar so they can map to +requestMetadata+
+      # - +text+ — only +format.type == "json_schema"+ is supported
       #
       # Tool choice restrictions:
       # - +tool_choice: "none"+ is not supported by the Converse API
       #
       # Input content restrictions:
       # - +Reasoning+ items are not supported
-      # - +RefusalContent+ is dropped silently (a parsed Chat Completions
-      #   refusal can stay in session history without breaking subsequent
-      #   request_payload calls)
+      # - +RefusalContent+ is not supported
+      # - +OutputText.annotations+ and +OutputText.logprobs+ are not supported
       # - +InputImage+ content is only supported in user messages (not assistant)
+      # - +InputImage.detail+ and +InputImage.file_id+ are not supported
       # - +InputFile+ content is only supported in user messages (not assistant)
+      # - +InputFile.file_id+ is not supported
       # - +InputVideo+ content is only supported in user messages (not assistant)
       # - +InputImage+ requires base64 +data+ or an S3 URI (+s3://...+) — public URLs
       #   are not accepted
       # - +InputFile+ requires base64 +file_data+ or an S3 URI — public URLs are not
       #   accepted; format is detected from the filename or +file_url+ extension
       # - +InputVideo+ requires an S3 URI (+s3://...+) — public URLs are not accepted
-      # - Only text and image content is supported in tool (+FunctionCallOutput+) results
+      # - Tool (+FunctionCallOutput+) results support text, image, document, and video content
       #
       # === Features in Converse not available through Open Responses
       #
@@ -53,12 +55,12 @@ module PromptBuilder
       # canonical format:
       # - +stopSequences+ — custom stop sequences
       # - Guardrail policies (+guardrailConfig+)
-      # - Guardrail trace and assessment events
       # - Per-model passthrough fields (+additionalModelRequestFields+)
+      # - Requested provider response fields (+additionalModelResponseFieldPaths+)
       # - Cross-region routing via inference profiles
-      # - +performanceConfig+ (service tier / latency tier selection)
-      # - +requestMetadata+ (request metadata / safety identifier)
-      # - Latency metrics in the response body
+      # - +performanceConfig+ latency settings beyond +serviceTier+
+      # - Prompt management variables (+promptVariables+)
+      # - Prompt caching markers (+cachePoint+)
       class Request < Base
         IMAGE_MEDIA_TYPE_FORMATS = {
           "image/jpeg" => "jpeg",
@@ -102,6 +104,9 @@ module PromptBuilder
           "3gp" => "three_gp"
         }.freeze
 
+        SUPPORTED_TEXT_KEYS = %w[format].freeze
+        private_constant :SUPPORTED_TEXT_KEYS
+
         class << self
           private
 
@@ -132,6 +137,14 @@ module PromptBuilder
             inference_config = build_inference_config(session)
             h["inferenceConfig"] = inference_config unless inference_config.empty?
 
+            output_config = build_output_config(session)
+            h["outputConfig"] = output_config unless output_config.empty?
+
+            metadata = build_request_metadata(session)
+            h["requestMetadata"] = metadata unless metadata.empty?
+
+            h["serviceTier"] = {"type" => session.service_tier} if session.service_tier
+
             tool_config = build_tool_config(session)
             h["toolConfig"] = tool_config if tool_config
 
@@ -149,13 +162,11 @@ module PromptBuilder
             unsupported_fields << "max_tool_calls" if session.max_tool_calls
             unsupported_fields << "safety_identifier" if session.safety_identifier
             unsupported_fields << "prompt_cache_key" if session.prompt_cache_key
+            unsupported_fields << "prompt_cache_retention" if session.prompt_cache_retention
             unsupported_fields << "truncation" if session.truncation
             unsupported_fields << "store" unless session.store.nil?
             unsupported_fields << "top_logprobs" if session.top_logprobs
-            unsupported_fields << "service_tier" if session.service_tier
-            unsupported_fields << "metadata" if session.metadata
             unsupported_fields << "parallel_tool_calls" unless session.parallel_tool_calls.nil?
-            unsupported_fields << "text" if session.text
             unsupported_fields << "reasoning" if session.reasoning
 
             return if unsupported_fields.empty?
@@ -174,7 +185,7 @@ module PromptBuilder
               next unless item.role == "system" || item.role == "developer"
 
               item.content.each do |content|
-                parts << {"text" => content.text} if content.is_a?(Content::InputText)
+                parts << serialize_system_content(content)
               end
             end
 
@@ -190,9 +201,7 @@ module PromptBuilder
                 next if item.role == "system" || item.role == "developer"
 
                 role = (item.role == "assistant") ? "assistant" : "user"
-                # RefusalContent is dropped silently; it can land in history via
-                # a parsed Chat Completions response but cannot be sent back.
-                visible_content = item.content.reject { |c| c.is_a?(Content::RefusalContent) }
+                visible_content = item.content
                 next if visible_content.empty?
                 content = visible_content.map { |c| serialize_content(c, role: role, ctx: ctx) }
                 raw_messages << {"role" => role, "content" => content}
@@ -210,7 +219,7 @@ module PromptBuilder
               when Items::FunctionCallOutput
                 raw_messages << {
                   "role" => "user",
-                  "content" => [serialize_tool_result(item)]
+                  "content" => [serialize_tool_result(item, ctx)]
                 }
               when Items::Reasoning
                 raise UnsupportedFormatError, "Converse format does not support Reasoning items"
@@ -222,6 +231,19 @@ module PromptBuilder
             end
 
             merge_consecutive_messages(raw_messages)
+          end
+
+          def serialize_system_content(content)
+            case content
+            when Content::InputText
+              {"text" => content.text}
+            when Content::OutputText
+              validate_output_text!(content)
+              {"text" => content.text}
+            else
+              raise UnsupportedFormatError,
+                "Converse format only supports text content in system and developer messages"
+            end
           end
 
           # Bedrock toolUse.input must be a JSON object. Wrap parser errors as
@@ -241,6 +263,7 @@ module PromptBuilder
           def serialize_content(content, role:, ctx: nil)
             case content
             when Content::InputText, Content::OutputText
+              validate_output_text!(content) if content.is_a?(Content::OutputText)
               {"text" => content.text}
             when Content::InputImage
               if role == "assistant"
@@ -264,42 +287,71 @@ module PromptBuilder
 
               serialize_video(content)
             when Content::RefusalContent
-              # Filtered out before reaching here; defensive no-op.
-              nil
+              raise UnsupportedFormatError,
+                "Converse format does not support RefusalContent"
             else
               raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
             end
           end
 
+          def validate_output_text!(content)
+            unsupported_fields = []
+            unsupported_fields << "annotations" unless content.annotations.empty?
+            unsupported_fields << "logprobs" unless content.logprobs.empty?
+            return if unsupported_fields.empty?
+
+            raise UnsupportedFormatError,
+              "Converse format does not support OutputText.#{unsupported_fields.join(" or OutputText.")}"
+          end
+
           def serialize_image(content)
+            if content.detail
+              raise UnsupportedFormatError,
+                "Converse format does not support InputImage.detail"
+            end
+
+            if content.extra && content.extra["file_id"]
+              raise UnsupportedFormatError,
+                "Converse format does not support file_id in extra for InputImage"
+            end
+
             format = detect_image_format(content)
-            source = if content.data
-              {"bytes" => content.data}
+            parsed = PromptBuilder.parse_data_url(content.image_url)
+            source = if parsed
+              {"bytes" => parsed[1]}
             elsif content.image_url&.start_with?("s3://")
               {"s3Location" => {"uri" => content.image_url}}
             else
               raise UnsupportedFormatError,
-                "Converse format requires InputImage.data or an S3 URI for InputImage.image_url"
+                "Converse format requires a data URL in InputImage.image_url or an S3 URI"
             end
 
             {"image" => {"format" => format, "source" => source}}
           end
 
           def detect_image_format(content)
-            if content.media_type
-              format = IMAGE_MEDIA_TYPE_FORMATS[content.media_type]
-              return format if format
+            media_type = content.extra && content.extra["media_type"]
+            if media_type
+              fmt = IMAGE_MEDIA_TYPE_FORMATS[media_type]
+              return fmt if fmt
+            end
+
+            # Try to extract media type from data URL
+            parsed = PromptBuilder.parse_data_url(content.image_url)
+            if parsed
+              fmt = IMAGE_MEDIA_TYPE_FORMATS[parsed[0]]
+              return fmt if fmt
             end
 
             url = content.image_url
             if url
               ext = File.extname(url).delete_prefix(".").downcase
-              format = IMAGE_URL_EXTENSION_FORMATS[ext]
-              return format if format
+              fmt = IMAGE_URL_EXTENSION_FORMATS[ext]
+              return fmt if fmt
             end
 
             raise UnsupportedFormatError,
-              "Converse format could not detect image format; set InputImage.media_type (e.g. \"image/jpeg\")"
+              "Converse format could not detect image format; set media_type in extra (e.g. \"image/jpeg\")"
           end
 
           DOCUMENT_MEDIA_TYPE_FORMATS = {
@@ -315,6 +367,11 @@ module PromptBuilder
           }.freeze
 
           def serialize_document(content, ctx)
+            if content.extra && content.extra["file_id"]
+              raise UnsupportedFormatError,
+                "Converse format does not support file_id in extra for InputFile"
+            end
+
             format = detect_document_format(content)
             source = if content.file_data
               {"bytes" => content.file_data}
@@ -330,21 +387,22 @@ module PromptBuilder
           end
 
           def detect_document_format(content)
-            if content.media_type
-              format = DOCUMENT_MEDIA_TYPE_FORMATS[content.media_type]
-              return format if format
+            media_type = content.extra && content.extra["media_type"]
+            if media_type
+              fmt = DOCUMENT_MEDIA_TYPE_FORMATS[media_type]
+              return fmt if fmt
             end
 
             [content.filename, content.file_url].each do |path|
               next unless path
 
               ext = File.extname(path).delete_prefix(".").downcase
-              format = DOCUMENT_FILENAME_EXTENSION_FORMATS[ext]
-              return format if format
+              fmt = DOCUMENT_FILENAME_EXTENSION_FORMATS[ext]
+              return fmt if fmt
             end
 
             raise UnsupportedFormatError,
-              "Converse format could not detect document format; set InputFile.media_type or a recognized file extension on InputFile.filename or InputFile.file_url"
+              "Converse format could not detect document format; set media_type in extra or use a recognized file extension on InputFile.filename or InputFile.file_url"
           end
 
           # Bedrock requires document.name to be unique within a request and to
@@ -397,14 +455,14 @@ module PromptBuilder
             {"video" => {"format" => format, "source" => {"s3Location" => {"uri" => content.video_url}}}}
           end
 
-          def serialize_tool_result(item)
+          def serialize_tool_result(item, ctx)
             result = {"toolUseId" => item.call_id}
 
             status = converse_tool_result_status(item.status)
             result["status"] = status if status
 
             content = if item.output.is_a?(Array)
-              item.output.map { |c| serialize_tool_result_content(c) }
+              item.output.map { |c| serialize_tool_result_content(c, ctx) }
             elsif !item.output.nil? && !item.output.empty?
               [{"text" => item.output}]
             else
@@ -434,12 +492,17 @@ module PromptBuilder
             end
           end
 
-          def serialize_tool_result_content(content)
+          def serialize_tool_result_content(content, ctx)
             case content
             when Content::InputText, Content::OutputText
+              validate_output_text!(content) if content.is_a?(Content::OutputText)
               {"text" => content.text}
             when Content::InputImage
               serialize_image(content)
+            when Content::InputFile
+              serialize_document(content, ctx)
+            when Content::InputVideo
+              serialize_video(content)
             else
               raise UnsupportedFormatError,
                 "#{content.class.name.split("::").last} is not supported in tool output in Converse format"
@@ -468,6 +531,56 @@ module PromptBuilder
             config["temperature"] = session.temperature if session.temperature
             config["topP"] = session.top_p if session.top_p
             config
+          end
+
+          def build_output_config(session)
+            return {} unless session.text
+
+            unsupported_keys = session.text.keys - SUPPORTED_TEXT_KEYS
+            unless unsupported_keys.empty?
+              raise UnsupportedFormatError,
+                "Converse format does not support text.#{unsupported_keys.first}"
+            end
+
+            format = session.text["format"]
+            return {} unless format
+
+            unless format.is_a?(Hash) && format["type"] == "json_schema"
+              raise UnsupportedFormatError,
+                "Converse format only supports text.format type \"json_schema\""
+            end
+
+            schema = format.dig("json_schema", "schema") || format["schema"]
+            unless schema
+              raise UnsupportedFormatError,
+                "Converse format requires text.format.schema for json_schema output"
+            end
+
+            json_schema = {"schema" => schema}
+            name = format.dig("json_schema", "name") || format["name"]
+            description = format.dig("json_schema", "description") || format["description"]
+            json_schema["name"] = name if name
+            json_schema["description"] = description if description
+
+            {
+              "textFormat" => {
+                "type" => "json_schema",
+                "structure" => {"jsonSchema" => json_schema}
+              }
+            }
+          end
+
+          def build_request_metadata(session)
+            return {} unless session.metadata
+
+            session.metadata.each_with_object({}) do |(key, value), metadata|
+              if value.is_a?(Hash) || value.is_a?(Array)
+                raise UnsupportedFormatError,
+                  "Converse format only supports scalar metadata values"
+              end
+
+              metadata[key.to_s] = value.to_s
+            end
           end
 
           def build_tool_config(session)

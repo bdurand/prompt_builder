@@ -18,6 +18,9 @@ module PromptBuilder
       #   string, an array of content objects, or nil (serialized as +""+)
       attr_reader :output
 
+      # @return [Hash, nil] provider-specific extra data
+      attr_reader :extra
+
       # Create a new FunctionCallOutput item.
       #
       # @param id [String, nil] the function call output identifier
@@ -25,11 +28,13 @@ module PromptBuilder
       # @param status [String, nil] the function call output status
       # @param output [String, Array<Content::Base, Hash>, nil] the function output;
       #   Hash elements in an array are normalized into +Content::Base+ objects
-      def initialize(call_id:, output:, id: nil, status: nil)
+      # @param extra [Hash] provider-specific extra keyword arguments
+      def initialize(call_id:, output:, id: nil, status: nil, **extra)
         @id = id&.to_s
         @call_id = call_id&.to_s
         @status = status&.to_s
         @output = normalize_output(output)
+        @extra = extra.transform_keys(&:to_s)
       end
 
       class << self
@@ -44,7 +49,8 @@ module PromptBuilder
             id: hash["id"],
             call_id: hash["call_id"],
             status: hash["status"],
-            output: output
+            output: output,
+            **hash.except("type", "id", "call_id", "status", "output").transform_keys(&:to_sym)
           )
         end
       end
@@ -61,6 +67,7 @@ module PromptBuilder
         }
         hash["id"] = @id if @id
         hash["status"] = @status if @status
+        hash = PromptBuilder.jsonify(@extra).merge(hash) unless @extra.empty?
         hash
       end
 

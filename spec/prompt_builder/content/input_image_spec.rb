@@ -12,12 +12,11 @@ RSpec.describe PromptBuilder::Content::InputImage do
       })
     end
 
-    it "serializes with base64 data" do
-      content = described_class.new(data: "abc123", media_type: "image/png", detail: "high")
+    it "serializes with base64 data URL" do
+      content = described_class.new(image_url: "data:image/png;base64,abc123", detail: "high")
       expect(content.to_h).to eq({
         "type" => "input_image",
-        "data" => "abc123",
-        "media_type" => "image/png",
+        "image_url" => "data:image/png;base64,abc123",
         "detail" => "high"
       })
     end
@@ -33,14 +32,12 @@ RSpec.describe PromptBuilder::Content::InputImage do
       content = described_class.from_h({
         "type" => "input_image",
         "image_url" => "https://example.com/img.png",
-        "data" => "abc",
-        "media_type" => "image/png",
-        "detail" => "auto"
+        "detail" => "auto",
+        "file_id" => "file-abc"
       })
       expect(content.image_url).to eq("https://example.com/img.png")
-      expect(content.data).to eq("abc")
-      expect(content.media_type).to eq("image/png")
       expect(content.detail).to eq("auto")
+      expect(content.extra).to eq({"file_id" => "file-abc"})
     end
   end
 

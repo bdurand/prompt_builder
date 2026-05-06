@@ -26,10 +26,10 @@ module PromptBuilder
       #   refusal can stay in session history without breaking subsequent
       #   request_payload calls)
       # - +InputImage+ content is only supported in user messages (not assistant/developer/system)
-      # - +InputImage.file_id+ is not supported (the +image_file+ content type is
-      #   Assistants API only; use +image_url+ or base64 +data+ instead)
-      # - +InputFile+ is mapped to a +file+ content block (Files API id, base64
-      #   +file_data+, or both with +filename+); +InputFile.file_url+ is not
+      # - +InputImage+ with +file_id+ in +extra+ is not supported (the +image_file+
+      #   content type is Assistants API only; use +image_url+ instead)
+      # - +InputFile+ is mapped to a +file+ content block (Files API id via +extra+,
+      #   base64 +file_data+, or both with +filename+); +InputFile.file_url+ is not
       #   supported because Chat Completions has no remote-URL form for files
       # - Only text content is supported in tool (+FunctionCallOutput+) results
       # - +OutputText.annotations+ are dropped silently on request serialization
@@ -80,6 +80,7 @@ module PromptBuilder
             h["service_tier"] = session.service_tier if session.service_tier
             h["safety_identifier"] = session.safety_identifier if session.safety_identifier
             h["prompt_cache_key"] = session.prompt_cache_key if session.prompt_cache_key
+            h["prompt_cache_retention"] = session.prompt_cache_retention if session.prompt_cache_retention
             h["stream"] = session.stream unless session.stream.nil?
             h["stream_options"] = normalize_hash(session.stream_options) if session.stream_options
 
@@ -96,10 +97,6 @@ module PromptBuilder
 
             tools = build_tools(session)
             h["tools"] = tools unless tools.empty?
-
-            if !session.parallel_tool_calls.nil? && tools.empty?
-              raise UnsupportedFormatError, "parallel_tool_calls requires at least one tool in Chat Completions format"
-            end
 
             if session.tool_choice
               h["tool_choice"] = serialize_tool_choice(session.tool_choice, tools.empty?)
@@ -314,44 +311,40 @@ module PromptBuilder
             if content.file_url
               raise UnsupportedFormatError,
                 "InputFile.file_url is not supported in Chat Completions format; " \
-                "use file_id (Files API) or base64 file_data with filename instead"
+                "use file_id (in extra) or base64 file_data with filename instead"
             end
 
+            file_id = content.extra && content.extra["file_id"]
+            media_type = content.extra && content.extra["media_type"]
+
             file = {}
-            file["file_id"] = content.file_id if content.file_id
+            file["file_id"] = file_id if file_id
             file["filename"] = content.filename if content.filename
             if content.file_data
-              media_type = content.media_type || "application/pdf"
-              file["file_data"] = "data:#{media_type};base64,#{content.file_data}"
+              mime = media_type || "application/pdf"
+              file["file_data"] = "data:#{mime};base64,#{content.file_data}"
             end
 
             if file.empty?
               raise UnsupportedFormatError,
-                "InputFile requires file_id or file_data in Chat Completions format"
+                "InputFile requires file_id (in extra) or file_data in Chat Completions format"
             end
 
             {"type" => "file", "file" => file}
           end
 
           def serialize_image_content(content)
-            if content.file_id
+            file_id = content.extra && content.extra["file_id"]
+            if file_id
               raise UnsupportedFormatError,
-                "InputImage.file_id is not supported in Chat Completions format; " \
-                "the image_file content type is Assistants API only. Use image_url or base64 data instead."
+                "InputImage file_id (in extra) is not supported in Chat Completions format; " \
+                "the image_file content type is Assistants API only. Use image_url instead."
             end
 
             url = content.image_url
-            if content.data
-              unless content.media_type
-                raise UnsupportedFormatError,
-                  "InputImage media_type is required when using base64 data in Chat Completions format"
-              end
-
-              url = "data:#{content.media_type};base64,#{content.data}"
-            end
 
             unless url
-              raise UnsupportedFormatError, "InputImage requires image_url or data in Chat Completions format"
+              raise UnsupportedFormatError, "InputImage requires image_url in Chat Completions format"
             end
 
             image_url = {"url" => url}

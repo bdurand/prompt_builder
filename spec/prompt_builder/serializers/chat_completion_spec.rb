@@ -114,7 +114,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_id is not supported/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_id.*is not supported/)
     end
 
     it "converts function call items to tool_calls on assistant messages" do
@@ -276,7 +276,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(data: "abc123", media_type: "image/png")]
+        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
       ))
 
       h = described_class.request_payload(session)
@@ -450,6 +450,14 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
       h = described_class.request_payload(session)
       expect(h["prompt_cache_key"]).to eq("ck-abc")
+    end
+
+    it "passes through prompt_cache_retention" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", prompt_cache_retention: "24h")
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["prompt_cache_retention"]).to eq("24h")
     end
 
     it "passes safety_identifier through directly (not via legacy user)" do
@@ -627,6 +635,15 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["service_tier"]).to eq("default")
       expect(h["stream"]).to be true
       expect(h["stream_options"]).to eq({"include_usage" => true})
+    end
+
+    it "passes through parallel_tool_calls even when no tools are registered" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", parallel_tool_calls: false)
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["parallel_tool_calls"]).to be false
+      expect(h).not_to have_key("tools")
     end
   end
 
@@ -857,6 +874,65 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       })
 
       expect(response.service_tier).to eq("default")
+    end
+
+    it "captures system_fingerprint in extra" do
+      response = described_class.parse_response({
+        "system_fingerprint" => "fp_abc",
+        "choices" => [{"message" => {"content" => "Hi"}, "finish_reason" => "stop"}]
+      })
+
+      expect(response.extra).to eq({"system_fingerprint" => "fp_abc"})
+    end
+
+    it "raises for streaming chunks" do
+      expect {
+        described_class.parse_response({"object" => "chat.completion.chunk", "choices" => []})
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /streaming chunks/)
+    end
+
+    it "raises for multiple choices" do
+      expect {
+        described_class.parse_response({
+          "choices" => [
+            {"message" => {"content" => "One"}, "finish_reason" => "stop"},
+            {"message" => {"content" => "Two"}, "finish_reason" => "stop"}
+          ]
+        })
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /multiple choices/)
+    end
+
+    it "raises for unsupported response content block types" do
+      expect {
+        described_class.parse_response({
+          "choices" => [{
+            "message" => {"content" => [{"type" => "input_audio", "input_audio" => {}}]},
+            "finish_reason" => "stop"
+          }]
+        })
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /content block type/)
+    end
+
+    it "raises for custom tool calls" do
+      expect {
+        described_class.parse_response({
+          "choices" => [{
+            "message" => {"content" => nil, "tool_calls" => [{"id" => "call_1", "type" => "custom"}]},
+            "finish_reason" => "tool_calls"
+          }]
+        })
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool call type/)
+    end
+
+    it "raises for audio responses" do
+      expect {
+        described_class.parse_response({
+          "choices" => [{
+            "message" => {"content" => nil, "audio" => {"id" => "audio_1"}},
+            "finish_reason" => "stop"
+          }]
+        })
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /audio responses/)
     end
 
     it "maps the legacy function_call finish_reason to completed" do

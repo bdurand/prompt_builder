@@ -19,12 +19,15 @@ module PromptBuilder
           # gem does not model. Listed explicitly so the error message tells
           # the user what they hit (rather than just "unknown type").
           BUILT_IN_TOOL_BLOCK_TYPES = %w[
-            server_tool_use
-            web_search_tool_result
+            bash_code_execution_tool_result
             code_execution_tool_result
-            mcp_tool_use
-            mcp_tool_result
             container_upload
+            mcp_tool_result
+            mcp_tool_use
+            server_tool_use
+            tool_search_tool_result
+            web_fetch_tool_result
+            web_search_tool_result
             search_result
           ].freeze
           private_constant :BUILT_IN_TOOL_BLOCK_TYPES
@@ -50,11 +53,15 @@ module PromptBuilder
             cache_read = usage_hash["cache_read_input_tokens"]
             cache_creation_breakdown = usage_hash["cache_creation"]
             service_tier = usage_hash["service_tier"]
+            inference_geo = usage_hash["inference_geo"]
+            server_tool_use = usage_hash["server_tool_use"]
 
             input_tokens_details = input_tokens_details.merge("cache_creation_input_tokens" => cache_creation) if cache_creation
             input_tokens_details = input_tokens_details.merge("cached_tokens" => cache_read) if cache_read
             input_tokens_details = input_tokens_details.merge("cache_creation" => cache_creation_breakdown) if cache_creation_breakdown
             input_tokens_details = input_tokens_details.merge("service_tier" => service_tier) if service_tier
+            input_tokens_details = input_tokens_details.merge("inference_geo" => inference_geo) if inference_geo
+            input_tokens_details = input_tokens_details.merge("server_tool_use" => server_tool_use) if server_tool_use
 
             # Anthropic reports input_tokens excluding cached/cache-creation tokens,
             # which are billed and counted separately. Include them in the total.
@@ -73,6 +80,7 @@ module PromptBuilder
           def build_incomplete_details(hash)
             details = {}
             details["stop_sequence"] = hash["stop_sequence"] if hash["stop_sequence"]
+            details["stop_details"] = hash["stop_details"] if hash["stop_details"]
             details["container"] = hash["container"] if hash["container"]
             details.empty? ? nil : details
           end
@@ -105,7 +113,10 @@ module PromptBuilder
               case type
               when "text"
                 flush_reasoning_contents!(output, reasoning_contents)
-                text_contents << Content::OutputText.new(text: block["text"])
+                text_contents << Content::OutputText.new(
+                  text: block["text"],
+                  annotations: block["citations"] || []
+                )
               when "tool_use"
                 flush_text_contents!(output, text_contents)
                 flush_reasoning_contents!(output, reasoning_contents)

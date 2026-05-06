@@ -10,7 +10,9 @@ module PromptBuilder
     private_constant :BOOLEAN_FIELDS
 
     # String-typed fields coerced with .to_s on assignment.
-    STRING_FIELDS = %i[model instructions previous_response_id truncation safety_identifier prompt_cache_key service_tier].freeze
+    STRING_FIELDS = %i[
+      model instructions previous_response_id truncation safety_identifier prompt_cache_key prompt_cache_retention service_tier
+    ].freeze
     private_constant :STRING_FIELDS
 
     # Float-typed fields coerced with .to_f on assignment.
@@ -37,6 +39,8 @@ module PromptBuilder
     #   @return [String, nil] the safety identifier
     # @!attribute [rw] prompt_cache_key
     #   @return [String, nil] the prompt cache key
+    # @!attribute [rw] prompt_cache_retention
+    #   @return [String, nil] the prompt cache retention policy
     # @!attribute [rw] service_tier
     #   @return [String, nil] the service tier
     STRING_FIELDS.each do |f|

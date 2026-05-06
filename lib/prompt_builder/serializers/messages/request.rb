@@ -12,7 +12,7 @@ module PromptBuilder
       # - +include+ — response-field inclusion is an Open Responses-only concept
       # - +max_tool_calls+ — per-request tool-call caps are not supported
       # - +presence_penalty+ — not supported by the Messages API
-      # - +prompt_cache_key+ — explicit prompt cache keys are not supported
+      # - +prompt_cache_key+ / +prompt_cache_retention+ — explicit prompt cache keys are not supported
       # - +store+ — server-side response storage is not supported
       # - +stream_options+ — stream event options are not supported
       # - +top_logprobs+ — log probability output is not supported
@@ -20,15 +20,14 @@ module PromptBuilder
       # - +background+ — background/async mode is not supported on the Messages endpoint
       #
       # Unsupported (raises +UnsupportedFormatError+):
-      # - +text+ — Anthropic Messages has no native response-format parameter; use a
-      #   tool with a JSON schema and force +tool_choice+ for structured output
-      # - +reasoning.effort+ — Anthropic uses +budget_tokens+, not effort levels
+      # - +text.verbosity+ — Anthropic Messages has no equivalent verbosity control
       #
       # Partially supported session fields (unsupported keys raise +UnsupportedFormatError+):
       # - +metadata+ — only the +user_id+ key is forwarded; +safety_identifier+ is
       #   also mapped into +metadata.user_id+ automatically
       # - +service_tier+ — only +auto+ and +standard_only+ are accepted
-      # - +reasoning+ — +budget_tokens+, +display+, and +type+ are forwarded;
+      # - +text+ — +format.type=json_schema+ is mapped to +output_config.format+
+      # - +reasoning+ — +budget_tokens+, +display+, +effort+, and +type+ are forwarded;
       #   +temperature+ must be unset and +top_p+ must be >= 0.95 when reasoning is enabled
       #
       # Input content restrictions:
@@ -56,6 +55,8 @@ module PromptBuilder
       # canonical format:
       # - +top_k+ — top-K sampling parameter
       # - +stop_sequences+ — custom stop sequences
+      # - +cache_control+ — top-level prompt-cache breakpoint selection
+      # - +inference_geo+ — geographic inference routing
       # - +mcp_servers+ — MCP connector beta parameter
       # - +container+ — code execution container reuse parameter
       # - +cache_control+ markers on system blocks, message content blocks,
@@ -73,7 +74,10 @@ module PromptBuilder
       class Request < Base
         DEFAULT_MAX_TOKENS = 4096
         SUPPORTED_METADATA_KEYS = ["user_id"].freeze
-        SUPPORTED_REASONING_KEYS = ["budget_tokens", "display", "type"].freeze
+        EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"].freeze
+        SUPPORTED_REASONING_KEYS = ["budget_tokens", "display", "effort", "type"].freeze
+        SUPPORTED_TEXT_KEYS = ["format"].freeze
+        SUPPORTED_THINKING_TYPES = ["adaptive", "disabled", "enabled"].freeze
         SUPPORTED_TOOL_CHOICE_TYPES = ["any", "auto", "none", "tool"].freeze
 
         class << self
@@ -94,8 +98,11 @@ module PromptBuilder
             h["service_tier"] = serialize_service_tier(session.service_tier) if session.service_tier
             h["stream"] = session.stream unless session.stream.nil?
 
+            output_config = build_output_config(session)
+            h["output_config"] = output_config unless output_config.empty?
+
             thinking = serialize_thinking(session.reasoning)
-            validate_thinking_compatibility!(session, thinking) if thinking
+            validate_thinking_compatibility!(session, thinking) if thinking_active?(thinking)
             h["thinking"] = thinking if thinking
 
             system_parts = build_system(session)
@@ -119,7 +126,7 @@ module PromptBuilder
               session.tool_choice,
               tools: tools,
               parallel_tool_calls: session.parallel_tool_calls,
-              thinking_enabled: !thinking.nil?
+              thinking_enabled: thinking_active?(thinking)
             )
             h["tool_choice"] = tool_choice if tool_choice
 
@@ -135,15 +142,10 @@ module PromptBuilder
             unsupported_fields << "background" unless session.background.nil?
             unsupported_fields << "max_tool_calls" if session.max_tool_calls
             unsupported_fields << "prompt_cache_key" if session.prompt_cache_key
+            unsupported_fields << "prompt_cache_retention" if session.prompt_cache_retention
             unsupported_fields << "truncation" if session.truncation
             unsupported_fields << "store" unless session.store.nil?
             unsupported_fields << "top_logprobs" if session.top_logprobs
-            unsupported_fields << "text" if session.text
-
-            if session.reasoning && session.reasoning["effort"]
-              unsupported_fields << "reasoning.effort"
-            end
-
             return if unsupported_fields.empty?
 
             raise UnsupportedFormatError,
@@ -198,17 +200,91 @@ module PromptBuilder
             thinking["display"] = reasoning["display"] if reasoning["display"]
             return nil if thinking.empty? && !reasoning["type"]
 
-            # Anthropic requires thinking.type ("enabled") whenever thinking is configured.
             thinking["type"] = reasoning["type"] || "enabled"
 
-            # Anthropic rejects thinking blocks that don't carry a budget_tokens
-            # value when type is "enabled".
+            unless SUPPORTED_THINKING_TYPES.include?(thinking["type"])
+              raise UnsupportedFormatError,
+                "Messages format does not support reasoning.type #{thinking["type"].inspect}"
+            end
+
             if thinking["type"] == "enabled" && !thinking.key?("budget_tokens")
               raise UnsupportedFormatError,
                 "Messages format requires reasoning.budget_tokens when thinking is enabled"
             end
 
+            if thinking["type"] != "enabled" && thinking.key?("budget_tokens")
+              raise UnsupportedFormatError,
+                "Messages format only supports reasoning.budget_tokens when reasoning.type is enabled"
+            end
+
+            if thinking["type"] == "disabled" && thinking.key?("display")
+              raise UnsupportedFormatError,
+                "Messages format does not support reasoning.display when reasoning.type is disabled"
+            end
+
             thinking
+          end
+
+          def thinking_active?(thinking)
+            thinking && thinking["type"] != "disabled"
+          end
+
+          def build_output_config(session)
+            output_config = {}
+
+            if session.reasoning && session.reasoning["effort"]
+              effort = session.reasoning["effort"]
+              unless EFFORT_LEVELS.include?(effort)
+                raise UnsupportedFormatError,
+                  "Messages format does not support reasoning.effort #{effort.inspect}"
+              end
+
+              output_config["effort"] = effort
+            end
+
+            if session.text
+              unsupported_keys = session.text.keys - SUPPORTED_TEXT_KEYS
+              unless unsupported_keys.empty?
+                raise UnsupportedFormatError,
+                  "Messages format does not support text.#{unsupported_keys.first}"
+              end
+
+              output_format = serialize_output_format(session.text["format"])
+              output_config["format"] = output_format if output_format
+            end
+
+            output_config
+          end
+
+          def serialize_output_format(format)
+            return nil unless format
+
+            unless format.is_a?(Hash) && format["type"] == "json_schema"
+              raise UnsupportedFormatError,
+                "Messages format only supports text.format type \"json_schema\""
+            end
+
+            unsupported_keys = format.keys - ["json_schema", "schema", "type"]
+            unless unsupported_keys.empty?
+              raise UnsupportedFormatError,
+                "Messages format does not support text.format.#{unsupported_keys.first}"
+            end
+
+            if format["json_schema"].is_a?(Hash)
+              unsupported_json_schema_keys = format["json_schema"].keys - ["schema"]
+              unless unsupported_json_schema_keys.empty?
+                raise UnsupportedFormatError,
+                  "Messages format does not support text.format.json_schema.#{unsupported_json_schema_keys.first}"
+              end
+            end
+
+            schema = format.dig("json_schema", "schema") || format["schema"]
+            unless schema
+              raise UnsupportedFormatError,
+                "Messages format requires text.format.schema for json_schema output"
+            end
+
+            {"type" => "json_schema", "schema" => schema}
           end
 
           def validate_thinking_compatibility!(session, thinking)
@@ -301,46 +377,51 @@ module PromptBuilder
             when Content::InputText
               {"type" => "text", "text" => content.text}
             when Content::OutputText
-              {"type" => "text", "text" => content.text}
+              text = {"type" => "text", "text" => content.text}
+              text["citations"] = content.annotations unless content.annotations.empty?
+              text
             when Content::InputImage
               if role == "assistant"
                 raise UnsupportedFormatError,
                   "Messages format does not support assistant #{content.class.name.split("::").last} content"
               end
 
-              if content.image_url
-                {
-                  "type" => "image",
-                  "source" => {"type" => "url", "url" => content.image_url}
-                }
-              elsif content.data
-                unless content.media_type
-                  raise UnsupportedFormatError,
-                    "Messages format requires InputImage.media_type for base64 image content"
-                end
+              file_id = content.extra && content.extra["file_id"]
 
-                {
-                  "type" => "image",
-                  "source" => {
-                    "type" => "base64",
-                    "media_type" => content.media_type,
-                    "data" => content.data
+              if content.image_url
+                parsed = PromptBuilder.parse_data_url(content.image_url)
+                if parsed
+                  {
+                    "type" => "image",
+                    "source" => {
+                      "type" => "base64",
+                      "media_type" => parsed[0],
+                      "data" => parsed[1]
+                    }
                   }
-                }
-              elsif content.file_id
+                else
+                  {
+                    "type" => "image",
+                    "source" => {"type" => "url", "url" => content.image_url}
+                  }
+                end
+              elsif file_id
                 {
                   "type" => "image",
-                  "source" => {"type" => "file", "file_id" => content.file_id}
+                  "source" => {"type" => "file", "file_id" => file_id}
                 }
               else
                 raise UnsupportedFormatError,
-                  "Messages format requires InputImage.image_url, InputImage.data, or InputImage.file_id"
+                  "Messages format requires InputImage.image_url or file_id in extra"
               end
             when Content::InputFile
               if role == "assistant"
                 raise UnsupportedFormatError,
                   "Messages format does not support assistant #{content.class.name.split("::").last} content"
               end
+
+              file_id = content.extra && content.extra["file_id"]
+              media_type = content.extra && content.extra["media_type"]
 
               if content.file_url
                 document = {
@@ -352,18 +433,18 @@ module PromptBuilder
                   "type" => "document",
                   "source" => {
                     "type" => "base64",
-                    "media_type" => content.media_type || "application/pdf",
+                    "media_type" => media_type || "application/pdf",
                     "data" => content.file_data
                   }
                 }
-              elsif content.file_id
+              elsif file_id
                 document = {
                   "type" => "document",
-                  "source" => {"type" => "file", "file_id" => content.file_id}
+                  "source" => {"type" => "file", "file_id" => file_id}
                 }
               else
                 raise UnsupportedFormatError,
-                  "Messages format requires InputFile.file_url, InputFile.file_data, or InputFile.file_id"
+                  "Messages format requires InputFile.file_url, InputFile.file_data, or file_id in extra"
               end
 
               document["title"] = content.filename if content.filename
@@ -469,6 +550,7 @@ module PromptBuilder
               tool = {"name" => definition.name}
               tool["description"] = definition.description if definition.description
               tool["input_schema"] = definition.parameters || {"type" => "object", "properties" => {}}
+              tool["strict"] = true if definition.strict
               tool
             end
           end

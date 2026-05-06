@@ -107,6 +107,59 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(h["inferenceConfig"]["topP"]).to eq(0.9)
     end
 
+    it "maps service_tier to serviceTier" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0", service_tier: "priority")
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["serviceTier"]).to eq({"type" => "priority"})
+    end
+
+    it "maps scalar metadata to requestMetadata" do
+      session = PromptBuilder::Session.new(
+        model: "amazon.nova-pro-v1:0",
+        metadata: {request_id: "req_123", shard: 4, cached: false}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["requestMetadata"]).to eq({"request_id" => "req_123", "shard" => "4", "cached" => "false"})
+    end
+
+    it "maps json_schema text format to outputConfig" do
+      schema = {
+        "type" => "object",
+        "properties" => {"answer" => {"type" => "string"}},
+        "required" => ["answer"]
+      }
+      session = PromptBuilder::Session.new(
+        model: "amazon.nova-pro-v1:0",
+        text: {
+          "format" => {
+            "type" => "json_schema",
+            "name" => "answer_schema",
+            "description" => "A structured answer",
+            "schema" => schema
+          }
+        }
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["outputConfig"]).to eq({
+        "textFormat" => {
+          "type" => "json_schema",
+          "structure" => {
+            "jsonSchema" => {
+              "schema" => schema,
+              "name" => "answer_schema",
+              "description" => "A structured answer"
+            }
+          }
+        }
+      })
+    end
+
     it "merges system and developer messages into top-level system" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0", instructions: "Base instruction")
       session.system("Extra system context")
@@ -229,6 +282,33 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(tool_result["content"]).to eq([{"text" => "Sunny and warm"}])
     end
 
+    it "converts file and video output on FunctionCallOutput to toolResult content blocks" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Analyze the tool output")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "render", call_id: "tooluse_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "tooluse_1",
+        output: [
+          PromptBuilder::Content::InputFile.new(file_data: "pdf", filename: "report.pdf"),
+          PromptBuilder::Content::InputVideo.new(video_url: "s3://bucket/output.mp4")
+        ]
+      ))
+
+      h = described_class.request_payload(session)
+      tool_result = h["messages"][2]["content"][0]["toolResult"]
+      expect(tool_result["content"][0]["document"]).to eq({
+        "format" => "pdf",
+        "name" => "report",
+        "source" => {"bytes" => "pdf"}
+      })
+      expect(tool_result["content"][1]["video"]).to eq({
+        "format" => "mp4",
+        "source" => {"s3Location" => {"uri" => "s3://bucket/output.mp4"}}
+      })
+    end
+
     it "includes status on toolResult when present on FunctionCallOutput" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.user("Hi")
@@ -278,7 +358,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(data: "abc123", media_type: "image/png")]
+        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
       ))
 
       h = described_class.request_payload(session)
@@ -492,19 +572,31 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /stream/)
     end
 
-    it "raises for metadata field" do
+    it "raises for nested metadata values" do
       session = PromptBuilder::Session.new(
         model: "amazon.nova-pro-v1:0",
-        metadata: {"user_id" => "123"}
+        metadata: {"nested" => {"user_id" => "123"}}
       )
       session.user("Hi")
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /metadata/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /scalar metadata/)
     end
 
-    it "raises for text (response format) field" do
+    it "raises for unsupported text keys" do
+      session = PromptBuilder::Session.new(
+        model: "amazon.nova-pro-v1:0",
+        text: {"verbosity" => "low"}
+      )
+      session.user("Hi")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text/)
+    end
+
+    it "raises for unsupported text format types" do
       session = PromptBuilder::Session.new(
         model: "amazon.nova-pro-v1:0",
         text: {"format" => {"type" => "json_object"}}
@@ -513,7 +605,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /json_schema/)
     end
 
     it "raises for reasoning field" do
@@ -552,18 +644,44 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /Reasoning/)
     end
 
-    it "drops RefusalContent silently so a parsed refusal can stay in session history" do
+    it "raises for RefusalContent" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.user("Hello")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::RefusalContent.new(refusal: "I cannot help.")]
       ))
-      session.user("Try again")
 
-      h = described_class.request_payload(session)
-      # The refusal-only assistant message is skipped; the two user messages merge.
-      expect(h["messages"].map { |m| m["role"] }).to eq(["user"])
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /RefusalContent/)
+    end
+
+    it "raises for non-text system and developer content" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.system([PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc")])
+      session.user("Hi")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /system and developer/)
+    end
+
+    it "raises for OutputText annotations and logprobs" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hello")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "assistant",
+        content: [PromptBuilder::Content::OutputText.new(
+          text: "Hi",
+          annotations: [{"type" => "url_citation"}],
+          logprobs: [{"token" => "Hi"}]
+        )]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /OutputText.annotations/)
     end
 
     it "raises for InputImage with a non-S3 URL" do
@@ -582,12 +700,36 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(data: "abc123")]
+        content: [PromptBuilder::Content::InputImage.new(image_url: "data:application/octet-stream;base64,abc123")]
       ))
 
       expect {
         described_class.request_payload(session)
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /image format/)
+    end
+
+    it "raises for InputImage detail" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc", detail: "high")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /InputImage.detail/)
+    end
+
+    it "raises for InputImage file_id" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc", file_id: "file_123")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_id in extra/)
     end
 
     it "raises for InputFile with a non-S3 URL" do
@@ -600,6 +742,18 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect {
         described_class.request_payload(session)
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /S3 URI/)
+    end
+
+    it "raises for InputFile file_id" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(file_data: "abc", filename: "report.pdf", file_id: "file_123")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_id in extra/)
     end
 
     it "raises for InputVideo with a non-S3 URL" do
@@ -650,12 +804,38 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
-        content: [PromptBuilder::Content::InputImage.new(data: "abc", media_type: "image/png")]
+        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc")]
       ))
 
       expect {
         described_class.request_payload(session)
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /assistant InputImage/)
+    end
+
+    it "raises for assistant InputFile content" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "assistant",
+        content: [PromptBuilder::Content::InputFile.new(file_data: "pdf", filename: "report.pdf")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /assistant InputFile/)
+    end
+
+    it "raises for assistant InputVideo content" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "assistant",
+        content: [PromptBuilder::Content::InputVideo.new(video_url: "s3://bucket/video.mp4")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /assistant InputVideo/)
     end
   end
 
@@ -802,6 +982,43 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       })
 
       expect(response.status).to eq("failed")
+    end
+
+    it "maps newer Converse stop reasons" do
+      malformed = described_class.parse_response({
+        "output" => {"message" => {"role" => "assistant", "content" => []}},
+        "stopReason" => "malformed_tool_use"
+      })
+      context_exceeded = described_class.parse_response({
+        "output" => {"message" => {"role" => "assistant", "content" => []}},
+        "stopReason" => "model_context_window_exceeded"
+      })
+
+      expect(malformed.status).to eq("failed")
+      expect(context_exceeded.status).to eq("incomplete")
+    end
+
+    it "preserves Converse response metadata in extra" do
+      response = described_class.parse_response({
+        "output" => {
+          "message" => {"role" => "assistant", "content" => [{"text" => "Hi"}]}
+        },
+        "stopReason" => "end_turn",
+        "additionalModelResponseFields" => {"stop_sequence" => "DONE"},
+        "metrics" => {"latencyMs" => 1234},
+        "performanceConfig" => {"latency" => "optimized"},
+        "serviceTier" => {"type" => "priority"},
+        "trace" => {"promptRouter" => {"invokedModelId" => "model-a"}}
+      })
+
+      expect(response.service_tier).to eq("priority")
+      expect(response.extra).to eq({
+        "additionalModelResponseFields" => {"stop_sequence" => "DONE"},
+        "metrics" => {"latencyMs" => 1234},
+        "performanceConfig" => {"latency" => "optimized"},
+        "serviceTier" => {"type" => "priority"},
+        "trace" => {"promptRouter" => {"invokedModelId" => "model-a"}}
+      })
     end
 
     it "parses cache token usage" do

@@ -15,10 +15,8 @@ module PromptBuilder
       # - +max_tool_calls+ — per-request tool-call caps are not supported
       # - +metadata+ — arbitrary metadata is not supported
       # - +parallel_tool_calls+ — parallel tool call control is not supported
-      # - +prompt_cache_key+ — explicit prompt cache keys are not supported
+      # - +prompt_cache_key+ / +prompt_cache_retention+ — explicit prompt cache keys are not supported
       # - +safety_identifier+ — no equivalent user-safety field on the generate endpoint
-      # - +service_tier+ — service tier selection is not supported
-      # - +store+ — server-side response storage is not supported
       # - +stream_options+ — stream event options are not supported
       # - +truncation+ — server-side context truncation is not supported
       #
@@ -44,8 +42,8 @@ module PromptBuilder
       # The following Gemini parameters cannot be set through the Open Responses
       # canonical format:
       # - +thinkingConfig.thinkingBudget+ — use +reasoning.budget_tokens+ instead
-      # - +thinkingConfig.includeThoughts+ — request that the model emit thought
-      #   parts in its response
+      # - +thinkingConfig.thinkingLevel+ — use +reasoning.effort+ instead
+      # - +thinkingConfig.includeThoughts+ — use +reasoning.summary = "auto"+ instead
       # - +topK+ — top-K sampling parameter
       # - +seed+ — for reproducible outputs (model-dependent)
       # - +stopSequences+ — custom stop sequences
@@ -58,8 +56,8 @@ module PromptBuilder
       # - +enableEnhancedCivicAnswers+
       # - +routingConfig+, +modelSelectionConfig+
       # - Video metadata controls (+videoMetadata+ offset, FPS) on +Part+s
-      # - Audio input (model-dependent; can be sent as +InputFile+ with an
-      #   audio MIME type but is not officially supported)
+      # - Audio input model capability controls (audio can be sent as
+      #   +InputFile+ with an audio MIME type)
       # - Built-in Gemini tools: +googleSearch+ / +googleSearchRetrieval+,
       #   +codeExecution+, +urlContext+, +computerUse+, +fileSearch+,
       #   +googleMaps+, +mcpServers+
@@ -69,7 +67,10 @@ module PromptBuilder
       # - Top-level +labels+ (Vertex flavor only)
       class Request < Base
         SUPPORTED_TEXT_KEYS = %w[format].freeze
-        SUPPORTED_REASONING_KEYS = %w[budget_tokens].freeze
+        SUPPORTED_REASONING_KEYS = %w[budget_tokens effort summary].freeze
+        SUPPORTED_REASONING_EFFORTS = %w[minimal low medium high].freeze
+        SUPPORTED_REASONING_SUMMARIES = %w[auto].freeze
+        SUPPORTED_SERVICE_TIERS = %w[unspecified standard flex priority].freeze
 
         FILE_EXTENSION_MIME_TYPES = {
           "pdf" => "application/pdf",
@@ -81,7 +82,24 @@ module PromptBuilder
           "csv" => "text/csv",
           "json" => "application/json",
           "xml" => "application/xml",
-          "rtf" => "application/rtf"
+          "rtf" => "application/rtf",
+          "png" => "image/png",
+          "jpg" => "image/jpeg",
+          "jpeg" => "image/jpeg",
+          "webp" => "image/webp",
+          "heic" => "image/heic",
+          "heif" => "image/heif",
+          "mp3" => "audio/mpeg",
+          "wav" => "audio/wav",
+          "aiff" => "audio/aiff",
+          "aac" => "audio/aac",
+          "ogg" => "audio/ogg",
+          "flac" => "audio/flac",
+          "mp4" => "video/mp4",
+          "mov" => "video/quicktime",
+          "webm" => "video/webm",
+          "mpeg" => "video/mpeg",
+          "mpg" => "video/mpeg"
         }.freeze
         private_constant :FILE_EXTENSION_MIME_TYPES
 
@@ -102,6 +120,8 @@ module PromptBuilder
             raise UnsupportedFormatError, "Gemini format requires session.model" unless session.model
 
             h["model"] = session.model
+            h["store"] = session.store unless session.store.nil?
+            h["serviceTier"] = serialize_service_tier(session.service_tier) if session.service_tier
 
             system_instruction = build_system_instruction(session)
             h["systemInstruction"] = system_instruction if system_instruction
@@ -132,9 +152,8 @@ module PromptBuilder
             unsupported_fields << "max_tool_calls" if session.max_tool_calls
             unsupported_fields << "safety_identifier" if session.safety_identifier
             unsupported_fields << "prompt_cache_key" if session.prompt_cache_key
+            unsupported_fields << "prompt_cache_retention" if session.prompt_cache_retention
             unsupported_fields << "truncation" if session.truncation
-            unsupported_fields << "store" unless session.store.nil?
-            unsupported_fields << "service_tier" if session.service_tier
             unsupported_fields << "metadata" if session.metadata
             unsupported_fields << "parallel_tool_calls" unless session.parallel_tool_calls.nil?
 
@@ -189,12 +208,15 @@ module PromptBuilder
                 parts = visible_content.map { |content| serialize_content(content, role: role) }
                 raw_contents << {"role" => role, "parts" => parts}
               when Items::FunctionCall
-                parts = [{
-                  "functionCall" => {
-                    "name" => item.name,
-                    "args" => parse_function_call_args(item)
-                  }
-                }]
+                function_call = {
+                  "name" => item.name,
+                  "args" => parse_function_call_args(item)
+                }
+                function_call["id"] = item.call_id if item.call_id
+                part = {"functionCall" => function_call}
+                thought_sig = item.extra && item.extra["thought_signature"]
+                part["thoughtSignature"] = thought_sig if thought_sig
+                parts = [part]
                 raw_contents << {"role" => "model", "parts" => parts}
               when Items::FunctionCallOutput
                 function_name = call_id_to_name[item.call_id]
@@ -204,12 +226,12 @@ module PromptBuilder
                     "Gemini's functionResponse.name must reference a previously-declared tool name"
                 end
 
-                parts = [{
-                  "functionResponse" => {
-                    "name" => function_name,
-                    "response" => serialize_function_output(item.output)
-                  }
-                }]
+                function_response = {
+                  "name" => function_name,
+                  "response" => serialize_function_output(item.output)
+                }
+                function_response["id"] = item.call_id if item.call_id
+                parts = [{"functionResponse" => function_response}]
                 raw_contents << {"role" => "user", "parts" => parts}
               when Items::Reasoning
                 unless item.summary.empty?
@@ -291,7 +313,11 @@ module PromptBuilder
           def serialize_content(content, role:)
             case content
             when Content::InputText, Content::OutputText
-              {"text" => content.text}
+              part = {"text" => content.text}
+              if content.extra && content.extra["thought_signature"]
+                part["thoughtSignature"] = content.extra["thought_signature"]
+              end
+              part
             when Content::InputImage
               if role == "model"
                 raise UnsupportedFormatError,
@@ -334,72 +360,74 @@ module PromptBuilder
           end
 
           def serialize_image(content)
-            if content.file_id
-              return {"fileData" => {"mimeType" => content.media_type || "image/jpeg", "fileUri" => content.file_id}}
+            file_id = content.extra && content.extra["file_id"]
+            media_type = content.extra && content.extra["media_type"]
+
+            if file_id
+              return {"fileData" => {"mimeType" => media_type || "image/jpeg", "fileUri" => file_id}}
             end
 
             if content.image_url
+              parsed = PromptBuilder.parse_data_url(content.image_url)
+              if parsed
+                return {"inlineData" => {"mimeType" => parsed[0], "data" => parsed[1]}}
+              end
+
               unless google_file_uri?(content.image_url)
                 raise UnsupportedFormatError,
-                  "Gemini format does not support arbitrary public image URLs; use base64 InputImage.data, " \
-                  "an InputImage.file_id, or a gs:// / Files API InputImage.image_url"
+                  "Gemini format does not support arbitrary public image URLs; use a data URL in InputImage.image_url, " \
+                  "a file_id in extra, or a gs:// / Files API InputImage.image_url"
               end
 
-              return {"fileData" => {"mimeType" => content.media_type || "image/jpeg", "fileUri" => content.image_url}}
-            end
-
-            if content.data
-              unless content.media_type
-                raise UnsupportedFormatError,
-                  "Gemini format requires InputImage.media_type for base64 image content"
-              end
-
-              return {"inlineData" => {"mimeType" => content.media_type, "data" => content.data}}
+              return {"fileData" => {"mimeType" => media_type || "image/jpeg", "fileUri" => content.image_url}}
             end
 
             raise UnsupportedFormatError,
-              "Gemini format requires InputImage.image_url, InputImage.data, or InputImage.file_id"
+              "Gemini format requires InputImage.image_url or a file_id in extra"
           end
 
           def serialize_file(content)
-            if content.file_id
-              mime = content.media_type
+            file_id = content.extra && content.extra["file_id"]
+            media_type = content.extra && content.extra["media_type"]
+
+            if file_id
+              mime = media_type
               unless mime
                 raise UnsupportedFormatError,
-                  "Gemini format requires InputFile.media_type when using InputFile.file_id"
+                  "Gemini format requires media_type in extra when using file_id in extra"
               end
 
-              return {"fileData" => {"mimeType" => mime, "fileUri" => content.file_id}}
+              return {"fileData" => {"mimeType" => mime, "fileUri" => file_id}}
             end
 
             if content.file_url
               unless google_file_uri?(content.file_url)
                 raise UnsupportedFormatError,
                   "Gemini format does not support arbitrary public file URLs; use base64 InputFile.file_data, " \
-                  "an InputFile.file_id, or a gs:// / Files API InputFile.file_url"
+                  "a file_id in extra, or a gs:// / Files API InputFile.file_url"
               end
 
-              mime = content.media_type || file_mime_type(content)
+              mime = media_type || file_mime_type(content)
               unless mime
                 raise UnsupportedFormatError,
-                  "Gemini format requires InputFile.media_type or a recognized filename extension for gs:// or Files API URLs"
+                  "Gemini format requires media_type in extra or a recognized filename extension for gs:// or Files API URLs"
               end
 
               return {"fileData" => {"mimeType" => mime, "fileUri" => content.file_url}}
             end
 
             if content.file_data
-              mime = content.media_type || file_mime_type(content)
+              mime = media_type || file_mime_type(content)
               unless mime
                 raise UnsupportedFormatError,
-                  "Gemini format requires InputFile.media_type or a recognized filename extension for base64 file content"
+                  "Gemini format requires media_type in extra or a recognized filename extension for base64 file content"
               end
 
               return {"inlineData" => {"mimeType" => mime, "data" => content.file_data}}
             end
 
             raise UnsupportedFormatError,
-              "Gemini format requires InputFile.file_url, InputFile.file_data, or InputFile.file_id"
+              "Gemini format requires InputFile.file_url, InputFile.file_data, or file_id in extra"
           end
 
           def google_file_uri?(uri)
@@ -494,16 +522,53 @@ module PromptBuilder
                   "Gemini format does not support reasoning.#{unsupported_keys.first}"
               end
 
+              thinking_config = {}
+
               if session.reasoning["budget_tokens"]
-                config["thinkingConfig"] = {"thinkingBudget" => session.reasoning["budget_tokens"]}
+                thinking_config["thinkingBudget"] = session.reasoning["budget_tokens"]
               end
+
+              if session.reasoning["effort"]
+                effort = session.reasoning["effort"]
+                unless SUPPORTED_REASONING_EFFORTS.include?(effort)
+                  raise UnsupportedFormatError,
+                    "Gemini format only supports reasoning.effort values minimal, low, medium, and high"
+                end
+
+                thinking_config["thinkingLevel"] = effort.upcase
+              end
+
+              if session.reasoning["summary"]
+                summary = session.reasoning["summary"]
+                unless SUPPORTED_REASONING_SUMMARIES.include?(summary)
+                  raise UnsupportedFormatError,
+                    "Gemini format only supports reasoning.summary value auto"
+                end
+
+                thinking_config["includeThoughts"] = true
+              end
+
+              config["thinkingConfig"] = thinking_config unless thinking_config.empty?
             end
 
             config
           end
 
+          def serialize_service_tier(service_tier)
+            return service_tier if SUPPORTED_SERVICE_TIERS.include?(service_tier)
+
+            raise UnsupportedFormatError,
+              "Gemini format only supports service_tier values unspecified, standard, flex, and priority"
+          end
+
           def build_tools(session)
             return [] if session.tool_definitions.empty?
+
+            strict_definition = session.tool_definitions.find(&:strict)
+            if strict_definition
+              raise UnsupportedFormatError,
+                "Gemini format does not support strict tool definitions"
+            end
 
             [
               {

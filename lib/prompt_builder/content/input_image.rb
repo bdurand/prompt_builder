@@ -4,35 +4,25 @@ module PromptBuilder
   module Content
     # Represents image input content in a message.
     class InputImage < Base
-      # @return [String, nil] the image URL
+      # @return [String, nil] the image URL (may be a fully qualified URL or a
+      #   base64-encoded data URL such as +"data:image/png;base64,..."+ )
       attr_reader :image_url
-
-      # @return [String, nil] base64-encoded image data
-      attr_reader :data
-
-      # @return [String, nil] the media type of the image
-      attr_reader :media_type
 
       # @return [String, nil] the detail level for the image
       attr_reader :detail
 
-      # @return [String, nil] the image identifier (for images uploaded to the
-      #   provider's Files API).
-      attr_reader :file_id
+      # @return [Hash, nil] provider-specific extra data
+      attr_reader :extra
 
       # Create a new InputImage content object.
       #
-      # @param image_url [String, nil] the image URL
-      # @param data [String, nil] base64-encoded image data
-      # @param media_type [String, nil] the media type of the image
+      # @param image_url [String, nil] the image URL or data URL
       # @param detail [String, nil] the image detail level
-      # @param file_id [String, nil] the provider file identifier
-      def initialize(image_url: nil, data: nil, media_type: nil, detail: nil, file_id: nil)
+      # @param extra [Hash] provider-specific extra keyword arguments
+      def initialize(image_url: nil, detail: nil, **extra)
         @image_url = image_url&.to_s
-        @data = data&.to_s
-        @media_type = media_type&.to_s
         @detail = detail&.to_s
-        @file_id = file_id&.to_s
+        @extra = extra.transform_keys(&:to_s)
       end
 
       class << self
@@ -43,10 +33,8 @@ module PromptBuilder
         def from_h(hash)
           new(
             image_url: hash["image_url"],
-            data: hash["data"],
-            media_type: hash["media_type"],
             detail: hash["detail"],
-            file_id: hash["file_id"]
+            **hash.except("type", "image_url", "detail").transform_keys(&:to_sym)
           )
         end
       end
@@ -57,10 +45,8 @@ module PromptBuilder
       def to_h
         h = {"type" => "input_image"}
         h["image_url"] = @image_url if @image_url
-        h["data"] = @data if @data
-        h["media_type"] = @media_type if @media_type
         h["detail"] = @detail if @detail
-        h["file_id"] = @file_id if @file_id
+        h = PromptBuilder.jsonify(@extra).merge(h) unless @extra.empty?
         h
       end
     end

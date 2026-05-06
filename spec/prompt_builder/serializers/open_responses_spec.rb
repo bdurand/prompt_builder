@@ -36,11 +36,11 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(content).not_to have_key("media_type")
     end
 
-    it "converts InputImage with base64 data into a data URL for image_url" do
+    it "passes through InputImage with data URL unchanged" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(data: "abc123", media_type: "image/png")]
+        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
       ))
 
       payload = described_class.request_payload(session)
@@ -48,18 +48,15 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
 
       expect(content["type"]).to eq("input_image")
       expect(content["image_url"]).to eq("data:image/png;base64,abc123")
-      expect(content).not_to have_key("data")
-      expect(content).not_to have_key("media_type")
     end
 
-    it "strips canonical-only data/media_type keys when image_url is also set" do
+    it "strips extra keys from items and content" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(
           image_url: "https://example.com/img.png",
-          data: "abc123",
-          media_type: "image/png"
+          extra: {"file_id" => "file_abc"}
         )]
       ))
 
@@ -67,47 +64,24 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       content = payload["input"][0]["content"][0]
 
       expect(content["image_url"]).to eq("https://example.com/img.png")
-      expect(content).not_to have_key("data")
-      expect(content).not_to have_key("media_type")
+      expect(content).not_to have_key("extra")
     end
 
-    it "raises when InputImage has only base64 data without media_type" do
-      session = PromptBuilder::Session.new(model: "gpt-5.4")
-      session.add_item(PromptBuilder::Items::Message.new(
-        role: "user",
-        content: [PromptBuilder::Content::InputImage.new(data: "abc")]
-      ))
-
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /InputImage\.media_type/)
-    end
-
-    it "raises when InputImage has neither image_url, file_id, nor data" do
-      session = PromptBuilder::Session.new(model: "gpt-5.4")
-      session.add_item(PromptBuilder::Items::Message.new(
-        role: "user",
-        content: [PromptBuilder::Content::InputImage.new(media_type: "image/png")]
-      ))
-
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /image_url, InputImage\.file_id, or InputImage\.data/)
-    end
-
-    it "transforms base64 InputImage inside FunctionCallOutput content" do
+    it "strips extra from FunctionCallOutput content" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
         call_id: "c1",
-        output: [PromptBuilder::Content::InputImage.new(data: "abc", media_type: "image/png")]
+        output: [PromptBuilder::Content::InputImage.new(
+          image_url: "data:image/png;base64,abc",
+          extra: {"some_key" => "val"}
+        )]
       ))
 
       payload = described_class.request_payload(session)
       content = payload["input"][0]["output"][0]
 
       expect(content["image_url"]).to eq("data:image/png;base64,abc")
-      expect(content).not_to have_key("data")
-      expect(content).not_to have_key("media_type")
+      expect(content).not_to have_key("extra")
     end
   end
 
@@ -261,10 +235,10 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       session.user([
         PromptBuilder::Content::InputText.new(text: "Describe these inputs."),
         PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png", detail: "high"),
-        PromptBuilder::Content::InputImage.new(file_id: "file_abc"),
-        PromptBuilder::Content::InputImage.new(data: "aGVsbG8=", media_type: "image/png"),
+        PromptBuilder::Content::InputImage.new(extra: {"file_id" => "file_abc"}),
+        PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,aGVsbG8="),
         PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf", filename: "doc.pdf"),
-        PromptBuilder::Content::InputFile.new(file_id: "file_xyz")
+        PromptBuilder::Content::InputFile.new(extra: {"file_id" => "file_xyz"})
       ])
 
       session.add_item(PromptBuilder::Items::Reasoning.new(
@@ -292,7 +266,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
         status: "completed",
         output: [
           PromptBuilder::Content::InputText.new(text: "Sunny, 22C"),
-          PromptBuilder::Content::InputImage.new(data: "aW1n", media_type: "image/png"),
+          PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,aW1n"),
           PromptBuilder::Content::InputFile.new(file_url: "https://example.com/forecast.pdf"),
           PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/clip.mp4")
         ]

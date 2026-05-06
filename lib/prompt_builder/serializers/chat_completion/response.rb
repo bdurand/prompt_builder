@@ -5,16 +5,18 @@ module PromptBuilder
     class ChatCompletion < Base
       # Response parser for the OpenAI Chat Completions API format.
       #
-      # Only the first choice (+choices[0]+) is parsed. Callers using +n > 1+
-      # will not see additional candidates surfaced through this gem.
+      # Responses with multiple choices (+n > 1+) raise +UnsupportedFormatError+
+      # because the canonical response object has no candidate collection.
       # Streaming chunks (+chat.completion.chunk+ deltas) are not parsed —
       # this parser expects a fully assembled non-streaming response body.
-      # Top-level +system_fingerprint+ is not surfaced (no canonical OR slot).
+      # Top-level +system_fingerprint+ is exposed through +extra+.
       class Response < Base
         class << self
           private
 
           def deserialize_response(hash)
+            validate_response!(hash)
+
             output = []
             choice = hash.dig("choices", 0)
 
@@ -22,6 +24,14 @@ module PromptBuilder
               message = choice["message"] || {}
               logprobs_content = choice.dig("logprobs", "content") || []
               annotations = message["annotations"] || []
+
+              if message["audio"]
+                raise UnsupportedFormatError, "Chat Completions audio responses are not supported"
+              end
+
+              if message["function_call"]
+                raise UnsupportedFormatError, "Legacy Chat Completions function_call responses are not supported"
+              end
 
               if message["refusal"]
                 output << Items::Message.new(
@@ -42,6 +52,9 @@ module PromptBuilder
                     )
                   when "refusal"
                     acc << Content::RefusalContent.new(refusal: block["refusal"]) if block["refusal"]
+                  else
+                    raise UnsupportedFormatError,
+                      "Unsupported Chat Completions response content block type: #{block["type"].inspect}"
                   end
                 end
                 output << Items::Message.new(role: "assistant", content: contents) unless contents.empty?
@@ -57,6 +70,11 @@ module PromptBuilder
               end
 
               (message["tool_calls"] || []).each do |tool_call|
+                unless tool_call["type"] == "function"
+                  raise UnsupportedFormatError,
+                    "Unsupported Chat Completions tool call type: #{tool_call["type"].inspect}"
+                end
+
                 function = tool_call["function"] || {}
                 output << Items::FunctionCall.new(
                   name: function["name"],
@@ -85,8 +103,27 @@ module PromptBuilder
               service_tier: hash["service_tier"],
               output: output,
               status: map_finish_reason(choice&.dig("finish_reason")),
-              usage: usage
+              usage: usage,
+              extra: provider_data(hash)
             )
+          end
+
+          def validate_response!(hash)
+            if hash["object"] == "chat.completion.chunk"
+              raise UnsupportedFormatError, "Chat Completions streaming chunks are not supported"
+            end
+
+            choices = hash["choices"]
+            return unless choices.is_a?(Array) && choices.length > 1
+
+            raise UnsupportedFormatError,
+              "Chat Completions responses with multiple choices are not supported"
+          end
+
+          def provider_data(hash)
+            data = {}
+            data["system_fingerprint"] = hash["system_fingerprint"] if hash["system_fingerprint"]
+            data.empty? ? nil : data
           end
 
           def map_finish_reason(reason)

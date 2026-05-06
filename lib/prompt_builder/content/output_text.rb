@@ -13,15 +13,20 @@ module PromptBuilder
       # @return [Array<Hash>] token log probabilities for the text
       attr_reader :logprobs
 
+      # @return [Hash, nil] provider-specific extra data
+      attr_reader :extra
+
       # Create a new OutputText content object.
       #
       # @param text [String] the text content
       # @param annotations [Array<Hash>] annotations on the text
       # @param logprobs [Array<Hash>] token log probabilities on the text
-      def initialize(text:, annotations: [], logprobs: [])
+      # @param extra [Hash] provider-specific extra keyword arguments
+      def initialize(text:, annotations: [], logprobs: [], **extra)
         @text = text&.to_s
         @annotations = PromptBuilder.jsonify(annotations)
         @logprobs = PromptBuilder.jsonify(logprobs)
+        @extra = extra.transform_keys(&:to_s)
       end
 
       class << self
@@ -33,7 +38,8 @@ module PromptBuilder
           new(
             text: hash["text"],
             annotations: hash["annotations"] || [],
-            logprobs: hash["logprobs"] || []
+            logprobs: hash["logprobs"] || [],
+            **hash.except("type", "text", "annotations", "logprobs").transform_keys(&:to_sym)
           )
         end
       end
@@ -45,6 +51,7 @@ module PromptBuilder
         h = {"type" => "output_text", "text" => @text}
         h["annotations"] = @annotations unless @annotations.empty?
         h["logprobs"] = @logprobs unless @logprobs.empty?
+        h = PromptBuilder.jsonify(@extra).merge(h) unless @extra.empty?
         h
       end
     end

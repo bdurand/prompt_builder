@@ -12,12 +12,18 @@ RSpec.describe PromptBuilder::Content::OutputText do
     it "includes annotations when present" do
       annotations = [{"type" => "url", "url" => "https://example.com"}]
       logprobs = [{"token" => "Hello", "logprob" => -0.1}]
-      content = described_class.new(text: "Hello!", annotations: annotations, logprobs: logprobs)
+      content = described_class.new(
+        text: "Hello!",
+        annotations: annotations,
+        logprobs: logprobs,
+        thought_signature: "sig_123"
+      )
       expect(content.to_h).to eq({
         "type" => "output_text",
         "text" => "Hello!",
         "annotations" => annotations,
-        "logprobs" => logprobs
+        "logprobs" => logprobs,
+        "thought_signature" => "sig_123"
       })
     end
 
@@ -41,10 +47,12 @@ RSpec.describe PromptBuilder::Content::OutputText do
         "type" => "output_text",
         "text" => "Hello!",
         "annotations" => annotations,
-        "logprobs" => [{"token" => "Hello", "logprob" => -0.1}]
+        "logprobs" => [{"token" => "Hello", "logprob" => -0.1}],
+        "thought_signature" => "sig_123"
       })
       expect(content.annotations).to eq(annotations)
       expect(content.logprobs).to eq([{"token" => "Hello", "logprob" => -0.1}])
+      expect(content.extra).to eq({"thought_signature" => "sig_123"})
     end
   end
 

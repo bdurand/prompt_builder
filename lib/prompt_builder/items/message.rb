@@ -20,6 +20,9 @@ module PromptBuilder
       # @return [Array<Content::Base>] the content objects
       attr_reader :content
 
+      # @return [Hash, nil] provider-specific extra data
+      attr_reader :extra
+
       # Create a new Message item.
       #
       # @param id [String, nil] the message identifier
@@ -27,12 +30,14 @@ module PromptBuilder
       # @param status [String, nil] the message status
       # @param phase [String, nil] the message phase
       # @param content [Array<Content::Base>] the content objects
-      def initialize(role:, content:, id: nil, status: nil, phase: nil)
+      # @param extra [Hash] provider-specific extra keyword arguments
+      def initialize(role:, content:, id: nil, status: nil, phase: nil, **extra)
         @id = id&.to_s
         @role = role&.to_s
         @status = status&.to_s
         @phase = phase&.to_s
         @content = normalize_content(content)
+        @extra = extra.transform_keys(&:to_s)
       end
 
       class << self
@@ -47,7 +52,8 @@ module PromptBuilder
             role: hash["role"],
             status: hash["status"],
             phase: hash["phase"],
-            content: content
+            content: content,
+            **hash.except("type", "id", "role", "status", "phase", "content").transform_keys(&:to_sym)
           )
         end
       end
@@ -64,6 +70,7 @@ module PromptBuilder
         hash["id"] = @id if @id
         hash["status"] = @status if @status
         hash["phase"] = @phase if @phase
+        hash = PromptBuilder.jsonify(@extra).merge(hash) unless @extra.empty?
         hash
       end
 

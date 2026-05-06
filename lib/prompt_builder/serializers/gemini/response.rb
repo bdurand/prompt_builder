@@ -11,7 +11,7 @@ module PromptBuilder
       # === Response metadata not modeled by Open Responses
       #
       # The Gemini response surface has fields with no canonical Open Responses
-      # equivalent. The parser preserves them on +Response#provider_data+ rather
+      # equivalent. The parser preserves them on +Response#extra+ rather
       # than dropping them silently:
       # - +groundingMetadata+ — web search grounding chunks, supports, queries
       # - +citationMetadata+ — per-candidate citation sources
@@ -50,6 +50,12 @@ module PromptBuilder
           UNEXPECTED_TOOL_CALL
           TOO_MANY_TOOL_CALLS
           MODEL_ARMOR
+          IMAGE_PROHIBITED_CONTENT
+          IMAGE_OTHER
+          NO_IMAGE
+          IMAGE_RECITATION
+          MISSING_THOUGHT_SIGNATURE
+          MALFORMED_RESPONSE
         ].freeze
         private_constant :FAILED_FINISH_REASONS
 
@@ -60,6 +66,11 @@ module PromptBuilder
             usage = build_usage(hash["usageMetadata"])
 
             candidates = hash["candidates"] || []
+            if candidates.length > 1
+              raise UnsupportedFormatError,
+                "Gemini format cannot parse multiple candidates into a single canonical Response"
+            end
+
             first_candidate = candidates[0]
 
             response_id = hash["responseId"]
@@ -90,7 +101,7 @@ module PromptBuilder
               output: output_items,
               status: status,
               usage: usage,
-              provider_data: provider_data
+              extra: provider_data
             )
           end
 
@@ -120,6 +131,7 @@ module PromptBuilder
           def build_provider_data(hash, candidate)
             data = {}
             data["create_time"] = hash["createTime"] if hash["createTime"]
+            data["model_status"] = hash["modelStatus"] if hash["modelStatus"]
             data["prompt_feedback"] = hash["promptFeedback"] if hash["promptFeedback"]
 
             if candidate
@@ -173,15 +185,20 @@ module PromptBuilder
                 flush_reasoning_contents!(output, reasoning_contents)
 
                 function_call = part["functionCall"]
+                call_id = function_call["id"] || "gemini_call_#{call_id_seed}_#{call_index}"
                 output << Items::FunctionCall.new(
                   name: function_call["name"],
-                  call_id: "gemini_call_#{call_id_seed}_#{call_index}",
-                  arguments: JSON.generate(function_call["args"] || {})
+                  call_id: call_id,
+                  arguments: JSON.generate(function_call["args"] || {}),
+                  **(part["thoughtSignature"] ? {thought_signature: part["thoughtSignature"]} : {})
                 )
                 call_index += 1
               elsif part.key?("text")
                 flush_reasoning_contents!(output, reasoning_contents)
-                text_contents << Content::OutputText.new(text: part["text"])
+                text_contents << Content::OutputText.new(
+                  text: part["text"],
+                  **(part["thoughtSignature"] ? {thought_signature: part["thoughtSignature"]} : {})
+                )
               else
                 raise UnsupportedFormatError,
                   "Gemini format cannot parse response part #{describe_part(part)}; " \

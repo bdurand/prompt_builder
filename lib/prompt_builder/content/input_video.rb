@@ -7,11 +7,16 @@ module PromptBuilder
       # @return [String, nil] the video URL
       attr_reader :video_url
 
+      # @return [Hash, nil] provider-specific extra data
+      attr_reader :extra
+
       # Create a new InputVideo content object.
       #
       # @param video_url [String, nil] the video URL
-      def initialize(video_url: nil)
+      # @param extra [Hash] provider-specific extra keyword arguments
+      def initialize(video_url: nil, **extra)
         @video_url = video_url&.to_s
+        @extra = extra.transform_keys(&:to_s)
       end
 
       class << self
@@ -20,7 +25,7 @@ module PromptBuilder
         # @param hash [Hash] a Hash with string keys
         # @return [InputVideo]
         def from_h(hash)
-          new(video_url: hash["video_url"])
+          new(video_url: hash["video_url"], **hash.except("type", "video_url").transform_keys(&:to_sym))
         end
       end
 
@@ -30,6 +35,7 @@ module PromptBuilder
       def to_h
         h = {"type" => "input_video"}
         h["video_url"] = @video_url if @video_url
+        h = PromptBuilder.jsonify(@extra).merge(h) unless @extra.empty?
         h
       end
     end

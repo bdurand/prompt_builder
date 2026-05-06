@@ -9,7 +9,8 @@ RSpec.describe PromptBuilder::Items::FunctionCall do
       call_id: "call_123",
       arguments: '{"city":"London"}',
       id: "fc_1",
-      status: "completed"
+      status: "completed",
+      thought_signature: "sig_123"
     )
   end
 
@@ -21,7 +22,8 @@ RSpec.describe PromptBuilder::Items::FunctionCall do
         "call_id" => "call_123",
         "arguments" => '{"city":"London"}',
         "id" => "fc_1",
-        "status" => "completed"
+        "status" => "completed",
+        "thought_signature" => "sig_123"
       })
     end
 
@@ -45,6 +47,7 @@ RSpec.describe PromptBuilder::Items::FunctionCall do
       expect(restored.arguments).to eq('{"city":"London"}')
       expect(restored.id).to eq("fc_1")
       expect(restored.status).to eq("completed")
+      expect(restored.extra).to eq({"thought_signature" => "sig_123"})
     end
   end
 
