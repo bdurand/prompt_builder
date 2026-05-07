@@ -10,7 +10,9 @@ module PromptBuilder
     private_constant :BOOLEAN_FIELDS
 
     # String-typed fields coerced with .to_s on assignment.
-    STRING_FIELDS = %i[model instructions previous_response_id truncation safety_identifier prompt_cache_key service_tier].freeze
+    STRING_FIELDS = %i[
+      model instructions previous_response_id truncation safety_identifier prompt_cache_key prompt_cache_retention service_tier
+    ].freeze
     private_constant :STRING_FIELDS
 
     # Float-typed fields coerced with .to_f on assignment.
@@ -37,6 +39,8 @@ module PromptBuilder
     #   @return [String, nil] the safety identifier
     # @!attribute [rw] prompt_cache_key
     #   @return [String, nil] the prompt cache key
+    # @!attribute [rw] prompt_cache_retention
+    #   @return [String, nil] the prompt cache retention policy
     # @!attribute [rw] service_tier
     #   @return [String, nil] the service tier
     STRING_FIELDS.each do |f|
@@ -102,6 +106,11 @@ module PromptBuilder
     # @return [Array<Items::Base>] all conversation items
     attr_reader :items
 
+    # @return [Hash, nil] provider-specific extra data for serializers.
+    #   Recognized keys vary by target format. Unrecognized keys are silently
+    #   ignored by each serializer.
+    attr_reader :extra
+
     class << self
       # Deserialize a Session from a Hash produced by +to_h+ or parsed JSON.
       # Reconstructs all config fields and conversation items. Tool definitions
@@ -113,6 +122,7 @@ module PromptBuilder
       def from_h(hash)
         attrs = (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS)
           .each_with_object({}) { |f, acc| acc[f] = hash[f.to_s] }
+        attrs[:extra] = hash["extra"] if hash["extra"]
         session = new(**attrs)
 
         Array(hash["input"]).each do |item_hash|
@@ -121,7 +131,8 @@ module PromptBuilder
 
         Array(hash["tools"]).each do |tool_hash|
           defn = Tools::Definition.from_h(tool_hash)
-          session.register_tool(defn.name, description: defn.description, parameters: defn.parameters, strict: defn.strict)
+          extra = defn.extra.transform_keys(&:to_sym)
+          session.register_tool(defn.name, description: defn.description, parameters: defn.parameters, strict: defn.strict, **extra)
         end
 
         session
@@ -136,10 +147,13 @@ module PromptBuilder
     # @param attributes [Hash] keyword options; see attribute declarations above
     # @option attributes [String, nil] :input optional string shorthand; a user
     #   message is automatically added with this text
+    # @option attributes [Hash, nil] :extra provider-specific extra data for
+    #   serializers; recognized keys vary by target format
     def initialize(**attributes)
       (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS).each do |f|
         send(:"#{f}=", attributes[f])
       end
+      @extra = PromptBuilder.jsonify(attributes[:extra]) if attributes[:extra]
       @items = []
       @tool_definitions = {}
       @response_boundary_index = 0
@@ -152,10 +166,16 @@ module PromptBuilder
     # @return [Items::Message] the added message
     # @example
     #  session.user("Hello, how are you?")
-    #  session.user(Content::Text.new("Hello, how are you?"))
-    #  session.user(type: "text", text: "Hello, how are you?")
-    #  session.user([Content::Text.new("What is in this image?"), Content::Image.new(url: "http://example.com/image.png")])
-    #  session.user([{type: "text", text: "What is in this image?"}, {type: "image", url: "http://example.com/image.png"}])
+    #  session.user(Content::InputText.new(text: "Hello, how are you?"))
+    #  session.user(type: "input_text", text: "Hello, how are you?")
+    #  session.user([
+    #    Content::InputText.new(text: "What is in this image?"),
+    #    Content::InputImage.new(image_url: "http://example.com/image.png")
+    #  ])
+    #  session.user([
+    #    {type: "input_text", text: "What is in this image?"},
+    #    {type: "input_image", image_url: "http://example.com/image.png"}
+    #  ])
     def user(content)
       add_item(Items::Message.new(role: "user", content: content))
     end
@@ -202,8 +222,12 @@ module PromptBuilder
     # @param response [Response] the API response
     # @return [void]
     def add_response(response)
-      response.output.each { |item| @items << item }
-      @previous_response_id = response.id unless local_state?
+      @items.concat(response.output)
+      # Only refresh previous_response_id when the session is already in
+      # server-state mode AND the response actually carries an id; otherwise
+      # leave the existing pointer alone (responses from formats that don't
+      # populate `id` would otherwise silently drop us back into local state).
+      self.previous_response_id = response.id if !local_state? && response.id
       @response_boundary_index = @items.length
     end
 
@@ -213,13 +237,15 @@ module PromptBuilder
     # @param description [String, nil] the tool description
     # @param parameters [Hash, nil] the JSON Schema for parameters
     # @param strict [Boolean] whether strict mode is enabled
+    # @param extra [Hash] provider-specific extra keyword arguments (e.g. cache_control)
     # @return [Tools::Definition] the registered definition
-    def register_tool(name, description: nil, parameters: nil, strict: false)
+    def register_tool(name, description: nil, parameters: nil, strict: false, **extra)
       definition = Tools::Definition.new(
         name: name,
         description: description,
         parameters: parameters,
-        strict: strict
+        strict: strict,
+        **extra
       )
       @tool_definitions[name] = definition
       definition
@@ -231,11 +257,13 @@ module PromptBuilder
     # @return [void]
     def register_tools(registry)
       registry.definitions.each do |defn|
+        extra = defn.extra.transform_keys(&:to_sym)
         register_tool(
           defn.name,
           description: defn.description,
           parameters: defn.parameters,
-          strict: defn.strict
+          strict: defn.strict,
+          **extra
         )
       end
     end
@@ -253,11 +281,13 @@ module PromptBuilder
     def clone_config
       session = Session.new(**config_hash)
       @tool_definitions.each do |name, defn|
+        extra = defn.extra.transform_keys(&:to_sym)
         session.register_tool(
           name,
           description: defn.description,
           parameters: defn.parameters,
-          strict: defn.strict
+          strict: defn.strict,
+          **extra
         )
       end
       session
@@ -308,6 +338,7 @@ module PromptBuilder
         val = send(f)
         h[f.to_s] = val if val
       }
+      h["extra"] = @extra if @extra
 
       h
     end
@@ -315,7 +346,8 @@ module PromptBuilder
     # Export this session to an alternate API format using the given serializer.
     #
     # @param serializer_class [Class, Symbol] a serializer class (e.g. Serializers::ChatCompletion)
-    #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+)
+    #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+,
+    #   +:gemini+, +:converse+)
     # @return [Hash] the serialized request payload
     # @raise [ArgumentError] if a symbol is given that does not map to a known serializer
     def request_payload(serializer_class)
@@ -324,15 +356,11 @@ module PromptBuilder
 
     private
 
-    def tool_call_has_output?(call_id)
-      @items.any? { |item|
-        item.is_a?(Items::FunctionCallOutput) && item.call_id == call_id
-      }
-    end
-
     def config_hash
-      (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS - %i[previous_response_id])
+      h = (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS - %i[previous_response_id])
         .each_with_object({}) { |f, acc| acc[f] = send(f) }
+      h[:extra] = @extra if @extra
+      h
     end
   end
 end

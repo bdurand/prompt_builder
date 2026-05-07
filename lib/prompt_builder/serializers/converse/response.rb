@@ -37,7 +37,9 @@ module PromptBuilder
               model: nil,
               output: build_output_items(content_blocks),
               status: map_stop_reason(hash["stopReason"]),
-              usage: usage
+              usage: usage,
+              service_tier: hash.dig("serviceTier", "type"),
+              extra: provider_data(hash)
             )
           end
 
@@ -49,10 +51,28 @@ module PromptBuilder
               "incomplete"
             when "guardrail_intervened", "content_filtered"
               "failed"
+            when "malformed_model_output", "malformed_tool_use"
+              "failed"
+            when "model_context_window_exceeded"
+              "incomplete"
             else
               reason
             end
           end
+
+          def provider_data(hash)
+            data = {}
+            %w[additionalModelResponseFields metrics performanceConfig serviceTier trace].each do |key|
+              data[key] = hash[key] if hash[key]
+            end
+            data
+          end
+
+          # Converse response ContentBlock keys this gem understands. Additional
+          # variants (citationsContent, guardContent, etc.) are surfaced as
+          # UnsupportedFormatError so they aren't silently dropped.
+          KNOWN_CONTENT_BLOCK_KEYS = %w[text toolUse reasoningContent].freeze
+          private_constant :KNOWN_CONTENT_BLOCK_KEYS
 
           def build_output_items(content_blocks)
             output = []
@@ -78,11 +98,24 @@ module PromptBuilder
 
                 reasoning = block["reasoningContent"]
                 if reasoning["reasoningText"]
-                  reasoning_contents << {
+                  thinking_block = {
                     "type" => "thinking",
                     "thinking" => reasoning["reasoningText"]["text"] || ""
                   }
+                  signature = reasoning["reasoningText"]["signature"]
+                  thinking_block["signature"] = signature if signature
+                  reasoning_contents << thinking_block
+                elsif reasoning["redactedContent"]
+                  reasoning_contents << {
+                    "type" => "redacted_thinking",
+                    "data" => reasoning["redactedContent"]
+                  }
                 end
+              else
+                unknown_keys = block.keys - KNOWN_CONTENT_BLOCK_KEYS
+                raise UnsupportedFormatError,
+                  "Converse format does not recognize content block #{unknown_keys.inspect}; " \
+                  "known keys are #{KNOWN_CONTENT_BLOCK_KEYS.join(", ")}"
               end
             end
 

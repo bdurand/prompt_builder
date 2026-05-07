@@ -4,7 +4,7 @@ Gem::Specification.new do |spec|
   spec.authors = ["Brian Durand"]
   spec.email = ["bbdurand@gmail.com"]
 
-  spec.summary = "Ruby DSL for building and parsing LLM API requests across Chat Completions and Responses API formats"
+  spec.summary = "Ruby DSL for building and parsing LLM API requests across OpenAI Responses, OpenAI Chat Completions, Anthropic Messages, Google Gemini, and Bedrock Converse formats"
 
   spec.homepage = "https://github.com/bdurand/prompt_builder"
   spec.license = "MIT"
@@ -34,6 +34,8 @@ Gem::Specification.new do |spec|
   end
 
   spec.require_paths = ["lib"]
+
+  spec.required_ruby_version = ">= 3.0"
 
   spec.add_development_dependency "bundler"
 end

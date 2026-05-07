@@ -7,10 +7,8 @@ require_relative "prompt_builder/errors"
 module PromptBuilder
   autoload :Content, "prompt_builder/content"
   autoload :Items, "prompt_builder/items"
-  autoload :ReasoningConfig, "prompt_builder/reasoning_config"
   autoload :Response, "prompt_builder/response"
   autoload :Session, "prompt_builder/session"
-  autoload :TextConfig, "prompt_builder/text_config"
   autoload :ToolRegistry, "prompt_builder/tool_registry"
   autoload :Usage, "prompt_builder/usage"
   autoload :Serializers, "prompt_builder/serializers"
@@ -35,6 +33,18 @@ module PromptBuilder
       else
         value
       end
+    end
+
+    # Parse a data URL into its media type and base64-encoded data.
+    #
+    # @param url [String, nil] a URL that may be a data URL
+    # @return [Array(String, String), nil] a two-element array of +[media_type, data]+
+    #   or nil if the URL is not a data URL
+    def parse_data_url(url)
+      return nil unless url
+      match = url.match(/\Adata:([^;]+);base64,(.*)\z/m)
+      return nil unless match
+      [match[1], match[2]]
     end
 
     # Returns the global tool registry singleton.

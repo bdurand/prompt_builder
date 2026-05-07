@@ -93,6 +93,7 @@ RSpec.describe PromptBuilder::Session do
         reasoning: {"effort" => "high"},
         safety_identifier: "safe_1",
         prompt_cache_key: "cache_1",
+        prompt_cache_retention: "24h",
         truncation: "auto",
         store: true,
         service_tier: "default",
@@ -112,6 +113,7 @@ RSpec.describe PromptBuilder::Session do
       expect(h["reasoning"]).to eq({"effort" => "high"})
       expect(h["safety_identifier"]).to eq("safe_1")
       expect(h["prompt_cache_key"]).to eq("cache_1")
+      expect(h["prompt_cache_retention"]).to eq("24h")
       expect(h["truncation"]).to eq("auto")
       expect(h["store"]).to be true
       expect(h["service_tier"]).to eq("default")

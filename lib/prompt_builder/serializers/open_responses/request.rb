@@ -12,38 +12,42 @@ module PromptBuilder
           # @return [Hash] the serialized request payload
           def request_payload(session)
             payload = session.to_h
-            transform_input_images(payload)
+            payload.delete("extra")
+            strip_extra(payload)
             payload
           end
 
           private
 
-          # Walk the input array and rewrite any base64 input_image blocks into
-          # the data-URL form that the Responses API expects.  The internal
-          # Session#to_h format stores base64 images as separate `data` and
-          # `media_type` keys, but the API requires exactly one of `image_url`
-          # or `file_id`.
-          def transform_input_images(payload)
+          # Walk the payload and remove any "extra" keys from items, content
+          # blocks, and tool definitions since they are not part of the Open
+          # Responses API schema.
+          def strip_extra(payload)
             input = payload["input"]
-            return unless input.is_a?(Array)
+            if input.is_a?(Array)
+              input.each do |item|
+                next unless item.is_a?(Hash)
 
-            input.each do |item|
-              next unless item.is_a?(Hash)
-              content = item["content"]
-              next unless content.is_a?(Array)
+                item.delete("extra")
 
-              content.each_with_index do |block, idx|
-                next unless block.is_a?(Hash) && block["type"] == "input_image"
-                next if block["image_url"] || block["file_id"]
-
-                data = block["data"]
-                media_type = block["media_type"]
-                next unless data && media_type
-
-                content[idx] = block
-                  .except("data", "media_type")
-                  .merge("image_url" => "data:#{media_type};base64,#{data}")
+                if item["type"] == "function_call_output" && item["output"].is_a?(Array)
+                  strip_extra_from_blocks!(item["output"])
+                else
+                  content = item["content"]
+                  strip_extra_from_blocks!(content) if content.is_a?(Array)
+                end
               end
+            end
+
+            tools = payload["tools"]
+            strip_extra_from_blocks!(tools) if tools.is_a?(Array)
+          end
+
+          def strip_extra_from_blocks!(blocks)
+            blocks.each do |block|
+              next unless block.is_a?(Hash)
+
+              block.delete("extra")
             end
           end
         end

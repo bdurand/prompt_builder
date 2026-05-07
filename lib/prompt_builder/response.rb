@@ -33,7 +33,9 @@ module PromptBuilder
       background
       service_tier
       metadata
-      safety_identifier prompt_cache_key
+      safety_identifier
+      prompt_cache_key
+      prompt_cache_retention
     ].freeze
     private_constant :FIELDS
 
@@ -42,7 +44,10 @@ module PromptBuilder
     private_constant :BOOLEAN_FIELDS
 
     # String-typed fields coerced with .to_s on assignment.
-    STRING_FIELDS = %i[id object status model previous_response_id instructions truncation service_tier safety_identifier prompt_cache_key].freeze
+    STRING_FIELDS = %i[
+      id object status model previous_response_id instructions truncation service_tier safety_identifier
+      prompt_cache_key prompt_cache_retention
+    ].freeze
     private_constant :STRING_FIELDS
 
     # Float-typed fields coerced with .to_f on assignment.
@@ -109,6 +114,8 @@ module PromptBuilder
     #   @return [String, nil] the safety identifier
     # @!attribute [r] prompt_cache_key
     #   @return [String, nil] the prompt cache key
+    # @!attribute [r] prompt_cache_retention
+    #   @return [String, nil] the prompt cache retention policy
     # @!attribute [r] text_config
     #   @return [Hash, nil] the text configuration
     # @!attribute [r] output
@@ -116,18 +123,22 @@ module PromptBuilder
     # @!attribute [r] usage
     #   @return [Usage, nil] token usage statistics
     FIELDS.each { |f| attr_reader f }
-    attr_reader :text_config, :output, :usage
+    attr_reader :text_config, :output, :usage, :extra
 
     BOOLEAN_FIELDS.each { |f| alias_method("#{f}?", f) }
 
     # Create a new Response.
     #
     # @param attributes [Hash] response attributes
+    # @option attributes [Hash, nil] :extra provider-specific response
+    #   metadata that has no canonical Open Responses slot (e.g. Gemini grounding
+    #   and citation metadata, candidate safety ratings, logprobs results)
     def initialize(**attributes)
       FIELDS.each { |f| instance_variable_set(:"@#{f}", coerce_field(f, attributes[f])) }
       @text_config = PromptBuilder.jsonify(attributes[:text_config])
       @output = attributes[:output] || []
       @usage = attributes[:usage]
+      @extra = PromptBuilder.jsonify(attributes[:extra])
     end
 
     class << self
@@ -135,7 +146,8 @@ module PromptBuilder
       #
       # @param hash [Hash] the API response hash (typically from JSON.parse)
       # @param serializer_class [Class, Symbol] a serializer class (e.g. Serializers::ChatCompletion)
-      #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+)
+      #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+,
+      #   +:gemini+, +:converse+)
       # @return [Response]
       # @raise [ArgumentError] if a symbol is given that does not map to a known serializer
       def parse(hash, serializer_class)
@@ -151,7 +163,7 @@ module PromptBuilder
         usage = hash["usage"] ? Usage.from_h(hash["usage"]) : nil
 
         attrs = FIELDS.each_with_object({}) { |f, acc| acc[f] = hash[f.to_s] }
-        new(**attrs, text_config: hash["text"], output: output, usage: usage)
+        new(**attrs, text_config: hash["text"], output: output, usage: usage, extra: hash["extra"])
       end
     end
 
@@ -220,6 +232,7 @@ module PromptBuilder
       h["text"] = @text_config if @text_config
       h["output"] = @output.map(&:to_h) unless @output.empty?
       h["usage"] = @usage.to_h if @usage
+      h["extra"] = @extra if @extra && !@extra.empty?
       h
     end
 

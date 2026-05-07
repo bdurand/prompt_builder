@@ -20,6 +20,9 @@ module PromptBuilder
       # @return [Array<Hash>] reasoning content blocks
       attr_reader :content
 
+      # @return [Hash, nil] provider-specific extra data
+      attr_reader :extra
+
       # Create a new Reasoning item.
       #
       # @param id [String, nil] the reasoning identifier
@@ -27,12 +30,14 @@ module PromptBuilder
       # @param encrypted_content [String, nil] the encrypted reasoning content
       # @param summary [Array<Hash>] summary blocks
       # @param content [Array<Hash>] reasoning content blocks
-      def initialize(id: nil, status: nil, encrypted_content: nil, summary: [], content: [])
+      # @param extra [Hash] provider-specific extra keyword arguments
+      def initialize(id: nil, status: nil, encrypted_content: nil, summary: [], content: [], **extra)
         @id = id&.to_s
         @status = status&.to_s
         @encrypted_content = encrypted_content&.to_s
         @summary = PromptBuilder.jsonify(summary)
         @content = PromptBuilder.jsonify(content)
+        @extra = extra.transform_keys(&:to_s)
       end
 
       class << self
@@ -46,7 +51,8 @@ module PromptBuilder
             status: hash["status"],
             encrypted_content: hash["encrypted_content"],
             summary: hash["summary"] || [],
-            content: hash["content"] || []
+            content: hash["content"] || [],
+            **hash.except("type", "id", "status", "encrypted_content", "summary", "content").transform_keys(&:to_sym)
           )
         end
       end
@@ -61,6 +67,7 @@ module PromptBuilder
         h["encrypted_content"] = @encrypted_content if @encrypted_content
         h["summary"] = @summary unless @summary.empty?
         h["content"] = @content unless @content.empty?
+        h = PromptBuilder.jsonify(@extra).merge(h) unless @extra.empty?
         h
       end
     end

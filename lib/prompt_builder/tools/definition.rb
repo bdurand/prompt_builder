@@ -16,17 +16,22 @@ module PromptBuilder
       # @return [Boolean] whether strict mode is enabled
       attr_reader :strict
 
+      # @return [Hash, nil] provider-specific extra data (e.g. cache_control)
+      attr_reader :extra
+
       # Create a new tool Definition.
       #
       # @param name [String] the tool name
       # @param description [String, nil] the tool description
       # @param parameters [Hash, nil] the JSON Schema for the parameters
       # @param strict [Boolean] whether strict mode is enabled
-      def initialize(name:, description: nil, parameters: nil, strict: false)
+      # @param extra [Hash] provider-specific extra keyword arguments
+      def initialize(name:, description: nil, parameters: nil, strict: false, **extra)
         @name = name&.to_s
         @description = description&.to_s
         @parameters = PromptBuilder.jsonify(parameters)
         @strict = strict ? true : false
+        @extra = extra.transform_keys(&:to_s)
       end
 
       class << self
@@ -39,7 +44,8 @@ module PromptBuilder
             name: hash["name"],
             description: hash["description"],
             parameters: hash["parameters"],
-            strict: hash.fetch("strict", false)
+            strict: hash.fetch("strict", false),
+            **hash.except("type", "name", "description", "parameters", "strict").transform_keys(&:to_sym)
           )
         end
       end
@@ -52,6 +58,7 @@ module PromptBuilder
         h["description"] = @description if @description
         h["parameters"] = @parameters if @parameters
         h["strict"] = @strict if @strict
+        h = PromptBuilder.jsonify(@extra).merge(h) unless @extra.empty?
         h
       end
     end

@@ -14,21 +14,27 @@ module PromptBuilder
       # @return [String, nil] the function call output status
       attr_reader :status
 
-      # @return [String, Array<Content::Base>] the output from the function; either a plain
-      #   string or an array of content objects
+      # @return [String, Array<Content::Base>, nil] the output from the function; either a plain
+      #   string, an array of content objects, or nil (serialized as +""+)
       attr_reader :output
+
+      # @return [Hash, nil] provider-specific extra data
+      attr_reader :extra
 
       # Create a new FunctionCallOutput item.
       #
       # @param id [String, nil] the function call output identifier
       # @param call_id [String] the call identifier
       # @param status [String, nil] the function call output status
-      # @param output [String, Array<Content::Base>] the function output
-      def initialize(call_id:, output:, id: nil, status: nil)
+      # @param output [String, Array<Content::Base, Hash>, nil] the function output;
+      #   Hash elements in an array are normalized into +Content::Base+ objects
+      # @param extra [Hash] provider-specific extra keyword arguments
+      def initialize(call_id:, output:, id: nil, status: nil, **extra)
         @id = id&.to_s
         @call_id = call_id&.to_s
         @status = status&.to_s
         @output = normalize_output(output)
+        @extra = extra.transform_keys(&:to_s)
       end
 
       class << self
@@ -43,26 +49,37 @@ module PromptBuilder
             id: hash["id"],
             call_id: hash["call_id"],
             status: hash["status"],
-            output: output
+            output: output,
+            **hash.except("type", "id", "call_id", "status", "output").transform_keys(&:to_sym)
           )
         end
       end
 
-      # Serialize to a Hash with string keys.
+      # Serialize to a Hash with string keys. A nil output is emitted as an
+      # empty string so the on-the-wire shape matches the Open Responses API.
       #
       # @return [Hash]
       def to_h
         hash = {
           "type" => "function_call_output",
           "call_id" => @call_id,
-          "output" => @output.is_a?(Array) ? @output.map(&:to_h) : @output
+          "output" => serialize_output
         }
         hash["id"] = @id if @id
         hash["status"] = @status if @status
+        hash = PromptBuilder.jsonify(@extra).merge(hash) unless @extra.empty?
         hash
       end
 
       private
+
+      def serialize_output
+        case @output
+        when nil then ""
+        when Array then @output.map(&:to_h)
+        else @output
+        end
+      end
 
       def normalize_output(output)
         case output
@@ -72,7 +89,12 @@ module PromptBuilder
           output.map do |c|
             case c
             when Hash
-              Content::Base.from_h(c)
+              hash = c.transform_keys(&:to_s)
+              unless hash["type"]
+                raise InvalidItemError,
+                  "Output content hash is missing required \"type\" key: #{hash.inspect}"
+              end
+              Content::Base.from_h(hash)
             when Content::Base
               c
             else

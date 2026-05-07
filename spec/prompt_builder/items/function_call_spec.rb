@@ -9,7 +9,8 @@ RSpec.describe PromptBuilder::Items::FunctionCall do
       call_id: "call_123",
       arguments: '{"city":"London"}',
       id: "fc_1",
-      status: "completed"
+      status: "completed",
+      thought_signature: "sig_123"
     )
   end
 
@@ -21,7 +22,8 @@ RSpec.describe PromptBuilder::Items::FunctionCall do
         "call_id" => "call_123",
         "arguments" => '{"city":"London"}',
         "id" => "fc_1",
-        "status" => "completed"
+        "status" => "completed",
+        "thought_signature" => "sig_123"
       })
     end
 
@@ -45,6 +47,7 @@ RSpec.describe PromptBuilder::Items::FunctionCall do
       expect(restored.arguments).to eq('{"city":"London"}')
       expect(restored.id).to eq("fc_1")
       expect(restored.status).to eq("completed")
+      expect(restored.extra).to eq({"thought_signature" => "sig_123"})
     end
   end
 
@@ -56,6 +59,35 @@ RSpec.describe PromptBuilder::Items::FunctionCall do
     it "raises InvalidItemError for invalid JSON" do
       bad = described_class.new(name: "get_weather", call_id: "call_1", arguments: "not json")
       expect { bad.parsed_arguments }.to raise_error(PromptBuilder::InvalidItemError, /Invalid JSON.*get_weather/)
+    end
+  end
+
+  describe "arguments coercion" do
+    it "JSON-encodes a Hash passed as arguments" do
+      call = described_class.new(name: "x", call_id: "c", arguments: {"city" => "London"})
+      expect(call.arguments).to eq('{"city":"London"}')
+      expect(call.parsed_arguments).to eq({"city" => "London"})
+    end
+
+    it "passes through a String as-is" do
+      call = described_class.new(name: "x", call_id: "c", arguments: '{"a":1}')
+      expect(call.arguments).to eq('{"a":1}')
+    end
+
+    it "defaults nil arguments to an empty JSON object" do
+      call = described_class.new(name: "x", call_id: "c", arguments: nil)
+      expect(call.arguments).to eq("{}")
+      expect(call.parsed_arguments).to eq({})
+    end
+
+    it "raises ArgumentError for non-Hash, non-String arguments" do
+      expect {
+        described_class.new(name: "x", call_id: "c", arguments: [1, 2, 3])
+      }.to raise_error(ArgumentError, /must be a String, Hash, or nil/)
+
+      expect {
+        described_class.new(name: "x", call_id: "c", arguments: 42)
+      }.to raise_error(ArgumentError, /must be a String, Hash, or nil/)
     end
   end
 

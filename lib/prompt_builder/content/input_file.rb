@@ -13,15 +13,20 @@ module PromptBuilder
       # @return [String, nil] the filename
       attr_reader :filename
 
+      # @return [Hash, nil] provider-specific extra data
+      attr_reader :extra
+
       # Create a new InputFile content object.
       #
       # @param file_url [String, nil] the file URL
       # @param file_data [String, nil] base64-encoded file data
       # @param filename [String, nil] the filename
-      def initialize(file_url: nil, file_data: nil, filename: nil)
+      # @param extra [Hash] provider-specific extra keyword arguments
+      def initialize(file_url: nil, file_data: nil, filename: nil, **extra)
         @file_url = file_url&.to_s
         @file_data = file_data&.to_s
         @filename = filename&.to_s
+        @extra = extra.transform_keys(&:to_s)
       end
 
       class << self
@@ -33,7 +38,8 @@ module PromptBuilder
           new(
             file_url: hash["file_url"],
             file_data: hash["file_data"],
-            filename: hash["filename"]
+            filename: hash["filename"],
+            **hash.except("type", "file_url", "file_data", "filename").transform_keys(&:to_sym)
           )
         end
       end
@@ -46,6 +52,7 @@ module PromptBuilder
         h["file_url"] = @file_url if @file_url
         h["file_data"] = @file_data if @file_data
         h["filename"] = @filename if @filename
+        h = PromptBuilder.jsonify(@extra).merge(h) unless @extra.empty?
         h
       end
     end
