@@ -50,13 +50,52 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(content["image_url"]).to eq("data:image/png;base64,abc123")
     end
 
+    it "normalizes blank image_url when file_id is present" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(image_url: "  ", file_id: "file_abc")]
+      ))
+
+      payload = described_class.request_payload(session)
+      content = payload["input"][0]["content"][0]
+
+      expect(content["type"]).to eq("input_image")
+      expect(content["file_id"]).to eq("file_abc")
+      expect(content).not_to have_key("image_url")
+    end
+
+    it "raises when InputImage includes both image_url and file_id" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png", file_id: "file_abc")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::InvalidItemError, /exactly one/)
+    end
+
+    it "raises when InputImage includes neither image_url nor file_id" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputImage.new(detail: "high")]
+      ))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::InvalidItemError, /requires exactly one of image_url or file_id/)
+    end
+
     it "strips extra keys from items and content" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(
           image_url: "https://example.com/img.png",
-          extra: {"file_id" => "file_abc"}
+          extra: {"some_key" => "value"}
         )]
       ))
 
@@ -82,6 +121,82 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
 
       expect(content["image_url"]).to eq("data:image/png;base64,abc")
       expect(content).not_to have_key("extra")
+    end
+
+    it "strips reasoning items without encrypted_content" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hello")
+      session.add_item(PromptBuilder::Items::Reasoning.new(
+        id: "rs_1",
+        status: "completed",
+        content: [{"type" => "reasoning_text", "text" => "Thinking..."}]
+      ))
+      session.assistant([PromptBuilder::Content::OutputText.new(text: "Hi!")])
+
+      payload = described_class.request_payload(session)
+      types = payload["input"].map { |i| i["type"] }
+
+      expect(types).to eq(["message", "message"])
+      expect(types).not_to include("reasoning")
+    end
+
+    it "preserves reasoning items with encrypted_content" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hello")
+      session.add_item(PromptBuilder::Items::Reasoning.new(
+        id: "rs_1",
+        encrypted_content: "encrypted_blob",
+        summary: [{"type" => "summary_text", "text" => "Considered the request."}]
+      ))
+      session.assistant([PromptBuilder::Content::OutputText.new(text: "Hi!")])
+
+      payload = described_class.request_payload(session)
+      types = payload["input"].map { |i| i["type"] }
+
+      expect(types).to eq(["message", "reasoning", "message"])
+      reasoning = payload["input"][1]
+      expect(reasoning["encrypted_content"]).to eq("encrypted_blob")
+    end
+
+    it "strips the content key from preserved reasoning items" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hello")
+      session.add_item(PromptBuilder::Items::Reasoning.new(
+        id: "rs_1",
+        encrypted_content: "encrypted_blob",
+        content: [{"type" => "reasoning_text", "text" => "Thinking..."}],
+        summary: [{"type" => "summary_text", "text" => "Considered the request."}]
+      ))
+      session.assistant([PromptBuilder::Content::OutputText.new(text: "Hi!")])
+
+      payload = described_class.request_payload(session)
+      reasoning = payload["input"][1]
+
+      expect(reasoning["type"]).to eq("reasoning")
+      expect(reasoning["encrypted_content"]).to eq("encrypted_blob")
+      expect(reasoning).not_to have_key("content")
+      expect(reasoning["summary"]).to eq([{"type" => "summary_text", "text" => "Considered the request."}])
+    end
+
+    it "strips logprobs from output_text content blocks" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hello")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "assistant",
+        content: [PromptBuilder::Content::OutputText.new(
+          text: "Hi!",
+          logprobs: [{"token" => "Hi", "logprob" => -0.1}],
+          annotations: [{"type" => "url_citation", "url" => "https://example.com", "start_index" => 0, "end_index" => 2, "title" => "Example"}]
+        )]
+      ))
+
+      payload = described_class.request_payload(session)
+      content = payload["input"][1]["content"][0]
+
+      expect(content["type"]).to eq("output_text")
+      expect(content["text"]).to eq("Hi!")
+      expect(content).not_to have_key("logprobs")
+      expect(content["annotations"]).to be_a(Array)
     end
   end
 

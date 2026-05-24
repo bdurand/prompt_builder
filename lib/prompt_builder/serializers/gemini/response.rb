@@ -186,6 +186,7 @@ module PromptBuilder
 
                 function_call = part["functionCall"]
                 call_id = function_call["id"] || "gemini_call_#{call_id_seed}_#{call_index}"
+
                 output << Items::FunctionCall.new(
                   name: function_call["name"],
                   call_id: call_id,

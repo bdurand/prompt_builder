@@ -26,7 +26,7 @@ module PromptBuilder
         @file_url = file_url&.to_s
         @file_data = file_data&.to_s
         @filename = filename&.to_s
-        @extra = extra.transform_keys(&:to_s)
+        @extra = normalize_extra_kwargs(extra)
       end
 
       class << self
@@ -54,6 +54,16 @@ module PromptBuilder
         h["filename"] = @filename if @filename
         h = PromptBuilder.jsonify(@extra).merge(h) unless @extra.empty?
         h
+      end
+
+      private
+
+      def normalize_extra_kwargs(extra)
+        nested = extra.delete(:extra)
+        nested = extra.delete("extra") if nested.nil?
+        nested_hash = nested.is_a?(Hash) ? nested : {}
+
+        PromptBuilder.jsonify(nested_hash.merge(extra)).transform_keys(&:to_s)
       end
     end
   end

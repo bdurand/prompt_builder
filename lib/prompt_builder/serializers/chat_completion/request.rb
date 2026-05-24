@@ -166,7 +166,9 @@ module PromptBuilder
                   "content" => serialize_function_call_output_content(item.output)
                 }
               when Items::Reasoning
-                raise UnsupportedFormatError, "Reasoning items are not supported in Chat Completions format"
+                # Reasoning items can be provided by the response but are not supported in the request,
+                # so ignore them rather than raising an error.
+                next
               when Items::Compaction
                 raise UnsupportedFormatError, "Chat Completions format does not support Compaction items"
               when Items::ItemReference

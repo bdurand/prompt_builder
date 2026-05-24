@@ -34,9 +34,10 @@ module PromptBuilder
       # - +tool_choice: "none"+ is not supported by the Converse API
       #
       # Input content restrictions:
-      # - +Reasoning+ items are not supported
-      # - +RefusalContent+ is not supported
-      # - +OutputText.annotations+ and +OutputText.logprobs+ are not supported
+      # - +Reasoning+ items are silently skipped
+      # - +RefusalContent+ is dropped silently (a parsed response refusal can
+      #   stay in session history without breaking subsequent request_payload calls)
+      # - +OutputText.annotations+ and +OutputText.logprobs+ are dropped silently
       # - +InputImage+ content is only supported in user messages (not assistant)
       # - +InputImage.detail+ and +InputImage.file_id+ are not supported
       # - +InputFile+ content is only supported in user messages (not assistant)
@@ -219,7 +220,7 @@ module PromptBuilder
                 next if item.role == "system" || item.role == "developer"
 
                 role = (item.role == "assistant") ? "assistant" : "user"
-                visible_content = item.content
+                visible_content = item.content.reject { |c| c.is_a?(Content::RefusalContent) }
                 next if visible_content.empty?
                 content = []
                 visible_content.each do |c|
@@ -246,7 +247,9 @@ module PromptBuilder
                   "content" => [serialize_tool_result(item, ctx)]
                 }
               when Items::Reasoning
-                raise UnsupportedFormatError, "Converse format does not support Reasoning items"
+                # Reasoning items can be provided by the response but are not supported in the request,
+                # so ignore them rather than raising an error.
+                next
               when Items::Compaction
                 raise UnsupportedFormatError, "Converse format does not support Compaction items"
               when Items::ItemReference
@@ -311,21 +314,19 @@ module PromptBuilder
 
               serialize_video(content)
             when Content::RefusalContent
-              raise UnsupportedFormatError,
-                "Converse format does not support RefusalContent"
+              # RefusalContent can land in the session via a parsed response;
+              # drop it silently so subsequent request_payload calls don't fail.
+              nil
             else
               raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
             end
           end
 
-          def validate_output_text!(content)
-            unsupported_fields = []
-            unsupported_fields << "annotations" unless content.annotations.empty?
-            unsupported_fields << "logprobs" unless content.logprobs.empty?
-            return if unsupported_fields.empty?
-
-            raise UnsupportedFormatError,
-              "Converse format does not support OutputText.#{unsupported_fields.join(" or OutputText.")}"
+          # OutputText.annotations and logprobs are output-only metadata from
+          # a parsed response; silently ignore them on request serialization so
+          # a response with citations/logprobs can sit in session history without
+          # breaking subsequent request_payload calls.
+          def validate_output_text!(content) # rubocop:disable Lint/UnusedMethodArgument
           end
 
           def serialize_image(content)

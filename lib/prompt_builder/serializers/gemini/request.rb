@@ -32,8 +32,8 @@ module PromptBuilder
       # - +RefusalContent+ is dropped silently (a parsed Chat Completions
       #   refusal can stay in session history without breaking subsequent
       #   request_payload calls)
-      # - +redacted_thinking+ reasoning blocks are not supported
-      # - +Reasoning+ items with +summary+ blocks are not supported
+      # - +redacted_thinking+ reasoning blocks are silently skipped
+      # - +Reasoning+ items with +summary+ blocks are silently skipped
       # - +FunctionCallOutput+ array contents must be text-only
       # - +Compaction+ and +ItemReference+ items are not supported
       #
@@ -251,13 +251,11 @@ module PromptBuilder
                 parts = [{"functionResponse" => function_response}]
                 raw_contents << {"role" => "user", "parts" => parts}
               when Items::Reasoning
-                unless item.summary.empty?
-                  raise UnsupportedFormatError,
-                    "Gemini format cannot serialize Reasoning summary blocks; " \
-                    "Gemini requires thinking content blocks (use a Reasoning item produced by the Gemini API)"
-                end
+                # Reasoning items with summary blocks come from the Responses API
+                # and cannot be replayed in Gemini's thinking format; skip them.
+                next unless item.summary.empty?
 
-                thought_parts = item.content.map { |block| serialize_thinking_block(block) }
+                thought_parts = item.content.filter_map { |block| serialize_thinking_block(block) }
                 raw_contents << {"role" => "model", "parts" => thought_parts} unless thought_parts.empty?
               when Items::Compaction
                 raise UnsupportedFormatError, "Gemini format does not support Compaction items"
@@ -276,11 +274,13 @@ module PromptBuilder
               part["thoughtSignature"] = block["signature"] if block["signature"]
               part
             when "redacted_thinking"
-              raise UnsupportedFormatError,
-                "Gemini format does not support redacted_thinking blocks"
+              # redacted_thinking blocks come from Claude/Converse responses and
+              # cannot be replayed in Gemini format; skip them.
+              nil
             else
-              raise UnsupportedFormatError,
-                "Gemini format does not support reasoning block type #{block["type"].inspect}"
+              # Unknown reasoning block types cannot be meaningfully replayed;
+              # skip them rather than raising.
+              nil
             end
           end
 

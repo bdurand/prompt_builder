@@ -25,6 +25,15 @@ RSpec.describe PromptBuilder::Content::InputImage do
       content = described_class.new
       expect(content.to_h).to eq({"type" => "input_image"})
     end
+
+    it "supports extra passed as an extra: hash" do
+      content = described_class.new(extra: {"file_id" => "file_abc"})
+
+      expect(content.to_h).to eq({
+        "type" => "input_image",
+        "file_id" => "file_abc"
+      })
+    end
   end
 
   describe ".from_h" do

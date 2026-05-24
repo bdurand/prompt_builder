@@ -143,16 +143,17 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(tool_msg["content"]).to eq("72F sunny")
     end
 
-    it "raises for reasoning items" do
+    it "silently skips reasoning items" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         content: [{"type" => "text", "text" => "thinking..."}]
       ))
       session.user("Hello")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /Reasoning items/)
+      h = described_class.request_payload(session)
+      messages = h["messages"]
+      expect(messages.length).to eq(1)
+      expect(messages[0]["role"]).to eq("user")
     end
 
     it "converts InputFile with file_id to a file content block" do

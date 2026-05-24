@@ -22,7 +22,7 @@ module PromptBuilder
       def initialize(image_url: nil, detail: nil, **extra)
         @image_url = image_url&.to_s
         @detail = detail&.to_s
-        @extra = extra.transform_keys(&:to_s)
+        @extra = normalize_extra_kwargs(extra)
       end
 
       class << self
@@ -48,6 +48,16 @@ module PromptBuilder
         h["detail"] = @detail if @detail
         h = PromptBuilder.jsonify(@extra).merge(h) unless @extra.empty?
         h
+      end
+
+      private
+
+      def normalize_extra_kwargs(extra)
+        nested = extra.delete(:extra)
+        nested = extra.delete("extra") if nested.nil?
+        nested_hash = nested.is_a?(Hash) ? nested : {}
+
+        PromptBuilder.jsonify(nested_hash.merge(extra)).transform_keys(&:to_s)
       end
     end
   end

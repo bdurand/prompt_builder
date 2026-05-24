@@ -632,29 +632,33 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /parallel_tool_calls/)
     end
 
-    it "raises for Reasoning items" do
+    it "silently skips Reasoning items" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.user("Think hard")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         content: [{"type" => "thinking", "thinking" => "Let me think..."}]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /Reasoning/)
+      h = described_class.request_payload(session)
+      messages = h["messages"]
+      expect(messages.length).to eq(1)
+      expect(messages[0]["role"]).to eq("user")
     end
 
-    it "raises for RefusalContent" do
+    it "silently drops RefusalContent" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.user("Hello")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::RefusalContent.new(refusal: "I cannot help.")]
       ))
+      session.user("Try again")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /RefusalContent/)
+      h = described_class.request_payload(session)
+      messages = h["messages"]
+      # The refusal assistant message is dropped; two user messages merge
+      expect(messages.length).to eq(1)
+      expect(messages[0]["role"]).to eq("user")
     end
 
     it "raises for non-text system and developer content" do
@@ -667,7 +671,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /system and developer/)
     end
 
-    it "raises for OutputText annotations and logprobs" do
+    it "silently drops OutputText annotations and logprobs" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.user("Hello")
       session.add_item(PromptBuilder::Items::Message.new(
@@ -679,9 +683,10 @@ RSpec.describe PromptBuilder::Serializers::Converse do
         )]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /OutputText.annotations/)
+      h = described_class.request_payload(session)
+      messages = h["messages"]
+      assistant_msg = messages.find { |m| m["role"] == "assistant" }
+      expect(assistant_msg["content"]).to eq([{"text" => "Hi"}])
     end
 
     it "raises for InputImage with a non-S3 URL" do

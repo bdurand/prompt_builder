@@ -626,40 +626,45 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(part["thoughtSignature"]).to eq("sig_123")
     end
 
-    it "raises for redacted_thinking blocks" do
+    it "silently skips redacted_thinking blocks" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.user("Think")
       session.add_item(PromptBuilder::Items::Reasoning.new(
-        content: [{"type" => "redacted_thinking", "data" => "..."}]
+        content: [
+          {"type" => "thinking", "thinking" => "Let me think...", "signature" => "sig1"},
+          {"type" => "redacted_thinking", "data" => "..."}
+        ]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support redacted_thinking/)
+      h = described_class.request_payload(session)
+      model_parts = h["contents"].find { |c| c["role"] == "model" }["parts"]
+      expect(model_parts.length).to eq(1)
+      expect(model_parts[0]["thought"]).to eq(true)
+      expect(model_parts[0]["text"]).to eq("Let me think...")
     end
 
-    it "raises for unrecognized reasoning block types instead of silently dropping them" do
+    it "silently skips unrecognized reasoning block types" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.user("Think")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         content: [{"type" => "summary_text", "text" => "summary..."}]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /reasoning block type "summary_text"/)
+      h = described_class.request_payload(session)
+      roles = h["contents"].map { |c| c["role"] }
+      expect(roles).to eq(["user"])
     end
 
-    it "raises when serializing a Reasoning item with only summary blocks" do
+    it "silently skips Reasoning items with only summary blocks" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         summary: [{"type" => "summary_text", "text" => "..."}]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /summary blocks/)
+      h = described_class.request_payload(session)
+      roles = h["contents"].map { |c| c["role"] }
+      expect(roles).to eq(["user"])
     end
 
     it "raises for unsupported session field: include" do
