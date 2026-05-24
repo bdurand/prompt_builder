@@ -198,6 +198,49 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(content).not_to have_key("logprobs")
       expect(content["annotations"]).to be_a(Array)
     end
+
+    it "flattens nested json_schema format to canonical Responses API shape" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.text = {
+        "format" => {
+          "type" => "json_schema",
+          "json_schema" => {
+            "name" => "response",
+            "schema" => {"type" => "object", "properties" => {"answer" => {"type" => "string"}}, "required" => ["answer"]},
+            "strict" => true
+          }
+        }
+      }
+      session.user("Hello")
+
+      payload = described_class.request_payload(session)
+      format = payload["text"]["format"]
+
+      expect(format["type"]).to eq("json_schema")
+      expect(format["name"]).to eq("response")
+      expect(format["schema"]).to eq({"type" => "object", "properties" => {"answer" => {"type" => "string"}}, "required" => ["answer"]})
+      expect(format["strict"]).to eq(true)
+      expect(format).not_to have_key("json_schema")
+    end
+
+    it "preserves already-flat json_schema format" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.text = {
+        "format" => {
+          "type" => "json_schema",
+          "name" => "response",
+          "schema" => {"type" => "object", "properties" => {"answer" => {"type" => "string"}}, "required" => ["answer"]}
+        }
+      }
+      session.user("Hello")
+
+      payload = described_class.request_payload(session)
+      format = payload["text"]["format"]
+
+      expect(format["type"]).to eq("json_schema")
+      expect(format["name"]).to eq("response")
+      expect(format["schema"]).to eq({"type" => "object", "properties" => {"answer" => {"type" => "string"}}, "required" => ["answer"]})
+    end
   end
 
   describe ".parse_response" do

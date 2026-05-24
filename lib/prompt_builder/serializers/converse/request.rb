@@ -581,7 +581,7 @@ module PromptBuilder
                 "Converse format requires text.format.schema for json_schema output"
             end
 
-            json_schema = {"schema" => schema}
+            json_schema = {"schema" => schema.is_a?(String) ? schema : JSON.generate(schema)}
             name = format.dig("json_schema", "name") || format["name"]
             description = format.dig("json_schema", "description") || format["description"]
             json_schema["name"] = name if name

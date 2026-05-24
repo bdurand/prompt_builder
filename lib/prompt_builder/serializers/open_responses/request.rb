@@ -17,6 +17,7 @@ module PromptBuilder
             strip_non_replayable_reasoning!(payload)
             strip_output_only_fields!(payload)
             normalize_and_validate_input_images!(payload)
+            normalize_text_format!(payload)
             payload
           end
 
@@ -146,6 +147,20 @@ module PromptBuilder
 
               block.delete("extra")
             end
+          end
+
+          # Normalize text.format for the Responses API. If the format uses
+          # the Chat Completions nested json_schema sub-object, flatten it
+          # so name/schema/strict/description sit directly under format.
+          def normalize_text_format!(payload)
+            format = payload.dig("text", "format")
+            return unless format.is_a?(Hash) && format["type"] == "json_schema"
+
+            json_schema = format["json_schema"]
+            return unless json_schema.is_a?(Hash)
+
+            format.delete("json_schema")
+            json_schema.each { |key, value| format[key] = value }
           end
         end
       end

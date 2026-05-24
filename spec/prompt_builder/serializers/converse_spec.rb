@@ -151,7 +151,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
           "type" => "json_schema",
           "structure" => {
             "jsonSchema" => {
-              "schema" => schema,
+              "schema" => JSON.generate(schema),
               "name" => "answer_schema",
               "description" => "A structured answer"
             }

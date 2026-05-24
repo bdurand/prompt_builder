@@ -473,25 +473,49 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     it "raises for unsupported text.format keys" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
-        text: {"format" => {"type" => "json_schema", "schema" => {"type" => "object"}, "name" => "Weather"}}
+        text: {"format" => {"type" => "json_schema", "schema" => {"type" => "object"}, "unknown_key" => "value"}}
       )
       session.user("Hi")
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format\.name/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format\.unknown_key/)
     end
 
     it "raises for unsupported nested text.format json_schema keys" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
-        text: {"format" => {"type" => "json_schema", "json_schema" => {"name" => "Weather", "schema" => {"type" => "object"}}}}
+        text: {"format" => {"type" => "json_schema", "json_schema" => {"unknown_key" => "value", "schema" => {"type" => "object"}}}}
       )
       session.user("Hi")
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format\.json_schema\.name/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format\.json_schema\.unknown_key/)
+    end
+
+    it "ignores name, strict, and description in flat text.format" do
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        text: {"format" => {"type" => "json_schema", "name" => "Weather", "strict" => true, "description" => "A weather response", "schema" => {"type" => "object"}}}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      format = h.dig("output_config", "format")
+      expect(format).to eq({"type" => "json_schema", "schema" => {"type" => "object"}})
+    end
+
+    it "ignores name, strict, and description in nested json_schema" do
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        text: {"format" => {"type" => "json_schema", "json_schema" => {"name" => "Weather", "strict" => true, "description" => "A desc", "schema" => {"type" => "object"}}}}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      format = h.dig("output_config", "format")
+      expect(format).to eq({"type" => "json_schema", "schema" => {"type" => "object"}})
     end
 
     it "maps reasoning.effort to output_config.effort" do

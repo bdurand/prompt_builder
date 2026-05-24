@@ -273,14 +273,14 @@ module PromptBuilder
                 "Messages format only supports text.format type \"json_schema\""
             end
 
-            unsupported_keys = format.keys - ["json_schema", "schema", "type"]
+            unsupported_keys = format.keys - ["json_schema", "schema", "type", "name", "strict", "description"]
             unless unsupported_keys.empty?
               raise UnsupportedFormatError,
                 "Messages format does not support text.format.#{unsupported_keys.first}"
             end
 
             if format["json_schema"].is_a?(Hash)
-              unsupported_json_schema_keys = format["json_schema"].keys - ["schema"]
+              unsupported_json_schema_keys = format["json_schema"].keys - ["schema", "name", "strict", "description"]
               unless unsupported_json_schema_keys.empty?
                 raise UnsupportedFormatError,
                   "Messages format does not support text.format.json_schema.#{unsupported_json_schema_keys.first}"
