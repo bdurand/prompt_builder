@@ -266,12 +266,11 @@ session.user([
   )
 ])
 
-# Image from raw binary data (automatically base64-encoded as a data URL)
+# Image from raw binary data using a data URL
 session.user([
   PromptBuilder::Content::InputText.new(text: "What is in this image?"),
   PromptBuilder::Content::InputImage.new(
-    data: File.binread("photo.png"),
-    media_type: "image/png"
+    url: PromptBuilder::Content.data_url(File.binread("photo.png"), "image/png")
   )
 ])
 ```
@@ -291,9 +290,8 @@ session.user([
 session.user([
   PromptBuilder::Content::InputText.new(text: "What does this spreadsheet contain?"),
   PromptBuilder::Content::InputFile.new(
-    data: File.binread("data.csv"),
-    filename: "data.csv",
-    media_type: "text/csv"
+    url: PromptBuilder::Content.data_url(File.binread("data.csv"), "text/csv"),
+    filename: "data.csv"
   )
 ])
 

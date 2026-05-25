@@ -70,19 +70,17 @@ RSpec.describe PromptBuilder::Content::InputImage do
 
   describe "#data" do
     it "returns decoded binary data from a data URL" do
-      content = described_class.new(data: "\x89PNG\r\n".b, media_type: "image/png")
-      expect(content.data).to eq("\x89PNG\r\n".b)
+      url = PromptBuilder::Content.data_url("\x89PNG\r\n".b, "image/png")
+      content = described_class.new(url: url)
+      parsed = PromptBuilder.parse_data_url(content.url)
+      expect(parsed[0]).to eq("image/png")
+      expect(parsed[1].unpack1("m0")).to eq("\x89PNG\r\n".b)
     end
 
     it "returns nil for a non-data URL" do
       content = described_class.new(url: "https://example.com/img.png")
-      expect(content.data).to be_nil
-    end
-
-    it "sets a base64 data URL from raw binary" do
-      content = described_class.new(data: "imagedata", media_type: "image/jpeg")
-      expect(content.url).to start_with("data:image/jpeg;base64,")
-      expect(content.data).to eq("imagedata")
+      parsed = PromptBuilder.parse_data_url(content.url)
+      expect(parsed).to be_nil
     end
   end
 end

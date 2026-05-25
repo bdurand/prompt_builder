@@ -68,19 +68,17 @@ RSpec.describe PromptBuilder::Content::InputFile do
 
   describe "#data" do
     it "returns decoded binary data from a data URL" do
-      content = described_class.new(data: "hello world", media_type: "text/plain")
-      expect(content.data).to eq("hello world")
+      url = PromptBuilder::Content.data_url("hello world", "text/plain")
+      content = described_class.new(url: url)
+      parsed = PromptBuilder.parse_data_url(content.url)
+      expect(parsed[0]).to eq("text/plain")
+      expect(parsed[1].unpack1("m0")).to eq("hello world")
     end
 
     it "returns nil for a non-data URL" do
       content = described_class.new(url: "https://example.com/doc.pdf")
-      expect(content.data).to be_nil
-    end
-
-    it "sets a base64 data URL from raw binary" do
-      content = described_class.new(data: "binary\x00data", media_type: "application/pdf")
-      expect(content.url).to start_with("data:application/pdf;base64,")
-      expect(content.data).to eq("binary\x00data")
+      parsed = PromptBuilder.parse_data_url(content.url)
+      expect(parsed).to be_nil
     end
   end
 end
