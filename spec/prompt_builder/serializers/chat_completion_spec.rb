@@ -169,12 +169,12 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       ])
     end
 
-    it "converts InputFile with base64 file_data to a data-URL file block" do
+    it "converts InputFile with base64 data URL to a file block" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new(
-          file_data: "JVBERi0xLjQK",
+          url: "data:application/pdf;base64,JVBERi0xLjQK",
           filename: "report.pdf",
           media_type: "application/pdf"
         )]
@@ -187,27 +187,27 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(block["file"]["file_data"]).to eq("data:application/pdf;base64,JVBERi0xLjQK")
     end
 
-    it "defaults media_type to application/pdf when InputFile.file_data is given without media_type" do
+    it "converts InputFile with data URL without explicit media_type" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new(
-          file_data: "JVBERi0xLjQK",
+          url: "data:application/octet-stream;base64,JVBERi0xLjQK",
           filename: "report.pdf"
         )]
       ))
 
       h = described_class.request_payload(session)
       block = h["messages"][0]["content"][0]
-      expect(block["file"]["file_data"]).to start_with("data:application/pdf;base64,")
+      expect(block["file"]["file_data"]).to start_with("data:application/octet-stream;base64,")
     end
 
-    it "omits InputFile that has only a file_url (no Chat Completions representation)" do
+    it "omits InputFile that has only a url (no Chat Completions representation)" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "https://example.com/doc.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -231,7 +231,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/video.mp4")]
+        content: [PromptBuilder::Content::InputVideo.new(url: "https://example.com/video.mp4")]
       ))
 
       h = described_class.request_payload(session)
@@ -259,7 +259,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
         role: "user",
         content: [
           PromptBuilder::Content::InputText.new(text: "What's in this image?"),
-          PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png", detail: "high")
+          PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png", detail: "high")
         ]
       ))
 
@@ -277,7 +277,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc123")]
       ))
 
       h = described_class.request_payload(session)
@@ -547,7 +547,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
+        content: [PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png")]
       ))
 
       h = described_class.request_payload(session)
@@ -586,7 +586,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
         call_id: "call_1",
-        output: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
+        output: [PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png")]
       ))
 
       h = described_class.request_payload(session)

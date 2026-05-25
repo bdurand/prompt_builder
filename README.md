@@ -6,9 +6,21 @@
 [![Ruby Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://github.com/testdouble/standard)
 [![Gem Version](https://badge.fury.io/rb/prompt_builder.svg)](https://badge.fury.io/rb/prompt_builder)
 
-This gem provides a Ruby DSL for building and parsing LLM API request payloads. It uses the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) as its canonical data model and includes serializers that can convert to and from the [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat), [Anthropic Messages API](https://docs.anthropic.com/en/api/messages), [Google Gemini API](https://ai.google.dev/api/generate-content), and [Amazon Bedrock Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html) formats. It also includes a simple tool registry for defining tools that can be called by the model.
+This gem provides a Ruby DSL for building and parsing LLM API request payloads. The goal of this gem is to provide a single, consistent interface for constructing requests and parsing responses across multiple LLM APIs without locking you into a specific provider or HTTP client. Chat sessions are designed to be serializable so they can be persisted into databases or caches.
+
+The [Open Responses API](https://www.openresponses.org/) is used as the internal data model. The [Open Responses reference](https://www.openresponses.org/reference) documentation provides details on how to use the API and the terminology.
+
+Requests can be generated for and responses can be parsed from these common LLM API formats:
+
+- [Open Responses API](https://www.openresponses.org/)
+- [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat)
+- [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)
+- [Google Gemini API](https://ai.google.dev/api/generate-content)
+- [Amazon Bedrock Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
 
 This gem does **not** include any HTTP client code. It is designed to be used with whatever HTTP library you prefer. You build a request payload, send it to the API yourself, and then parse the response back into Ruby objects.
+
+It was specifically designed to work with the [patient_http](https://github.com/bdurand/patient_http) gem to allow making asynchronous requests to LLM APIs and is used in the [patient_llm](https://github.com/bdurand/patient_llm) gem.
 
 ## Usage
 
@@ -34,6 +46,7 @@ session = PromptBuilder::Session.new(
   temperature: 0.7
 )
 
+# Add a user message to the conversation history
 session.user("What is the capital of France?")
 ```
 
@@ -64,7 +77,7 @@ Messages support the roles `user`, `assistant`, `system`, and `developer`.
 
 Once you've built a session, serialize it to a request payload for the API you want to call. Five target formats are supported:
 
-**OpenAI Responses API** (the canonical format):
+**Open Responses API**:
 
 ```ruby
 payload = session.to_h
@@ -118,7 +131,7 @@ end
 Parse an API response back into an `PromptBuilder::Response` object using `Response.parse` with a serializer symbol:
 
 ```ruby
-# OpenAI Responses API
+# Open Responses API
 response = PromptBuilder::Response.parse(JSON.parse(response_body), :open_responses)
 
 # OpenAI Chat Completions API
@@ -143,10 +156,10 @@ response = PromptBuilder::Response.parse(JSON.parse(response_body), PromptBuilde
 The `Response` object provides convenient accessors:
 
 ```ruby
-response.text          # => "The capital of France is Paris."
-response.completed?    # => true
+response.text            # => "The capital of France is Paris."
+response.completed?      # => true
 response.has_tool_calls? # => false
-response.usage         # => #<PromptBuilder::Usage input_tokens=25 output_tokens=12 ...>
+response.usage           # => #<PromptBuilder::Usage input_tokens=25 output_tokens=12 ...>
 ```
 
 ### Agentic Tool Loops
@@ -185,8 +198,8 @@ loop do
   # Invoke tool handlers for each tool call in this response and append the
   # output back to the session before the next iteration.
   response.tool_calls.each do |call|
-    result = call_tool(call.name, call.parsed_arguments)  # Your dispatch logic
-    session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: call.call_id, output: result.to_s))
+    result = call_tool(call.name, call.parsed_arguments)  # invoke your logic for the tool
+    session.add_function_call_output(call_id: call.call_id, result: result.to_s)
   end
 end
 ```
@@ -241,23 +254,23 @@ Send an image by URL or as base64-encoded data:
 # Image from a URL
 session.user([
   PromptBuilder::Content::InputText.new(text: "What is in this image?"),
-  PromptBuilder::Content::InputImage.new(image_url: "https://example.com/photo.jpg")
+  PromptBuilder::Content::InputImage.new(url: "https://example.com/photo.jpg")
 ])
 
 # Image with a detail level hint
 session.user([
   PromptBuilder::Content::InputText.new(text: "Describe this image in detail."),
   PromptBuilder::Content::InputImage.new(
-    image_url: "https://example.com/photo.jpg",
+    url: "https://example.com/photo.jpg",
     detail: "high"
   )
 ])
 
-# Base64-encoded image
+# Image from raw binary data (automatically base64-encoded as a data URL)
 session.user([
   PromptBuilder::Content::InputText.new(text: "What is in this image?"),
   PromptBuilder::Content::InputImage.new(
-    data: Base64.strict_encode64(File.read("photo.png")),
+    data: File.binread("photo.png"),
     media_type: "image/png"
   )
 ])
@@ -265,20 +278,20 @@ session.user([
 
 **Files**
 
-Attach a file by URL or as base64-encoded data:
+Attach a file by URL or as raw binary data:
 
 ```ruby
 # File from a URL
 session.user([
   PromptBuilder::Content::InputText.new(text: "Summarize this document."),
-  PromptBuilder::Content::InputFile.new(file_url: "https://example.com/report.pdf")
+  PromptBuilder::Content::InputFile.new(url: "https://example.com/report.pdf")
 ])
 
-# Base64-encoded file with a filename and media type
+# File from raw binary data with a filename and media type
 session.user([
   PromptBuilder::Content::InputText.new(text: "What does this spreadsheet contain?"),
   PromptBuilder::Content::InputFile.new(
-    file_data: Base64.strict_encode64(File.read("data.csv")),
+    data: File.binread("data.csv"),
     filename: "data.csv",
     media_type: "text/csv"
   )
@@ -296,7 +309,7 @@ session.user([
 ```ruby
 session.user([
   PromptBuilder::Content::InputText.new(text: "Summarize what happens in this video."),
-  PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/clip.mp4")
+  PromptBuilder::Content::InputVideo.new(url: "https://example.com/clip.mp4")
 ])
 ```
 
@@ -307,7 +320,7 @@ You can also pass plain Hashes instead of content objects:
 ```ruby
 session.user([
   {"type" => "input_text", "text" => "What is in this image?"},
-  {"type" => "input_image", "image_url" => "https://example.com/photo.jpg"}
+  {"type" => "input_image", "url" => "https://example.com/photo.jpg"}
 ])
 ```
 
@@ -420,7 +433,7 @@ session.system([
 # Anthropic Messages: citations opt-in on document blocks
 session.user([
   PromptBuilder::Content::InputFile.new(
-    file_url: "https://example.com/report.pdf",
+    url: "https://example.com/report.pdf",
     citations: {"enabled" => true}
   ),
   PromptBuilder::Content::InputText.new(text: "Summarize with citations.")
@@ -474,9 +487,7 @@ This makes it straightforward to persist conversation state in a database or cac
 
 ## Serializer Compatibility
 
-The Open Responses format is the canonical data model for this gem. When serializing to other formats, some features may not be available because the target API does not support them (in which case they are silently omitted from the serialized output) or because the Open Responses format does not expose parameters unique to the target API.
-
-Unsupported features are dropped rather than raising: an unsupported session field, content block, item, enum value, or `tool_choice` is omitted from the serialized output, and unrecognized blocks in a response are skipped on parse. `UnsupportedFormatError` is still raised for genuinely unrepresentable input — missing required data (e.g. no `model`, no messages, a `json_schema` format without a schema), structural problems (a non-`user` first message for Messages/Converse, a `FunctionCallOutput` with no matching `FunctionCall` for Gemini), genuine conflicts (e.g. `temperature` with thinking enabled on Messages), unparseable function-call arguments, and streaming response chunks.
+The Open Responses format is the canonical data model for this gem. When serializing to other formats, some features may not be available because either the target API does not support them or because the Open Responses format does not expose parameters unique to the target API. If you attempt to use a feature that is not supported by a particular serializer, it will be silently omitted from the serialized output.
 
 ### Session Fields
 
@@ -510,23 +521,23 @@ The following table shows which session configuration fields are supported by ea
 | `InputText` | ✅ | ✅ | ✅ | ✅ |
 | `InputImage` | user messages only⁷ | user messages only⁵ | user messages only⁶ | base64 or S3 URI only |
 | `InputFile` | user messages only¹⁰ | user messages only¹ | user messages only⁶ | base64 or S3 URI only² |
-| `InputVideo` | ❌ | ❌ | `video_url` required (Google-hosted URI only)⁶ | S3 URI only |
+| `InputVideo` | ❌ | ❌ | URL required (Google-hosted URI only)⁶ | S3 URI only |
 | `OutputText` | ✅ (annotations dropped on request)¹¹ | ✅ (annotations ↔ citations)¹² | ✅ | ✅ |
 | `RefusalContent` | dropped⁹ | dropped⁹ | dropped⁹ | dropped⁹ |
 | `Reasoning` items | ❌ | ✅³ | ✅⁴ | ❌ |
 | `Compaction` items | ❌ | ❌ | ❌ | ❌ |
 | `ItemReference` items | ❌ | ❌ | ❌ | ❌ |
 
-¹ Messages format defaults to `application/pdf` for base64 sources; set `InputFile.media_type` to use a different document type. `file_id` is mapped to a `file` source for the Anthropic Files API beta — set the appropriate `anthropic-beta: files-api-2025-04-14` header in your HTTP client.
-² Converse format infers the document type from the filename or file URL extension.
+¹ Messages format uses the media type from the data URL for base64 sources; set `InputFile.media_type` to override. `file_id` is mapped to a `file` source for the Anthropic Files API beta — set the appropriate `anthropic-beta: files-api-2025-04-14` header in your HTTP client.
+² Converse format infers the document type from the filename or URL extension.
 ³ Messages format only emits `thinking` blocks that include a cryptographic `signature`; unsigned blocks are silently dropped.
 ⁴ Gemini format passes `thoughtSignature` through transparently on reasoning, text, and function-call parts. `redacted_thinking` blocks are silently skipped.
 ⁵ Anthropic does not support a `detail` field on images; it is silently dropped. `file_id` is mapped to a `file` source (Anthropic Files API beta).
-⁶ Gemini requires inline base64 data or a Google-hosted URI (`gs://`, `https://generativelanguage.googleapis.com/`, or `https://storage.googleapis.com/`) — content with an arbitrary public URL is silently omitted. Fetch remote media in your application and pass it as base64 data, or upload it to the Gemini Files API first. For files, set `media_type` or use a recognized `filename`/`file_url` extension.
-⁷ Chat Completions does not accept `InputImage.file_id` — the `image_file` content type is Assistants API only. Use `image_url` or base64 `data` instead; a `file_id`-only image is omitted.
+⁶ Gemini supports inline base64 data or any URL. For files, set `media_type` or use a recognized `filename`/URL extension.
+⁷ Chat Completions does not accept `InputImage.file_id` — the `image_file` content type is Assistants API only. Use a URL or base64 `data` instead; a `file_id`-only image is omitted.
 ⁸ Gemini selects streaming by endpoint (`:streamGenerateContent`), not a request body field, so `session.stream` is silently ignored when serializing to Gemini.
 ⁹ `RefusalContent` blocks are dropped silently by all request serializers so a parsed refusal can sit in session history without breaking subsequent `request_payload` calls. A message left empty after stripping is omitted entirely.
-¹⁰ Chat Completions sends `InputFile` as a `{"type": "file", "file": {...}}` content block. `file_id` (Files API) and base64 `file_data` (with optional `filename`/`media_type`; defaults to `application/pdf`) are supported. A `file_url`-only `InputFile` is omitted because Chat Completions has no remote-URL form for files.
+¹⁰ Chat Completions sends `InputFile` as a `{"type": "file", "file": {...}}` content block. `file_id` (Files API) and base64 data URL (with optional `filename`/`media_type`) are supported. A URL-only `InputFile` (non-data URL) is omitted because Chat Completions has no remote-URL form for files.
 ¹¹ `OutputText.annotations` (e.g. URL citations from `web_search_options`) are parsed onto the assistant message and round-trip through session history, but are dropped silently on Chat Completions and Converse request serialization since those formats have no request-side equivalent. `OutputText.logprobs` is likewise dropped.
 ¹² Messages text-block `citations` are parsed into `OutputText.annotations` and emitted back as `citations` when serializing Messages history. Document/tool-result citation opt-ins are still not modeled.
 ¹³ Converse `requestMetadata` only accepts string key/value pairs. This serializer stringifies scalar metadata values and silently omits nested arrays or objects.
@@ -607,8 +618,8 @@ Request-side mappings worth calling out:
 | `reasoning.effort` | `reasoning_effort` |
 | `tool_choice: {"type": "function", "name": ...}` | `{"type": "function", "function": {"name": ...}}` |
 | `InputFile.file_id` | `{"type": "file", "file": {"file_id": ...}}` |
-| `InputFile.file_data` (+ optional `filename`/`media_type`) | `{"type": "file", "file": {"filename": ..., "file_data": "data:<media_type>;base64,..."}}` (defaults to `application/pdf`) |
-| `InputImage.data` (+ `media_type`) | `{"type": "image_url", "image_url": {"url": "data:<media_type>;base64,..."}}` |
+| `InputFile` with data URL (+ optional `filename`/`media_type`) | `{"type": "file", "file": {"filename": ..., "file_data": "data:<media_type>;base64,..."}}` |
+| `InputImage` with data URL (+ `media_type`) | `{"type": "image_url", "image_url": {"url": "data:<media_type>;base64,..."}}` |
 
 Unsupported Chat Completions request features not exposed by this gem include audio input/output (`audio`, `modalities`, `input_audio` content), `web_search_options`, custom tools, `tool_choice: {"type": "allowed_tools", ...}`, `seed`, `stop`, `logit_bias`, `n`, `prediction`, and the deprecated `functions`, `function_call`, `max_tokens`, and `user` fields. Use the modern canonical fields when available (`tools`, `tool_choice`, `max_output_tokens`, `safety_identifier`, `prompt_cache_key`).
 
@@ -668,9 +679,9 @@ Content and message restrictions:
 
 - Assistant messages map to `role: "model"`; consecutive same-role turns are merged automatically.
 - `InputImage`, `InputFile`, and `InputVideo` are only supported in user messages; the same content on an assistant message is omitted.
-- `InputImage` accepts a `gs://` / `https://generativelanguage.googleapis.com/` / `https://storage.googleapis.com/` URL, base64 `data` (with required `media_type`), or a Files API `file_id`. Content with an arbitrary public URL is omitted — Gemini will not fetch it.
-- `InputFile` accepts the same URL prefixes, base64 `file_data`, or `file_id`. `media_type` is required when not inferable from a `filename` or URL extension. Recognized extensions: `pdf`, `txt`, `md`/`markdown`, `html`/`htm`, `csv`, `json`, `xml`, `rtf`.
-- `InputVideo` requires `video_url` pointing at a Google-hosted URI; raw bytes are not modeled.
+- `InputImage` accepts any URL, a base64 data URL (with required `media_type`), or a Files API `file_id`.
+- `InputFile` accepts any URL, a base64 data URL, or `file_id`. `media_type` is required when not inferable from a `filename` or URL extension. Recognized extensions: `pdf`, `txt`, `md`/`markdown`, `html`/`htm`, `csv`, `json`, `xml`, `rtf`.
+- `InputVideo` requires a URL; raw bytes are not modeled.
 - `RefusalContent` is dropped silently so a parsed Chat Completions refusal can sit in session history without breaking subsequent serialization.
 - `Reasoning` items round-trip via `parts[].thought` with `thoughtSignature` preserved. `redacted_thinking`, `summary`, and unknown reasoning block types are silently skipped.
 - `FunctionCall.arguments` must parse to a JSON object — Gemini's `functionCall.args` is a Struct.
@@ -709,7 +720,7 @@ Content and message restrictions:
 - The first message must have role `user`; the request raises if it doesn't. Consecutive same-role messages are merged automatically.
 - `system` and `developer` messages must contain text only. Non-text content is omitted because Converse system blocks only map to `text`, `guardContent`, or `cachePoint`, and the latter two are not modeled by this gem.
 - `InputImage` requires either base64 `data` or an `s3://` URI; content with an arbitrary public URL is omitted. `file_id` and `detail` have no Converse equivalent and are silently ignored.
-- `InputFile` requires either base64 `file_data` or an `s3://` URI; document `name` is auto-derived from `filename` / `file_url` and sanitized to Bedrock's allowed character set (`[A-Za-z0-9 \-()\[\]]{1,256}`), with collisions disambiguated within a single request.
+- `InputFile` requires either a base64 data URL or an `s3://` URI; document `name` is auto-derived from `filename` / URL and sanitized to Bedrock's allowed character set (`[A-Za-z0-9 \-()\[\]]{1,256}`), with collisions disambiguated within a single request.
 - `InputFile.file_id` is silently ignored because Converse does not accept provider file IDs for documents.
 - `InputVideo` requires an `s3://` URI; a non-S3 URL is omitted, and raw bytes (`source.bytes`) cannot be sent because the canonical `InputVideo` content type does not model byte data.
 - `InputImage`, `InputFile`, and `InputVideo` are only supported in user messages; the same content on an assistant message is omitted. `RefusalContent`, `OutputText.annotations`, and `OutputText.logprobs` are also dropped because Converse has no request-side representation for them.

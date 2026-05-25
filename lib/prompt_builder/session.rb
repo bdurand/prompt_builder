@@ -170,11 +170,11 @@ module PromptBuilder
     #  session.user(type: "input_text", text: "Hello, how are you?")
     #  session.user([
     #    Content::InputText.new(text: "What is in this image?"),
-    #    Content::InputImage.new(image_url: "http://example.com/image.png")
+    #    Content::InputImage.new(url: "http://example.com/image.png")
     #  ])
     #  session.user([
     #    {type: "input_text", text: "What is in this image?"},
-    #    {type: "input_image", image_url: "http://example.com/image.png"}
+    #    {type: "input_image", url: "http://example.com/image.png"}
     #  ])
     def user(content)
       add_item(Items::Message.new(role: "user", content: content))
@@ -204,11 +204,22 @@ module PromptBuilder
       add_item(Items::Message.new(role: "developer", content: content))
     end
 
+    # Add a tool call output to the conversation.
+    #
+    # @param call_id [String] the tool call identifier
+    # @param result [String, Hash, Array, Content::Base, nil] the tool call result
+    # @return [Items::FunctionOutput] the added function output item
+    def add_function_call_output(call_id:, result:)
+      add_item(Items::FunctionOutput.new(call_id: call_id, result: result))
+    end
+
     # Add a raw item to the conversation.
     #
     # @param item [Items::Base] the item to add
     # @return [Items::Base] the added item
     def add_item(item)
+      raise ArgumentError, "item must be an instance of Items::Base" unless item.is_a?(Items::Base)
+
       @items << item
       item
     end
@@ -222,6 +233,8 @@ module PromptBuilder
     # @param response [Response] the API response
     # @return [void]
     def add_response(response)
+      raise ArgumentError, "response must be an instance of Response" unless response.is_a?(Response)
+
       @items.concat(response.output)
       # Only refresh previous_response_id when the session is already in
       # server-state mode AND the response actually carries an id; otherwise
@@ -256,6 +269,8 @@ module PromptBuilder
     # @param registry [ToolRegistry] the registry to copy tools from
     # @return [void]
     def register_tools(registry)
+      raise ArgumentError, "registry must be an instance of ToolRegistry" unless registry.is_a?(ToolRegistry)
+
       registry.definitions.each do |defn|
         extra = defn.extra.transform_keys(&:to_sym)
         register_tool(
@@ -293,7 +308,11 @@ module PromptBuilder
       session
     end
 
-    # Check if this session is in local state mode (no previous_response_id).
+    # Check if this session is in local state mode (no previous_response_id). This
+    # indicates that the full conversation history is stored in the session and will be
+    # sent with each request. Once a response with an id is added, the session switches
+    # to server state mode, where only new items after the last response are sent
+    # and the previous_response_id is used to reference the last response.
     #
     # @return [Boolean]
     def local_state?

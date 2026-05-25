@@ -302,41 +302,43 @@ module PromptBuilder
             file = {}
             file["file_id"] = file_id if file_id
             file["filename"] = content.filename if content.filename
-            if content.file_data
-              mime = media_type || "application/pdf"
-              file["file_data"] = "data:#{mime};base64,#{content.file_data}"
+
+            parsed = PromptBuilder.parse_data_url(content.url)
+            if parsed
+              mime = media_type || parsed[0]
+              file["file_data"] = "data:#{mime};base64,#{parsed[1]}"
             end
 
-            # InputFile.file_url has no Chat Completions representation. When a
-            # usable source is present it is used; when file_url is the only
+            # InputFile plain URLs have no Chat Completions representation. When a
+            # usable source is present it is used; when a plain URL is the only
             # source, the block is omitted rather than raising.
             unless file["file_id"] || file["file_data"]
-              return nil if content.file_url
+              return nil if content.url
 
               raise UnsupportedFormatError,
-                "InputFile requires file_id (in extra) or file_data in Chat Completions format"
+                "InputFile requires file_id (in extra) or data in Chat Completions format"
             end
 
             {"type" => "file", "file" => file}
           end
 
           def serialize_image_content(content)
-            url = content.image_url
+            url = content.url
 
             if url
               # InputImage file_id (in extra) is ignored: the image_file content
-              # type is Assistants API only. image_url is used instead.
+              # type is Assistants API only. url is used instead.
               image_url = {"url" => url}
               image_url["detail"] = content.detail if content.detail
               return {"type" => "image_url", "image_url" => image_url}
             end
 
-            # No usable image_url. If file_id was provided, its only source is the
+            # No usable url. If file_id was provided, its only source is the
             # unsupported image_file content type, so omit the block.
             file_id = content.extra && content.extra["file_id"]
             return nil if file_id
 
-            raise UnsupportedFormatError, "InputImage requires image_url in Chat Completions format"
+            raise UnsupportedFormatError, "InputImage requires url in Chat Completions format"
           end
 
           def extract_response_format(format)

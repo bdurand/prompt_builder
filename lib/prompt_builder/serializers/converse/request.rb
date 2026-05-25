@@ -305,14 +305,14 @@ module PromptBuilder
             # InputImage.detail and file_id (in extra) are not supported and are
             # silently ignored.
             format = detect_image_format(content)
-            parsed = PromptBuilder.parse_data_url(content.image_url)
+            parsed = PromptBuilder.parse_data_url(content.url)
             source = if parsed
               {"bytes" => parsed[1]}
-            elsif content.image_url&.start_with?("s3://")
-              {"s3Location" => {"uri" => content.image_url}}
+            elsif content.url&.start_with?("s3://")
+              {"s3Location" => {"uri" => content.url}}
             else
               raise UnsupportedFormatError,
-                "Converse format requires a data URL in InputImage.image_url or an S3 URI"
+                "Converse format requires a data URL in InputImage.url or an S3 URI"
             end
 
             {"image" => {"format" => format, "source" => source}}
@@ -326,13 +326,13 @@ module PromptBuilder
             end
 
             # Try to extract media type from data URL
-            parsed = PromptBuilder.parse_data_url(content.image_url)
+            parsed = PromptBuilder.parse_data_url(content.url)
             if parsed
               fmt = IMAGE_MEDIA_TYPE_FORMATS[parsed[0]]
               return fmt if fmt
             end
 
-            url = content.image_url
+            url = content.url
             if url
               ext = File.extname(url).delete_prefix(".").downcase
               fmt = IMAGE_URL_EXTENSION_FORMATS[ext]
@@ -358,13 +358,14 @@ module PromptBuilder
           def serialize_document(content, ctx)
             # file_id (in extra) is not supported and is silently ignored.
             format = detect_document_format(content)
-            source = if content.file_data
-              {"bytes" => content.file_data}
-            elsif content.file_url&.start_with?("s3://")
-              {"s3Location" => {"uri" => content.file_url}}
+            parsed = PromptBuilder.parse_data_url(content.url)
+            source = if parsed
+              {"bytes" => parsed[1]}
+            elsif content.url&.start_with?("s3://")
+              {"s3Location" => {"uri" => content.url}}
             else
               raise UnsupportedFormatError,
-                "Converse format requires InputFile.file_data or an S3 URI for InputFile.file_url"
+                "Converse format requires InputFile with a data URL or an S3 URI"
             end
 
             name = document_name(content, ctx)
@@ -378,7 +379,14 @@ module PromptBuilder
               return fmt if fmt
             end
 
-            [content.filename, content.file_url].each do |path|
+            # Check the data URL media type
+            parsed = PromptBuilder.parse_data_url(content.url)
+            if parsed
+              fmt = DOCUMENT_MEDIA_TYPE_FORMATS[parsed[0]]
+              return fmt if fmt
+            end
+
+            [content.filename, content.url].each do |path|
               next unless path
 
               ext = File.extname(path).delete_prefix(".").downcase
@@ -387,17 +395,17 @@ module PromptBuilder
             end
 
             raise UnsupportedFormatError,
-              "Converse format could not detect document format; set media_type in extra or use a recognized file extension on InputFile.filename or InputFile.file_url"
+              "Converse format could not detect document format; set media_type in extra or use a recognized file extension on InputFile.filename or InputFile.url"
           end
 
           # Bedrock requires document.name to be unique within a request and to
           # match /^[A-Za-z0-9 \-\(\)\[\]]{1,256}$/. Prefer the filename, fall
-          # back to the file_url basename, then a random suffix to avoid
+          # back to the url basename, then a random suffix to avoid
           # collisions when multiple unnamed documents are attached. The counter
           # state lives on the per-request `ctx` Hash so concurrent calls don't
           # share state.
           def document_name(content, ctx)
-            source = content.filename || content.file_url
+            source = content.filename || content.url
             candidate = nil
 
             if source
@@ -419,23 +427,23 @@ module PromptBuilder
           end
 
           def serialize_video(content)
-            unless content.video_url
+            unless content.url
               raise UnsupportedFormatError,
-                "Converse format requires InputVideo.video_url"
+                "Converse format requires InputVideo.url"
             end
 
             # Only S3 URIs are supported; other video URLs are silently omitted.
-            return nil unless content.video_url.start_with?("s3://")
+            return nil unless content.url.start_with?("s3://")
 
-            ext = File.extname(content.video_url).delete_prefix(".").downcase
+            ext = File.extname(content.url).delete_prefix(".").downcase
             format = VIDEO_URL_EXTENSION_FORMATS[ext]
 
             unless format
               raise UnsupportedFormatError,
-                "Converse format could not detect video format from InputVideo.video_url extension"
+                "Converse format could not detect video format from InputVideo.url extension"
             end
 
-            {"video" => {"format" => format, "source" => {"s3Location" => {"uri" => content.video_url}}}}
+            {"video" => {"format" => format, "source" => {"s3Location" => {"uri" => content.url}}}}
           end
 
           def serialize_tool_result(item, ctx)

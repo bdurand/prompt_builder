@@ -52,7 +52,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
         role: "user",
         content: [
           PromptBuilder::Content::InputText.new(text: "Read this"),
-          PromptBuilder::Content::InputFile.new(file_data: "AAAA", media_type: "application/pdf")
+          PromptBuilder::Content::InputFile.new(url: "data:application/pdf;base64,AAAA", media_type: "application/pdf")
         ]
       ))
 
@@ -66,7 +66,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
         session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
         session.add_item(PromptBuilder::Items::Message.new(
           role: "user",
-          content: [PromptBuilder::Content::InputFile.new(file_data: "AA", filename: "report.pdf")]
+          content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,AA", filename: "report.pdf")]
         ))
         described_class.request_payload(session)
       end
@@ -291,8 +291,8 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
         call_id: "tooluse_1",
         output: [
-          PromptBuilder::Content::InputFile.new(file_data: "pdf", filename: "report.pdf"),
-          PromptBuilder::Content::InputVideo.new(video_url: "s3://bucket/output.mp4")
+          PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,pdf", filename: "report.pdf"),
+          PromptBuilder::Content::InputVideo.new(url: "s3://bucket/output.mp4")
         ]
       ))
 
@@ -358,7 +358,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc123")]
       ))
 
       h = described_class.request_payload(session)
@@ -372,7 +372,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(
-          image_url: "s3://my-bucket/images/photo.jpeg",
+          url: "s3://my-bucket/images/photo.jpeg",
           media_type: "image/jpeg"
         )]
       ))
@@ -388,7 +388,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(
-          image_url: "s3://my-bucket/images/photo.webp"
+          url: "s3://my-bucket/images/photo.webp"
         )]
       ))
 
@@ -400,7 +400,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "pdfbytes", filename: "report.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,pdfbytes", filename: "report.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -415,7 +415,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new(
-          file_url: "s3://my-bucket/docs/report.pdf",
+          url: "s3://my-bucket/docs/report.pdf",
           filename: "report.pdf"
         )]
       ))
@@ -431,7 +431,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "x", filename: "my_report.v2.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,x", filename: "my_report.v2.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -459,11 +459,11 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(h["messages"][0]["role"]).to eq("user")
     end
 
-    it "detects document format and name from file_url extension when no filename is set" do
+    it "detects document format and name from url extension when no filename is set" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_url: "s3://my-bucket/data.csv")]
+        content: [PromptBuilder::Content::InputFile.new(url: "s3://my-bucket/data.csv")]
       ))
 
       h = described_class.request_payload(session)
@@ -472,13 +472,13 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(document["name"]).to eq("data")
     end
 
-    it "derives distinct document names from file_url basenames for multiple unnamed documents" do
+    it "derives distinct document names from url basenames for multiple unnamed documents" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [
-          PromptBuilder::Content::InputFile.new(file_url: "s3://bucket/q1.pdf"),
-          PromptBuilder::Content::InputFile.new(file_url: "s3://bucket/q2.pdf")
+          PromptBuilder::Content::InputFile.new(url: "s3://bucket/q1.pdf"),
+          PromptBuilder::Content::InputFile.new(url: "s3://bucket/q2.pdf")
         ]
       ))
 
@@ -491,7 +491,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputVideo.new(video_url: "s3://my-bucket/videos/clip.mp4")]
+        content: [PromptBuilder::Content::InputVideo.new(url: "s3://my-bucket/videos/clip.mp4")]
       ))
 
       h = described_class.request_payload(session)
@@ -658,7 +658,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
 
     it "omits non-text system and developer content" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
-      session.system([PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc")])
+      session.system([PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc")])
       session.user("Hi")
 
       h = described_class.request_payload(session)
@@ -687,7 +687,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/photo.png")]
+        content: [PromptBuilder::Content::InputImage.new(url: "https://example.com/photo.png")]
       ))
 
       expect {
@@ -699,7 +699,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:application/octet-stream;base64,abc123")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:application/octet-stream;base64,abc123")]
       ))
 
       expect {
@@ -711,7 +711,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc", detail: "high")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc", detail: "high")]
       ))
 
       h = described_class.request_payload(session)
@@ -724,7 +724,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc", file_id: "file_123")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc", file_id: "file_123")]
       ))
 
       h = described_class.request_payload(session)
@@ -736,7 +736,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/report.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "https://example.com/report.pdf")]
       ))
 
       expect {
@@ -748,7 +748,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "abc", filename: "report.pdf", file_id: "file_123")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,abc", filename: "report.pdf", file_id: "file_123")]
       ))
 
       h = described_class.request_payload(session)
@@ -762,7 +762,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/clip.mp4")]
+        content: [PromptBuilder::Content::InputVideo.new(url: "https://example.com/clip.mp4")]
       ))
 
       h = described_class.request_payload(session)
@@ -804,7 +804,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc")]
       ))
 
       h = described_class.request_payload(session)
@@ -816,7 +816,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "pdf", filename: "report.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,pdf", filename: "report.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -828,7 +828,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
-        content: [PromptBuilder::Content::InputVideo.new(video_url: "s3://bucket/video.mp4")]
+        content: [PromptBuilder::Content::InputVideo.new(url: "s3://bucket/video.mp4")]
       ))
 
       h = described_class.request_payload(session)

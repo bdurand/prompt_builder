@@ -4,19 +4,19 @@ require "spec_helper"
 
 RSpec.describe PromptBuilder::Content::InputImage do
   describe "#to_h" do
-    it "serializes with image_url" do
-      content = described_class.new(image_url: "https://example.com/img.png")
+    it "serializes with url" do
+      content = described_class.new(url: "https://example.com/img.png")
       expect(content.to_h).to eq({
         "type" => "input_image",
-        "image_url" => "https://example.com/img.png"
+        "url" => "https://example.com/img.png"
       })
     end
 
     it "serializes with base64 data URL" do
-      content = described_class.new(image_url: "data:image/png;base64,abc123", detail: "high")
+      content = described_class.new(url: "data:image/png;base64,abc123", detail: "high")
       expect(content.to_h).to eq({
         "type" => "input_image",
-        "image_url" => "data:image/png;base64,abc123",
+        "url" => "data:image/png;base64,abc123",
         "detail" => "high"
       })
     end
@@ -37,14 +37,14 @@ RSpec.describe PromptBuilder::Content::InputImage do
   end
 
   describe ".from_h" do
-    it "deserializes from a hash" do
+    it "deserializes from a hash with url" do
       content = described_class.from_h({
         "type" => "input_image",
-        "image_url" => "https://example.com/img.png",
+        "url" => "https://example.com/img.png",
         "detail" => "auto",
         "file_id" => "file-abc"
       })
-      expect(content.image_url).to eq("https://example.com/img.png")
+      expect(content.url).to eq("https://example.com/img.png")
       expect(content.detail).to eq("auto")
       expect(content.extra).to eq({"file_id" => "file-abc"})
     end
@@ -52,7 +52,7 @@ RSpec.describe PromptBuilder::Content::InputImage do
 
   describe "round-trip" do
     it "round-trips through to_h and from_h" do
-      original = described_class.new(image_url: "https://example.com/img.png")
+      original = described_class.new(url: "https://example.com/img.png")
       restored = described_class.from_h(original.to_h)
       expect(restored.to_h).to eq(original.to_h)
     end
@@ -62,9 +62,27 @@ RSpec.describe PromptBuilder::Content::InputImage do
     it "dispatches from Content::Base.from_h" do
       content = PromptBuilder::Content::Base.from_h({
         "type" => "input_image",
-        "image_url" => "https://example.com/img.png"
+        "url" => "https://example.com/img.png"
       })
       expect(content).to be_a(described_class)
+    end
+  end
+
+  describe "#data" do
+    it "returns decoded binary data from a data URL" do
+      content = described_class.new(data: "\x89PNG\r\n".b, media_type: "image/png")
+      expect(content.data).to eq("\x89PNG\r\n".b)
+    end
+
+    it "returns nil for a non-data URL" do
+      content = described_class.new(url: "https://example.com/img.png")
+      expect(content.data).to be_nil
+    end
+
+    it "sets a base64 data URL from raw binary" do
+      content = described_class.new(data: "imagedata", media_type: "image/jpeg")
+      expect(content.url).to start_with("data:image/jpeg;base64,")
+      expect(content.data).to eq("imagedata")
     end
   end
 end

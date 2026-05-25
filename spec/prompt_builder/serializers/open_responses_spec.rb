@@ -20,11 +20,11 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(described_class.request_payload(session)).to eq(session.to_h)
     end
 
-    it "passes through InputImage with image_url unchanged" do
+    it "passes through InputImage with url unchanged" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
+        content: [PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png")]
       ))
 
       payload = described_class.request_payload(session)
@@ -40,7 +40,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc123")]
       ))
 
       payload = described_class.request_payload(session)
@@ -50,11 +50,11 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(content["image_url"]).to eq("data:image/png;base64,abc123")
     end
 
-    it "normalizes blank image_url when file_id is present" do
+    it "normalizes blank url when file_id is present" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "  ", file_id: "file_abc")]
+        content: [PromptBuilder::Content::InputImage.new(url: "  ", file_id: "file_abc")]
       ))
 
       payload = described_class.request_payload(session)
@@ -65,11 +65,11 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(content).not_to have_key("image_url")
     end
 
-    it "raises when InputImage includes both image_url and file_id" do
+    it "raises when InputImage includes both url and file_id" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png", file_id: "file_abc")]
+        content: [PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png", file_id: "file_abc")]
       ))
 
       expect {
@@ -77,7 +77,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       }.to raise_error(PromptBuilder::InvalidItemError, /exactly one/)
     end
 
-    it "raises when InputImage includes neither image_url nor file_id" do
+    it "raises when InputImage includes neither url nor file_id" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
@@ -94,7 +94,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(
-          image_url: "https://example.com/img.png",
+          url: "https://example.com/img.png",
           extra: {"some_key" => "value"}
         )]
       ))
@@ -111,7 +111,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
         call_id: "c1",
         output: [PromptBuilder::Content::InputImage.new(
-          image_url: "data:image/png;base64,abc",
+          url: "data:image/png;base64,abc",
           extra: {"some_key" => "val"}
         )]
       ))
@@ -307,7 +307,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/clip.mp4")]
+        content: [PromptBuilder::Content::InputVideo.new(url: "https://example.com/clip.mp4")]
       ))
 
       payload = described_class.request_payload(session)
@@ -392,10 +392,10 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       session.developer("Use metric units.")
       session.user([
         PromptBuilder::Content::InputText.new(text: "Describe these inputs."),
-        PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png", detail: "high"),
+        PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png", detail: "high"),
         PromptBuilder::Content::InputImage.new(extra: {"file_id" => "file_abc"}),
-        PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,aGVsbG8="),
-        PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf", filename: "doc.pdf"),
+        PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,aGVsbG8="),
+        PromptBuilder::Content::InputFile.new(url: "https://example.com/doc.pdf", filename: "doc.pdf"),
         PromptBuilder::Content::InputFile.new(extra: {"file_id" => "file_xyz"})
       ])
 
@@ -424,9 +424,9 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
         status: "completed",
         output: [
           PromptBuilder::Content::InputText.new(text: "Sunny, 22C"),
-          PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,aW1n"),
-          PromptBuilder::Content::InputFile.new(file_url: "https://example.com/forecast.pdf"),
-          PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/clip.mp4")
+          PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,aW1n"),
+          PromptBuilder::Content::InputFile.new(url: "https://example.com/forecast.pdf"),
+          PromptBuilder::Content::InputVideo.new(url: "https://example.com/clip.mp4")
         ]
       ))
 

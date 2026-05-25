@@ -349,8 +349,8 @@ module PromptBuilder
 
               file_id = content.extra && content.extra["file_id"]
 
-              if content.image_url
-                parsed = PromptBuilder.parse_data_url(content.image_url)
+              if content.url
+                parsed = PromptBuilder.parse_data_url(content.url)
                 if parsed
                   {
                     "type" => "image",
@@ -363,7 +363,7 @@ module PromptBuilder
                 else
                   {
                     "type" => "image",
-                    "source" => {"type" => "url", "url" => content.image_url}
+                    "source" => {"type" => "url", "url" => content.url}
                   }
                 end
               elsif file_id
@@ -373,7 +373,7 @@ module PromptBuilder
                 }
               else
                 raise UnsupportedFormatError,
-                  "Messages format requires InputImage.image_url or file_id in extra"
+                  "Messages format requires InputImage.url or file_id in extra"
               end
             when Content::InputFile
               # Assistant file content is not supported; omit it.
@@ -382,19 +382,20 @@ module PromptBuilder
               file_id = content.extra && content.extra["file_id"]
               media_type = content.extra && content.extra["media_type"]
 
-              if content.file_url
-                document = {
-                  "type" => "document",
-                  "source" => {"type" => "url", "url" => content.file_url}
-                }
-              elsif content.file_data
+              parsed = PromptBuilder.parse_data_url(content.url)
+              if parsed
                 document = {
                   "type" => "document",
                   "source" => {
                     "type" => "base64",
-                    "media_type" => media_type || "application/pdf",
-                    "data" => content.file_data
+                    "media_type" => media_type || parsed[0],
+                    "data" => parsed[1]
                   }
+                }
+              elsif content.url
+                document = {
+                  "type" => "document",
+                  "source" => {"type" => "url", "url" => content.url}
                 }
               elsif file_id
                 document = {
@@ -403,7 +404,7 @@ module PromptBuilder
                 }
               else
                 raise UnsupportedFormatError,
-                  "Messages format requires InputFile.file_url, InputFile.file_data, or file_id in extra"
+                  "Messages format requires InputFile.url or file_id in extra"
               end
 
               document["title"] = content.filename if content.filename

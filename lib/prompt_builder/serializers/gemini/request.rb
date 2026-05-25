@@ -320,13 +320,13 @@ module PromptBuilder
               # Assistant video content is not supported; omit it.
               return nil if role == "model"
 
-              unless content.video_url
+              unless content.url
                 raise UnsupportedFormatError,
-                  "Gemini format requires InputVideo.video_url"
+                  "Gemini format requires InputVideo.url"
               end
 
-              mime = video_mime_type(content.video_url)
-              {"fileData" => {"mimeType" => mime, "fileUri" => content.video_url}}
+              mime = video_mime_type(content.url)
+              {"fileData" => {"mimeType" => mime, "fileUri" => content.url}}
             when Content::RefusalContent
               # Filtered out before reaching here; defensive no-op.
               nil
@@ -344,17 +344,17 @@ module PromptBuilder
               return {"fileData" => {"mimeType" => media_type || "image/jpeg", "fileUri" => file_id}}
             end
 
-            if content.image_url
-              parsed = PromptBuilder.parse_data_url(content.image_url)
+            if content.url
+              parsed = PromptBuilder.parse_data_url(content.url)
               if parsed
                 return {"inlineData" => {"mimeType" => parsed[0], "data" => parsed[1]}}
               end
 
-              return {"fileData" => {"mimeType" => media_type || "image/jpeg", "fileUri" => content.image_url}}
+              return {"fileData" => {"mimeType" => media_type || "image/jpeg", "fileUri" => content.url}}
             end
 
             raise UnsupportedFormatError,
-              "Gemini format requires InputImage.image_url or a file_id in extra"
+              "Gemini format requires InputImage.url or a file_id in extra"
           end
 
           def serialize_file(content)
@@ -371,34 +371,35 @@ module PromptBuilder
               return {"fileData" => {"mimeType" => mime, "fileUri" => file_id}}
             end
 
-            if content.file_url
+            if content.url
+              parsed = PromptBuilder.parse_data_url(content.url)
+              if parsed
+                mime = media_type || file_mime_type(content)
+                if mime.nil? && parsed[0] == "application/octet-stream"
+                  raise UnsupportedFormatError,
+                    "Gemini format requires media_type in extra or a recognized filename extension for inline data"
+                end
+                mime ||= parsed[0]
+                return {"inlineData" => {"mimeType" => mime, "data" => parsed[1]}}
+              end
+
               mime = media_type || file_mime_type(content)
               unless mime
                 raise UnsupportedFormatError,
                   "Gemini format requires media_type in extra or a recognized filename extension for file URLs"
               end
 
-              return {"fileData" => {"mimeType" => mime, "fileUri" => content.file_url}}
-            end
-
-            if content.file_data
-              mime = media_type || file_mime_type(content)
-              unless mime
-                raise UnsupportedFormatError,
-                  "Gemini format requires media_type in extra or a recognized filename extension for base64 file content"
-              end
-
-              return {"inlineData" => {"mimeType" => mime, "data" => content.file_data}}
+              return {"fileData" => {"mimeType" => mime, "fileUri" => content.url}}
             end
 
             raise UnsupportedFormatError,
-              "Gemini format requires InputFile.file_url, InputFile.file_data, or file_id in extra"
+              "Gemini format requires InputFile.url or file_id in extra"
           end
 
 
 
           def file_mime_type(content)
-            [content.filename, content.file_url].each do |path|
+            [content.filename, content.url].each do |path|
               next unless path
 
               ext = File.extname(path).delete_prefix(".").downcase

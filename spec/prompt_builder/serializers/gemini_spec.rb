@@ -366,7 +366,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "gs://bucket/img.png", media_type: "image/png")]
+        content: [PromptBuilder::Content::InputImage.new(url: "gs://bucket/img.png", media_type: "image/png")]
       ))
 
       h = described_class.request_payload(session)
@@ -379,7 +379,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
+        content: [PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png")]
       ))
 
       h = described_class.request_payload(session)
@@ -405,7 +405,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc123")]
       ))
 
       h = described_class.request_payload(session)
@@ -423,14 +423,14 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputImage\.image_url or a file_id in extra/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputImage\.url or a file_id in extra/)
     end
 
     it "converts InputImage with data URL to inlineData" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc123")]
       ))
 
       h = described_class.request_payload(session)
@@ -443,7 +443,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_url: "gs://bucket/file.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "gs://bucket/file.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -456,7 +456,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/file.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "https://example.com/file.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -469,7 +469,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "abc123", media_type: "application/pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/pdf;base64,abc123", media_type: "application/pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -482,7 +482,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "abc123", filename: "report.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,abc123", filename: "report.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -494,7 +494,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "abc123", filename: "clip.mp3")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,abc123", filename: "clip.mp3")]
       ))
 
       h = described_class.request_payload(session)
@@ -506,7 +506,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "abc123")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,abc123")]
       ))
 
       expect {
@@ -543,7 +543,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_url: "gs://bucket/file")]
+        content: [PromptBuilder::Content::InputFile.new(url: "gs://bucket/file")]
       ))
 
       expect {
@@ -555,7 +555,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputVideo.new(video_url: "gs://my-bucket/video.mp4")]
+        content: [PromptBuilder::Content::InputVideo.new(url: "gs://my-bucket/video.mp4")]
       ))
 
       h = described_class.request_payload(session)
@@ -568,7 +568,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/video.mp4")]
+        content: [PromptBuilder::Content::InputVideo.new(url: "https://example.com/video.mp4")]
       ))
 
       h = described_class.request_payload(session)
@@ -586,7 +586,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputVideo.video_url/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputVideo.url/)
     end
 
     it "drops RefusalContent silently so a parsed refusal can stay in session history" do
@@ -608,7 +608,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
+        content: [PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png")]
       ))
 
       h = described_class.request_payload(session)
@@ -793,7 +793,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
-        content: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "https://example.com/doc.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -805,7 +805,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
-        content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/video.mp4")]
+        content: [PromptBuilder::Content::InputVideo.new(url: "https://example.com/video.mp4")]
       ))
 
       h = described_class.request_payload(session)
@@ -837,7 +837,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
         call_id: "call_1",
         output: [PromptBuilder::Content::InputImage.new(
-          image_url: "gs://bucket/img.png", extra: {"media_type" => "image/png"}
+          url: "gs://bucket/img.png", extra: {"media_type" => "image/png"}
         )]
       ))
 
@@ -986,7 +986,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputFile\.file_url, InputFile\.file_data, or file_id in extra/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputFile\.url or file_id in extra/)
     end
 
     it "silently skips Compaction items" do

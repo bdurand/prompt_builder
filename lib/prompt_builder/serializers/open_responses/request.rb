@@ -14,6 +14,7 @@ module PromptBuilder
             payload = session.to_h
             payload.delete("extra")
             strip_extra(payload)
+            normalize_content_urls!(payload)
             strip_non_replayable_reasoning!(payload)
             strip_output_only_fields!(payload)
             normalize_and_validate_input_images!(payload)
@@ -45,6 +46,54 @@ module PromptBuilder
 
             tools = payload["tools"]
             strip_extra_from_blocks!(tools) if tools.is_a?(Array)
+          end
+
+          # Convert canonical "url" keys back to Open Responses API keys:
+          # input_image "url" -> "image_url"
+          # input_file "url" -> "file_url"/"file_data"
+          # input_video "url" -> "video_url"
+          def normalize_content_urls!(payload)
+            input = payload["input"]
+            return unless input.is_a?(Array)
+
+            input.each do |item|
+              next unless item.is_a?(Hash)
+
+              if item["type"] == "function_call_output" && item["output"].is_a?(Array)
+                normalize_url_keys_in_blocks!(item["output"])
+                next
+              end
+
+              content = item["content"]
+              normalize_url_keys_in_blocks!(content) if content.is_a?(Array)
+            end
+          end
+
+          def normalize_url_keys_in_blocks!(blocks)
+            blocks.each do |block|
+              next unless block.is_a?(Hash)
+
+              case block["type"]
+              when "input_image"
+                if block.key?("url")
+                  block["image_url"] = block.delete("url")
+                end
+              when "input_file"
+                if block.key?("url")
+                  url = block.delete("url")
+                  parsed = PromptBuilder.parse_data_url(url)
+                  if parsed
+                    block["file_data"] = parsed[1]
+                  else
+                    block["file_url"] = url
+                  end
+                end
+              when "input_video"
+                if block.key?("url")
+                  block["video_url"] = block.delete("url")
+                end
+              end
+            end
           end
 
           def normalize_and_validate_input_images!(payload)

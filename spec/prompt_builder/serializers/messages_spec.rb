@@ -74,7 +74,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       ))
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
         call_id: "toolu_1",
-        output: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf")]
+        output: [PromptBuilder::Content::InputFile.new(url: "https://example.com/doc.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -186,7 +186,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png", detail: "low")]
+        content: [PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png", detail: "low")]
       ))
 
       h = described_class.request_payload(session)
@@ -200,7 +200,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputImage.new(image_url: "data:image/png;base64,abc123")]
+        content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc123")]
       ))
 
       h = described_class.request_payload(session)
@@ -217,7 +217,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf")]
+        content: [PromptBuilder::Content::InputFile.new(url: "https://example.com/doc.pdf")]
       ))
 
       h = described_class.request_payload(session)
@@ -226,11 +226,11 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(content["source"]).to eq({"type" => "url", "url" => "https://example.com/doc.pdf"})
     end
 
-    it "converts InputFile with base64 data and defaults media_type to application/pdf" do
+    it "converts InputFile with base64 data" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "abc123")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,abc123")]
       ))
 
       h = described_class.request_payload(session)
@@ -238,7 +238,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(content["type"]).to eq("document")
       expect(content["source"]).to eq({
         "type" => "base64",
-        "media_type" => "application/pdf",
+        "media_type" => "application/octet-stream",
         "data" => "abc123"
       })
     end
@@ -278,7 +278,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /image_url.*or file_id in extra/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /url.*or file_id in extra/)
     end
 
     it "raises with a clear message when InputFile has no usable source" do
@@ -290,7 +290,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
       expect {
         described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_url, InputFile\.file_data, or file_id in extra/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /InputFile\.url or file_id in extra/)
     end
 
     it "marks tool_result as is_error when FunctionCallOutput.status is failed" do
@@ -326,7 +326,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputFile.new(file_data: "abc123", media_type: "text/plain")]
+        content: [PromptBuilder::Content::InputFile.new(url: "data:text/plain;base64,abc123", media_type: "text/plain")]
       ))
 
       h = described_class.request_payload(session)
@@ -746,7 +746,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
-        content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/video.mp4")]
+        content: [PromptBuilder::Content::InputVideo.new(url: "https://example.com/video.mp4")]
       ))
 
       h = described_class.request_payload(session)
