@@ -25,13 +25,6 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["messages"][1]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
     end
 
-    it "raises for server state mode sessions" do
-      session = PromptBuilder::Session.new(previous_response_id: "resp_1")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::InvalidStateError)
-    end
-
     it "converts tool definitions" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.register_tool(

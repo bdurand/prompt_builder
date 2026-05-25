@@ -106,6 +106,9 @@ module PromptBuilder
     # @return [Array<Items::Base>] all conversation items
     attr_reader :items
 
+    # @return [Integer] the index in +items+ marking the boundary after the last response
+    attr_reader :response_boundary_index
+
     # @return [Hash, nil] provider-specific extra data for serializers.
     #   Recognized keys vary by target format. Unrecognized keys are silently
     #   ignored by each serializer.
@@ -327,13 +330,8 @@ module PromptBuilder
       h["model"] = @model if @model
       h["instructions"] = @instructions if @instructions
 
-      if local_state?
-        h["input"] = @items.map(&:to_h) unless @items.empty?
-      else
-        h["previous_response_id"] = @previous_response_id
-        new_items = @items[@response_boundary_index..]
-        h["input"] = new_items.map(&:to_h) if new_items && !new_items.empty?
-      end
+      h["input"] = @items.map(&:to_h) unless @items.empty?
+      h["previous_response_id"] = @previous_response_id if @previous_response_id
 
       h["tools"] = tool_definitions.map(&:to_h) unless @tool_definitions.empty?
 

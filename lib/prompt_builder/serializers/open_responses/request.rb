@@ -12,6 +12,7 @@ module PromptBuilder
           # @return [Hash] the serialized request payload
           def request_payload(session)
             payload = session.to_h
+            apply_server_state!(payload, session)
             payload.delete("extra")
             strip_extra(payload)
             normalize_content_urls!(payload)
@@ -23,6 +24,17 @@ module PromptBuilder
           end
 
           private
+
+          # When the session is in server-state mode, replace the full input
+          # array with only items added after the last response boundary and
+          # include previous_response_id for the API to resolve history.
+          def apply_server_state!(payload, session)
+            return if session.local_state?
+
+            payload.delete("input")
+            new_items = session.items[session.response_boundary_index..]
+            payload["input"] = new_items.map(&:to_h) if new_items && !new_items.empty?
+          end
 
           # Walk the payload and remove any "extra" keys from items, content
           # blocks, and tool definitions since they are not part of the Open

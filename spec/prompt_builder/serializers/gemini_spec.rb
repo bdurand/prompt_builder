@@ -25,13 +25,6 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h["contents"][0]["parts"]).to eq([{"text" => "Hello"}])
     end
 
-    it "raises for server state mode sessions" do
-      session = PromptBuilder::Session.new(previous_response_id: "resp_1")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::InvalidStateError)
-    end
-
     it "raises when model is missing" do
       session = PromptBuilder::Session.new
       session.user("Hello")

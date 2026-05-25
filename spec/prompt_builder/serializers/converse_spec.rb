@@ -24,13 +24,6 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(h["messages"][0]["content"]).to eq([{"text" => "Hello"}])
     end
 
-    it "raises for server state mode sessions" do
-      session = PromptBuilder::Session.new(previous_response_id: "resp_1")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::InvalidStateError)
-    end
-
     it "raises when there are no user/assistant messages" do
       session = PromptBuilder::Session.new(model: "amazon.nova-lite-v1:0", instructions: "Be helpful")
       expect {

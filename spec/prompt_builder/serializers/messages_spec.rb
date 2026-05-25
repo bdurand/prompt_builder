@@ -33,13 +33,6 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["max_tokens"]).to eq(4096)
     end
 
-    it "raises for server state mode sessions" do
-      session = PromptBuilder::Session.new(previous_response_id: "resp_1")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::InvalidStateError)
-    end
-
     it "raises when there are no user/assistant messages" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", instructions: "Be helpful")
       expect {

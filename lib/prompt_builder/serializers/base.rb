@@ -10,12 +10,7 @@ module PromptBuilder
         #
         # @param session [Session] the session to export
         # @return [Hash] the serialized request payload
-        # @raise [InvalidStateError] if the session is not in local state mode
         def request_payload(session)
-          unless session.local_state?
-            raise InvalidStateError, "Cannot export a session with previous_response_id to alternate formats"
-          end
-
           serialize_request(session)
         end
 

@@ -172,7 +172,7 @@ RSpec.describe PromptBuilder::Session do
   end
 
   describe "previous_response_id mode serialization" do
-    it "sends only new items since last response" do
+    it "to_h always includes full history" do
       s = described_class.new(previous_response_id: "resp_0")
       s.user("First")
 
@@ -181,6 +181,19 @@ RSpec.describe PromptBuilder::Session do
 
       s.user("Second")
       h = s.to_h
+      expect(h["previous_response_id"]).to eq("resp_1")
+      expect(h["input"].length).to eq(2)
+    end
+
+    it "OpenResponses serializer sends only new items since last response" do
+      s = described_class.new(previous_response_id: "resp_0")
+      s.user("First")
+
+      response = PromptBuilder::Response.new(id: "resp_1", status: "completed")
+      s.add_response(response)
+
+      s.user("Second")
+      h = s.request_payload(:open_responses)
       expect(h["previous_response_id"]).to eq("resp_1")
       expect(h["input"].length).to eq(1)
       expect(h["input"][0]["role"]).to eq("user")
