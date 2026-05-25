@@ -5,10 +5,12 @@ module PromptBuilder
     class ChatCompletion < Base
       # Response parser for the OpenAI Chat Completions API format.
       #
-      # Responses with multiple choices (+n > 1+) raise +UnsupportedFormatError+
-      # because the canonical response object has no candidate collection.
-      # Streaming chunks (+chat.completion.chunk+ deltas) are not parsed —
-      # this parser expects a fully assembled non-streaming response body.
+      # Responses with multiple choices (+n > 1+) parse only the first choice;
+      # the canonical response object has no candidate collection. Audio
+      # responses, legacy +function_call+ responses, non-function tool calls,
+      # and unknown content block types are silently skipped. Streaming chunks
+      # (+chat.completion.chunk+ deltas) raise +UnsupportedFormatError+ — this
+      # parser expects a fully assembled non-streaming response body.
       # Top-level +system_fingerprint+ is exposed through +extra+.
       class Response < Base
         class << self
@@ -25,13 +27,8 @@ module PromptBuilder
               logprobs_content = choice.dig("logprobs", "content") || []
               annotations = message["annotations"] || []
 
-              if message["audio"]
-                raise UnsupportedFormatError, "Chat Completions audio responses are not supported"
-              end
-
-              if message["function_call"]
-                raise UnsupportedFormatError, "Legacy Chat Completions function_call responses are not supported"
-              end
+              # Audio responses and legacy function_call responses are not
+              # modeled; they are silently ignored.
 
               if message["refusal"]
                 output << Items::Message.new(
@@ -53,8 +50,8 @@ module PromptBuilder
                   when "refusal"
                     acc << Content::RefusalContent.new(refusal: block["refusal"]) if block["refusal"]
                   else
-                    raise UnsupportedFormatError,
-                      "Unsupported Chat Completions response content block type: #{block["type"].inspect}"
+                    # Unsupported content block types are silently skipped.
+                    next
                   end
                 end
                 output << Items::Message.new(role: "assistant", content: contents) unless contents.empty?
@@ -70,10 +67,8 @@ module PromptBuilder
               end
 
               (message["tool_calls"] || []).each do |tool_call|
-                unless tool_call["type"] == "function"
-                  raise UnsupportedFormatError,
-                    "Unsupported Chat Completions tool call type: #{tool_call["type"].inspect}"
-                end
+                # Non-function tool call types are silently skipped.
+                next unless tool_call["type"] == "function"
 
                 function = tool_call["function"] || {}
                 output << Items::FunctionCall.new(
@@ -109,15 +104,14 @@ module PromptBuilder
           end
 
           def validate_response!(hash)
+            # A streaming chunk is not a complete response body, so it cannot be
+            # parsed into a canonical Response.
             if hash["object"] == "chat.completion.chunk"
               raise UnsupportedFormatError, "Chat Completions streaming chunks are not supported"
             end
-
-            choices = hash["choices"]
-            return unless choices.is_a?(Array) && choices.length > 1
-
-            raise UnsupportedFormatError,
-              "Chat Completions responses with multiple choices are not supported"
+            # Responses with multiple choices have no canonical multi-candidate
+            # representation; only the first choice is parsed (handled by the
+            # caller using choices[0]).
           end
 
           def provider_data(hash)

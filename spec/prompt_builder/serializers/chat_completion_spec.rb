@@ -69,24 +69,24 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(assistant_msg["tool_calls"][0]["function"]["name"]).to eq("get_weather")
     end
 
-    it "raises for Compaction items" do
+    it "silently skips Compaction items" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Compaction.new(encrypted_content: "abc"))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /Compaction/)
+      h = described_class.request_payload(session)
+      expect(h["messages"].length).to eq(1)
+      expect(h["messages"][0]["role"]).to eq("user")
     end
 
-    it "raises for ItemReference items" do
+    it "silently skips ItemReference items" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::ItemReference.new(id: "msg_1"))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /ItemReference/)
+      h = described_class.request_payload(session)
+      expect(h["messages"].length).to eq(1)
+      expect(h["messages"][0]["role"]).to eq("user")
     end
 
     it "emits empty string for nil FunctionCallOutput.output" do
@@ -105,16 +105,16 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(tool_msg["content"]).to eq("")
     end
 
-    it "raises for InputImage with file_id (Chat Completions has no image_file equivalent)" do
+    it "omits InputImage with file_id (Chat Completions has no image_file equivalent)" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(file_id: "file_abc123")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_id.*is not supported/)
+      h = described_class.request_payload(session)
+      expect(h["messages"]).to eq([{"role" => "user", "content" => [{"type" => "text", "text" => "Hi"}]}])
     end
 
     it "converts function call items to tool_calls on assistant messages" do
@@ -202,40 +202,40 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(block["file"]["file_data"]).to start_with("data:application/pdf;base64,")
     end
 
-    it "raises UnsupportedFormatError for InputFile.file_url" do
+    it "omits InputFile that has only a file_url (no Chat Completions representation)" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /file_url is not supported/)
+      h = described_class.request_payload(session)
+      expect(h["messages"]).to eq([{"role" => "user", "content" => [{"type" => "text", "text" => "Hi"}]}])
     end
 
-    it "raises UnsupportedFormatError for InputFile in non-user messages" do
+    it "omits InputFile in non-user messages" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::InputFile.new(file_id: "file-abc")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /assistant.*InputFile/)
+      h = described_class.request_payload(session)
+      expect(h["messages"]).to eq([{"role" => "user", "content" => [{"type" => "text", "text" => "Hi"}]}])
     end
 
-    it "raises UnsupportedFormatError for InputVideo content" do
+    it "omits InputVideo content" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/video.mp4")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /InputVideo/)
+      h = described_class.request_payload(session)
+      expect(h["messages"]).to eq([{"role" => "user", "content" => [{"type" => "text", "text" => "Hi"}]}])
     end
 
     it "drops RefusalContent silently so a parsed refusal can stay in session history" do
@@ -430,7 +430,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["messages"][0]).to include("role" => "assistant", "content" => nil)
     end
 
-    it "raises for unsupported session fields" do
+    it "omits unsupported session fields" do
       session = PromptBuilder::Session.new(
         model: "gpt-4o",
         include: ["reasoning.encrypted_content"],
@@ -440,9 +440,11 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /include/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("include")
+      expect(h).not_to have_key("background")
+      expect(h).not_to have_key("max_tool_calls")
+      expect(h).not_to have_key("truncation")
     end
 
     it "passes through prompt_cache_key" do
@@ -490,7 +492,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["verbosity"]).to eq("high")
     end
 
-    it "raises when text config includes unsupported keys" do
+    it "omits unsupported text config keys while mapping the supported ones" do
       session = PromptBuilder::Session.new(
         model: "gpt-4o",
         text: {
@@ -500,36 +502,35 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.stop/)
+      h = described_class.request_payload(session)
+      expect(h["response_format"]).to eq({"type" => "json_object"})
+      expect(h).not_to have_key("stop")
     end
 
-    it "raises when reasoning includes unsupported keys" do
+    it "omits unsupported reasoning keys while mapping effort" do
       session = PromptBuilder::Session.new(
         model: "gpt-4o",
         reasoning: {"effort" => "high", "summary" => "detailed"}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /reasoning\.summary/)
+      h = described_class.request_payload(session)
+      expect(h["reasoning_effort"]).to eq("high")
+      expect(h).not_to have_key("summary")
     end
 
-    it "raises when stream_options are set without stream" do
+    it "omits stream_options when stream is not set" do
       session = PromptBuilder::Session.new(
         model: "gpt-4o",
         stream_options: {"include_usage" => true}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /stream_options/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("stream_options")
     end
 
-    it "raises when stream_options include unsupported keys" do
+    it "omits unsupported stream_options keys" do
       session = PromptBuilder::Session.new(
         model: "gpt-4o",
         stream: true,
@@ -537,21 +538,20 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /stream_options\.foo/)
+      h = described_class.request_payload(session)
+      expect(h["stream_options"]).to eq({"include_usage" => true})
     end
 
-    it "raises for assistant image content" do
+    it "omits assistant image content" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /assistant.*InputImage/)
+      h = described_class.request_payload(session)
+      expect(h["messages"]).to eq([{"role" => "user", "content" => [{"type" => "text", "text" => "Hi"}]}])
     end
 
     it "drops OutputText annotations silently so a parsed citation can round-trip" do
@@ -582,19 +582,20 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(tool_msg["content"]).to eq([{"type" => "text", "text" => "72F sunny"}])
     end
 
-    it "raises for unsupported content type in array output" do
+    it "omits unsupported content types in array output" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
         call_id: "call_1",
         output: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /InputImage.*tool output/)
+      h = described_class.request_payload(session)
+      tool_msg = h["messages"].last
+      expect(tool_msg["role"]).to eq("tool")
+      expect(tool_msg["content"]).to eq([])
     end
 
-    it "raises for allowed_tools tool_choice" do
+    it "omits allowed_tools tool_choice" do
       session = PromptBuilder::Session.new(
         model: "gpt-4o",
         tool_choice: {"type" => "allowed_tools", "tools" => ["search"], "mode" => "auto"}
@@ -602,9 +603,9 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       session.register_tool("search") { |_| "ok" }
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool_choice.*Chat Completions/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("tool_choice")
+      expect(h["tools"].length).to eq(1)
     end
 
     it "passes through optional parameters" do
@@ -892,48 +893,53 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /streaming chunks/)
     end
 
-    it "raises for multiple choices" do
-      expect {
-        described_class.parse_response({
-          "choices" => [
-            {"message" => {"content" => "One"}, "finish_reason" => "stop"},
-            {"message" => {"content" => "Two"}, "finish_reason" => "stop"}
-          ]
-        })
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /multiple choices/)
+    it "parses only the first choice when multiple are present" do
+      response = described_class.parse_response({
+        "choices" => [
+          {"message" => {"content" => "One"}, "finish_reason" => "stop"},
+          {"message" => {"content" => "Two"}, "finish_reason" => "stop"}
+        ]
+      })
+
+      expect(response.output.length).to eq(1)
+      expect(response.output[0].content[0].text).to eq("One")
     end
 
-    it "raises for unsupported response content block types" do
-      expect {
-        described_class.parse_response({
-          "choices" => [{
-            "message" => {"content" => [{"type" => "input_audio", "input_audio" => {}}]},
-            "finish_reason" => "stop"
-          }]
-        })
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /content block type/)
+    it "skips unsupported response content block types" do
+      response = described_class.parse_response({
+        "choices" => [{
+          "message" => {"content" => [
+            {"type" => "input_audio", "input_audio" => {}},
+            {"type" => "text", "text" => "Hi"}
+          ]},
+          "finish_reason" => "stop"
+        }]
+      })
+
+      expect(response.output[0].content.length).to eq(1)
+      expect(response.output[0].content[0].text).to eq("Hi")
     end
 
-    it "raises for custom tool calls" do
-      expect {
-        described_class.parse_response({
-          "choices" => [{
-            "message" => {"content" => nil, "tool_calls" => [{"id" => "call_1", "type" => "custom"}]},
-            "finish_reason" => "tool_calls"
-          }]
-        })
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool call type/)
+    it "skips custom (non-function) tool calls" do
+      response = described_class.parse_response({
+        "choices" => [{
+          "message" => {"content" => nil, "tool_calls" => [{"id" => "call_1", "type" => "custom"}]},
+          "finish_reason" => "tool_calls"
+        }]
+      })
+
+      expect(response.output).to eq([])
     end
 
-    it "raises for audio responses" do
-      expect {
-        described_class.parse_response({
-          "choices" => [{
-            "message" => {"content" => nil, "audio" => {"id" => "audio_1"}},
-            "finish_reason" => "stop"
-          }]
-        })
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /audio responses/)
+    it "ignores audio responses" do
+      response = described_class.parse_response({
+        "choices" => [{
+          "message" => {"content" => nil, "audio" => {"id" => "audio_1"}},
+          "finish_reason" => "stop"
+        }]
+      })
+
+      expect(response.output).to eq([])
     end
 
     it "maps the legacy function_call finish_reason to completed" do

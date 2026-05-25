@@ -66,7 +66,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /budget_tokens when thinking is enabled/)
     end
 
-    it "raises when a tool_result includes a document content block" do
+    it "omits unsupported content blocks in a tool_result" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.user("Read this")
       session.add_item(PromptBuilder::Items::FunctionCall.new(
@@ -77,9 +77,9 @@ RSpec.describe PromptBuilder::Serializers::Messages do
         output: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool_result.content/)
+      h = described_class.request_payload(session)
+      tool_result = h["messages"][2]["content"][0]
+      expect(tool_result["content"]).to eq([{"type" => "text", "text" => ""}])
     end
 
     it "merges system and developer messages into top-level system" do
@@ -334,24 +334,24 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(content["source"]["media_type"]).to eq("text/plain")
     end
 
-    it "raises for Compaction items" do
+    it "silently skips Compaction items" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Compaction.new(encrypted_content: "abc"))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /Compaction/)
+      h = described_class.request_payload(session)
+      expect(h["messages"].length).to eq(1)
+      expect(h["messages"][0]["role"]).to eq("user")
     end
 
-    it "raises for ItemReference items" do
+    it "silently skips ItemReference items" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::ItemReference.new(id: "msg_1"))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /ItemReference/)
+      h = described_class.request_payload(session)
+      expect(h["messages"].length).to eq(1)
+      expect(h["messages"][0]["role"]).to eq("user")
     end
 
     it "converts tool_choice 'auto' to hash" do
@@ -458,40 +458,37 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       })
     end
 
-    it "raises for text.format json_object" do
+    it "omits text.format json_object (only json_schema is supported)" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_object"}}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /json_schema/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("output_config")
     end
 
-    it "raises for unsupported text.format keys" do
+    it "ignores unsupported text.format keys" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_schema", "schema" => {"type" => "object"}, "unknown_key" => "value"}}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format\.unknown_key/)
+      h = described_class.request_payload(session)
+      expect(h["output_config"]["format"]).to eq({"type" => "json_schema", "schema" => {"type" => "object"}})
     end
 
-    it "raises for unsupported nested text.format json_schema keys" do
+    it "ignores unsupported nested text.format json_schema keys" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_schema", "json_schema" => {"unknown_key" => "value", "schema" => {"type" => "object"}}}}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format\.json_schema\.unknown_key/)
+      h = described_class.request_payload(session)
+      expect(h["output_config"]["format"]).to eq({"type" => "json_schema", "schema" => {"type" => "object"}})
     end
 
     it "ignores name, strict, and description in flat text.format" do
@@ -530,16 +527,15 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h).not_to have_key("thinking")
     end
 
-    it "raises for unsupported reasoning.effort values" do
+    it "omits unsupported reasoning.effort values" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         reasoning: {"effort" => "tiny"}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /reasoning\.effort/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("output_config")
     end
 
     it "maps adaptive thinking without budget_tokens" do
@@ -568,19 +564,18 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       })
     end
 
-    it "raises when serializing a Reasoning item with only summary blocks" do
+    it "skips a Reasoning item with only summary blocks" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         summary: [{"type" => "summary_text", "text" => "Thinking about it..."}]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /summary blocks/)
+      h = described_class.request_payload(session)
+      expect(h["messages"].map { |m| m["role"] }).to eq(["user"])
     end
 
-    it "raises when a Reasoning item carries summary blocks even alongside content" do
+    it "drops summary blocks but serializes the signed thinking content alongside them" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Reasoning.new(
@@ -588,9 +583,9 @@ RSpec.describe PromptBuilder::Serializers::Messages do
         content: [{"type" => "thinking", "thinking" => "...", "signature" => "sig"}]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /summary blocks/)
+      h = described_class.request_payload(session)
+      assistant = h["messages"].find { |m| m["role"] == "assistant" }
+      expect(assistant["content"]).to eq([{"type" => "thinking", "thinking" => "...", "signature" => "sig"}])
     end
 
     it "drops unsigned thinking blocks rather than raising (cross-provider history)" do
@@ -640,7 +635,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       })
     end
 
-    it "raises for unsupported session fields" do
+    it "omits unsupported session fields" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         include: ["foo"],
@@ -649,33 +644,32 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /include/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("include")
+      expect(h).not_to have_key("presence_penalty")
+      expect(h).not_to have_key("stream_options")
     end
 
-    it "raises when metadata includes unsupported keys" do
+    it "omits unsupported metadata keys, keeping user_id" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         metadata: {"user_id" => "123", "team" => "ops"}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /metadata\.team/)
+      h = described_class.request_payload(session)
+      expect(h["metadata"]).to eq({"user_id" => "123"})
     end
 
-    it "raises when reasoning includes unsupported keys" do
+    it "omits unsupported reasoning keys while mapping the supported ones" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         reasoning: {"budget_tokens" => 2048, "summary" => "detailed"}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /reasoning\.summary/)
+      h = described_class.request_payload(session)
+      expect(h["thinking"]).to eq({"budget_tokens" => 2048, "type" => "enabled"})
     end
 
     it "raises when thinking is combined with forced tool_choice" do
@@ -692,16 +686,15 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /forced tool_choice/)
     end
 
-    it "raises when parallel_tool_calls are set without tools" do
+    it "omits tool_choice when parallel_tool_calls are set without tools" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         parallel_tool_calls: false
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /parallel_tool_calls/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("tool_choice")
     end
 
     it "converts array output on FunctionCallOutput to content blocks in tool_result" do
@@ -735,7 +728,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(tool_result["content"]).to eq([{"type" => "text", "text" => ""}])
     end
 
-    it "raises for allowed_tools tool_choice" do
+    it "omits allowed_tools tool_choice" do
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
         tool_choice: {"type" => "allowed_tools", "tools" => ["search"], "mode" => "auto"}
@@ -743,21 +736,21 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       session.register_tool("search") { |_| "ok" }
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool_choice\.type.*allowed_tools/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("tool_choice")
+      expect(h["tools"].length).to eq(1)
     end
 
-    it "raises for InputVideo content" do
+    it "omits InputVideo content" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/video.mp4")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /InputVideo/)
+      h = described_class.request_payload(session)
+      expect(h["messages"]).to eq([{"role" => "user", "content" => [{"type" => "text", "text" => "Hi"}]}])
     end
 
     it "drops RefusalContent silently so a parsed refusal can stay in session history" do
@@ -982,22 +975,23 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(response.incomplete_details).to eq({"stop_details" => stop_details})
     end
 
-    it "raises on unknown content block types" do
-      expect {
-        described_class.parse_response({
-          "stop_reason" => "end_turn",
-          "content" => [{"type" => "mystery_block"}]
-        })
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /mystery_block/)
+    it "skips unknown content block types" do
+      response = described_class.parse_response({
+        "stop_reason" => "end_turn",
+        "content" => [{"type" => "mystery_block"}, {"type" => "text", "text" => "Hi"}]
+      })
+
+      expect(response.output.length).to eq(1)
+      expect(response.output[0].content[0].text).to eq("Hi")
     end
 
-    it "raises with a built-in tool message for server_tool_use blocks" do
-      expect {
-        described_class.parse_response({
-          "stop_reason" => "end_turn",
-          "content" => [{"type" => "server_tool_use", "name" => "web_search", "input" => {}}]
-        })
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /built-in tools/)
+    it "skips built-in tool blocks such as server_tool_use" do
+      response = described_class.parse_response({
+        "stop_reason" => "end_turn",
+        "content" => [{"type" => "server_tool_use", "name" => "web_search", "input" => {}}]
+      })
+
+      expect(response.output).to eq([])
     end
 
     it "can be added to a session" do

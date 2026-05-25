@@ -7,7 +7,8 @@ module PromptBuilder
       #
       # === Unsupported Open Responses features
       #
-      # These session fields are not supported and raise +UnsupportedFormatError+:
+      # These session fields are not supported and are silently omitted from the
+      # serialized output:
       # - +frequency_penalty+ — not supported by the Messages API
       # - +include+ — response-field inclusion is an Open Responses-only concept
       # - +max_tool_calls+ — per-request tool-call caps are not supported
@@ -18,11 +19,9 @@ module PromptBuilder
       # - +top_logprobs+ — log probability output is not supported
       # - +truncation+ — server-side context truncation is not supported
       # - +background+ — background/async mode is not supported on the Messages endpoint
-      #
-      # Unsupported (raises +UnsupportedFormatError+):
       # - +text.verbosity+ — Anthropic Messages has no equivalent verbosity control
       #
-      # Partially supported session fields (unsupported keys raise +UnsupportedFormatError+):
+      # Partially supported session fields (unsupported keys/values are omitted):
       # - +metadata+ — only the +user_id+ key is forwarded; +safety_identifier+ is
       #   also mapped into +metadata.user_id+ automatically
       # - +service_tier+ — only +auto+ and +standard_only+ are accepted
@@ -31,21 +30,21 @@ module PromptBuilder
       #   +temperature+ must be unset and +top_p+ must be >= 0.95 when reasoning is enabled
       #
       # Input content restrictions:
-      # - +InputVideo+ content is not supported
+      # - +InputVideo+ content is not supported and is omitted
       # - +RefusalContent+ is dropped silently (a parsed refusal can stay in
       #   session history without breaking subsequent request_payload calls)
-      # - +InputImage+ content is only supported in user messages (not assistant)
+      # - +InputImage+ content is only supported in user messages (assistant images are omitted)
       # - +InputImage.detail+ is not part of the Anthropic schema and is dropped
       # - +InputImage.file_id+ is mapped to a +file+ source (Anthropic Files API beta)
-      # - +InputFile+ content is only supported in user messages (not assistant)
+      # - +InputFile+ content is only supported in user messages (assistant files are omitted)
       # - +InputFile+ is sent as a +document+ block; +media_type+ is forwarded when
       #   provided, otherwise +application/pdf+ is used for base64 sources
       # - +InputFile.file_id+ is mapped to a +file+ source (Anthropic Files API beta)
       # - Thinking blocks without a +signature+ are dropped silently (cross-provider
       #   reasoning history doesn't round-trip into Anthropic)
-      # - +Reasoning+ items with +summary+ blocks are not supported
-      # - Forced tool choice (+any+/+tool+ type) is incompatible with thinking enabled
-      # - +Compaction+ and +ItemReference+ items are not supported
+      # - +Reasoning+ items with +summary+ blocks have the summary dropped
+      # - Forced tool choice (+any+/+tool+ type) is incompatible with thinking enabled (raises)
+      # - +Compaction+ and +ItemReference+ items are silently skipped
       # - +FunctionCallOutput.status+ values +incomplete+, +failed+, and +error+
       #   are mapped to +tool_result.is_error: true+
       #
@@ -75,8 +74,6 @@ module PromptBuilder
         DEFAULT_MAX_TOKENS = 4096
         SUPPORTED_METADATA_KEYS = ["user_id"].freeze
         EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"].freeze
-        SUPPORTED_REASONING_KEYS = ["budget_tokens", "display", "effort", "type"].freeze
-        SUPPORTED_TEXT_KEYS = ["format"].freeze
         SUPPORTED_THINKING_TYPES = ["adaptive", "disabled", "enabled"].freeze
         SUPPORTED_TOOL_CHOICE_TYPES = ["any", "auto", "none", "tool"].freeze
 
@@ -84,8 +81,6 @@ module PromptBuilder
           private
 
           def serialize_request(session)
-            validate_supported_session_fields!(session)
-
             h = {}
             raise UnsupportedFormatError, "Messages format requires session.model" unless session.model
 
@@ -95,7 +90,8 @@ module PromptBuilder
             h["top_p"] = session.top_p if session.top_p
             effective_metadata = build_effective_metadata(session)
             h["metadata"] = effective_metadata if effective_metadata
-            h["service_tier"] = serialize_service_tier(session.service_tier) if session.service_tier
+            service_tier = serialize_service_tier(session.service_tier) if session.service_tier
+            h["service_tier"] = service_tier if service_tier
             h["stream"] = session.stream unless session.stream.nil?
 
             # Session extra: recognized keys for Messages API
@@ -142,25 +138,6 @@ module PromptBuilder
             h["cache_control"] = extra["cache_control"] if extra.key?("cache_control")
           end
 
-          def validate_supported_session_fields!(session)
-            unsupported_fields = []
-            unsupported_fields << "include" if session.include
-            unsupported_fields << "presence_penalty" if session.presence_penalty
-            unsupported_fields << "frequency_penalty" if session.frequency_penalty
-            unsupported_fields << "stream_options" if session.stream_options
-            unsupported_fields << "background" unless session.background.nil?
-            unsupported_fields << "max_tool_calls" if session.max_tool_calls
-            unsupported_fields << "prompt_cache_key" if session.prompt_cache_key
-            unsupported_fields << "prompt_cache_retention" if session.prompt_cache_retention
-            unsupported_fields << "truncation" if session.truncation
-            unsupported_fields << "store" unless session.store.nil?
-            unsupported_fields << "top_logprobs" if session.top_logprobs
-            return if unsupported_fields.empty?
-
-            raise UnsupportedFormatError,
-              "Messages format does not support session fields: #{unsupported_fields.join(", ")}"
-          end
-
           def build_effective_metadata(session)
             metadata = session.metadata&.dup || {}
 
@@ -178,31 +155,20 @@ module PromptBuilder
             serialize_metadata(metadata)
           end
 
+          # Only the user_id key is forwarded; other metadata keys are silently
+          # omitted since the Messages API does not support them.
           def serialize_metadata(metadata)
-            unsupported_keys = metadata.keys - SUPPORTED_METADATA_KEYS
-            unless unsupported_keys.empty?
-              raise UnsupportedFormatError,
-                "Messages format does not support metadata.#{unsupported_keys.first}"
-            end
-
-            metadata
+            supported = metadata.slice(*SUPPORTED_METADATA_KEYS)
+            supported.empty? ? nil : supported
           end
 
+          # Unsupported service_tier values are silently omitted.
           def serialize_service_tier(service_tier)
-            return service_tier if ["auto", "standard_only"].include?(service_tier)
-
-            raise UnsupportedFormatError,
-              "Messages format only supports service_tier values auto and standard_only"
+            service_tier if ["auto", "standard_only"].include?(service_tier)
           end
 
           def serialize_thinking(reasoning)
             return nil unless reasoning
-
-            unsupported_keys = reasoning.keys - SUPPORTED_REASONING_KEYS
-            unless unsupported_keys.empty?
-              raise UnsupportedFormatError,
-                "Messages format does not support reasoning.#{unsupported_keys.first}"
-            end
 
             thinking = {}
             thinking["budget_tokens"] = reasoning["budget_tokens"] if reasoning.key?("budget_tokens")
@@ -211,10 +177,8 @@ module PromptBuilder
 
             thinking["type"] = reasoning["type"] || "enabled"
 
-            unless SUPPORTED_THINKING_TYPES.include?(thinking["type"])
-              raise UnsupportedFormatError,
-                "Messages format does not support reasoning.type #{thinking["type"].inspect}"
-            end
+            # Unsupported reasoning.type values are silently omitted.
+            return nil unless SUPPORTED_THINKING_TYPES.include?(thinking["type"])
 
             if thinking["type"] == "enabled" && !thinking.key?("budget_tokens")
               raise UnsupportedFormatError,
@@ -243,21 +207,12 @@ module PromptBuilder
 
             if session.reasoning && session.reasoning["effort"]
               effort = session.reasoning["effort"]
-              unless EFFORT_LEVELS.include?(effort)
-                raise UnsupportedFormatError,
-                  "Messages format does not support reasoning.effort #{effort.inspect}"
-              end
-
-              output_config["effort"] = effort
+              # Unsupported effort levels are silently omitted.
+              output_config["effort"] = effort if EFFORT_LEVELS.include?(effort)
             end
 
             if session.text
-              unsupported_keys = session.text.keys - SUPPORTED_TEXT_KEYS
-              unless unsupported_keys.empty?
-                raise UnsupportedFormatError,
-                  "Messages format does not support text.#{unsupported_keys.first}"
-              end
-
+              # Unsupported text.* keys are silently omitted; only format is mapped.
               output_format = serialize_output_format(session.text["format"])
               output_config["format"] = output_format if output_format
             end
@@ -268,24 +223,9 @@ module PromptBuilder
           def serialize_output_format(format)
             return nil unless format
 
-            unless format.is_a?(Hash) && format["type"] == "json_schema"
-              raise UnsupportedFormatError,
-                "Messages format only supports text.format type \"json_schema\""
-            end
-
-            unsupported_keys = format.keys - ["json_schema", "schema", "type", "name", "strict", "description"]
-            unless unsupported_keys.empty?
-              raise UnsupportedFormatError,
-                "Messages format does not support text.format.#{unsupported_keys.first}"
-            end
-
-            if format["json_schema"].is_a?(Hash)
-              unsupported_json_schema_keys = format["json_schema"].keys - ["schema", "name", "strict", "description"]
-              unless unsupported_json_schema_keys.empty?
-                raise UnsupportedFormatError,
-                  "Messages format does not support text.format.json_schema.#{unsupported_json_schema_keys.first}"
-              end
-            end
+            # Only json_schema output is supported; other format types (and any
+            # unrecognized format/json_schema keys) are silently omitted.
+            return nil unless format.is_a?(Hash) && format["type"] == "json_schema"
 
             schema = format.dig("json_schema", "schema") || format["schema"]
             unless schema
@@ -349,7 +289,8 @@ module PromptBuilder
                 # to any provider in a request payload.
                 visible_content = item.content.reject { |c| c.is_a?(Content::RefusalContent) }
                 next if visible_content.empty?
-                content = visible_content.map { |message_content| serialize_content(message_content, role: role) }
+                content = visible_content.filter_map { |message_content| serialize_content(message_content, role: role) }
+                next if content.empty?
                 raw_messages << {"role" => role, "content" => content}
               when Items::FunctionCall
                 raw_messages << {
@@ -367,20 +308,15 @@ module PromptBuilder
                   "content" => [serialize_tool_result(item)]
                 }
               when Items::Reasoning
-                unless item.summary.empty?
-                  raise UnsupportedFormatError,
-                    "Messages format cannot serialize Reasoning summary blocks; " \
-                    "Anthropic requires signed thinking blocks (use a Reasoning item produced by the Messages API)"
-                end
-
+                # Reasoning summary blocks come from the Responses API and cannot be
+                # replayed as signed Anthropic thinking blocks; they are silently skipped.
                 content_blocks = item.content.map { |block| serialize_reasoning_block(block) }.compact
                 unless content_blocks.empty?
                   raw_messages << {"role" => "assistant", "content" => content_blocks}
                 end
-              when Items::Compaction
-                raise UnsupportedFormatError, "Messages format does not support Compaction items"
-              when Items::ItemReference
-                raise UnsupportedFormatError, "Messages format does not support ItemReference items"
+              when Items::Compaction, Items::ItemReference
+                # Compaction and ItemReference items are not supported; skip them.
+                next
               end
             end
 
@@ -408,10 +344,8 @@ module PromptBuilder
               text["citations"] = content.annotations unless content.annotations.empty?
               text
             when Content::InputImage
-              if role == "assistant"
-                raise UnsupportedFormatError,
-                  "Messages format does not support assistant #{content.class.name.split("::").last} content"
-              end
+              # Assistant image content is not supported; omit it.
+              return nil if role == "assistant"
 
               file_id = content.extra && content.extra["file_id"]
 
@@ -442,10 +376,8 @@ module PromptBuilder
                   "Messages format requires InputImage.image_url or file_id in extra"
               end
             when Content::InputFile
-              if role == "assistant"
-                raise UnsupportedFormatError,
-                  "Messages format does not support assistant #{content.class.name.split("::").last} content"
-              end
+              # Assistant file content is not supported; omit it.
+              return nil if role == "assistant"
 
               file_id = content.extra && content.extra["file_id"]
               media_type = content.extra && content.extra["media_type"]
@@ -481,12 +413,14 @@ module PromptBuilder
               end
               document
             when Content::InputVideo
-              raise UnsupportedFormatError, "Messages format does not support InputVideo content"
+              # InputVideo content is not supported; omit it.
+              nil
             when Content::RefusalContent
               # Filtered out before reaching here; treat as a defensive no-op.
               nil
             else
-              raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
+              # Unsupported content types are silently omitted.
+              nil
             end
           end
 
@@ -502,7 +436,7 @@ module PromptBuilder
               "tool_use_id" => item.call_id
             }
             content = if item.output.is_a?(Array)
-              item.output.map { |c| serialize_tool_result_content(c) }
+              item.output.filter_map { |c| serialize_tool_result_content(c) }
             elsif !item.output.nil?
               # String outputs are passed through directly per Anthropic's schema.
               item.output
@@ -525,9 +459,9 @@ module PromptBuilder
             when Content::InputImage
               serialize_content(content, role: "user")
             else
-              raise UnsupportedFormatError,
-                "#{content.class.name.split("::").last} is not supported in tool_result.content " \
-                "in Messages format; Anthropic only accepts text and image blocks here"
+              # Anthropic only accepts text and image blocks in tool_result.content;
+              # other content types are silently omitted.
+              nil
             end
           end
 
@@ -555,8 +489,8 @@ module PromptBuilder
                 "data" => block["data"]
               }
             else
-              raise UnsupportedFormatError,
-                "Messages format does not support reasoning block type #{block["type"].inspect}"
+              # Unsupported reasoning block types are silently omitted.
+              nil
             end
           end
 
@@ -591,10 +525,8 @@ module PromptBuilder
             if choice.nil?
               return nil if parallel_tool_calls.nil?
 
-              if tools.empty?
-                raise UnsupportedFormatError,
-                  "Messages format does not support parallel_tool_calls without tools"
-              end
+              # parallel_tool_calls cannot be expressed without tools; omit it.
+              return nil if tools.empty?
 
               return nil if parallel_tool_calls
 
@@ -605,11 +537,11 @@ module PromptBuilder
             end
 
             normalized_choice = normalize_tool_choice(choice)
+            # Unsupported tool_choice values are silently omitted.
+            return nil if normalized_choice.nil?
 
-            if tools.empty? && normalized_choice["type"] != "none"
-              raise UnsupportedFormatError,
-                "Messages format does not support tool_choice without tools"
-            end
+            # tool_choice cannot be expressed without tools; omit it.
+            return nil if tools.empty? && normalized_choice["type"] != "none"
 
             if thinking_enabled && ["any", "tool"].include?(normalized_choice["type"])
               raise UnsupportedFormatError,
@@ -637,20 +569,22 @@ module PromptBuilder
 
                 {"type" => "tool", "name" => name}
               else
-                validate_tool_choice_hash!(choice)
-                choice.dup
+                normalize_tool_choice_hash(choice)
               end
             else
-              raise UnsupportedFormatError,
-                "Messages format does not support tool_choice #{choice.inspect}"
+              # Unsupported tool_choice values are silently omitted.
+              nil
             end
           end
 
-          def validate_tool_choice_hash!(choice)
+          def normalize_tool_choice_hash(choice)
             type = choice["type"]
-            unless SUPPORTED_TOOL_CHOICE_TYPES.include?(type)
+            # Unsupported tool_choice.type values are silently omitted.
+            return nil unless SUPPORTED_TOOL_CHOICE_TYPES.include?(type)
+
+            if type == "tool" && !choice["name"]
               raise UnsupportedFormatError,
-                "Messages format does not support tool_choice.type #{type.inspect}"
+                "Messages format requires tool_choice.name when type is tool"
             end
 
             allowed_keys = case type
@@ -662,16 +596,8 @@ module PromptBuilder
               ["type"]
             end
 
-            unsupported_keys = choice.keys - allowed_keys
-            unless unsupported_keys.empty?
-              raise UnsupportedFormatError,
-                "Messages format does not support tool_choice.#{unsupported_keys.first}"
-            end
-
-            if type == "tool" && !choice["name"]
-              raise UnsupportedFormatError,
-                "Messages format requires tool_choice.name when type is tool"
-            end
+            # Unsupported keys are silently dropped.
+            choice.slice(*allowed_keys)
           end
 
           def apply_parallel_tool_calls(choice, parallel_tool_calls)

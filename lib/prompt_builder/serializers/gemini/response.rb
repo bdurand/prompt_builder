@@ -29,13 +29,14 @@ module PromptBuilder
       #
       # === Unsupported response shapes
       #
-      # The response parser raises +UnsupportedFormatError+ on +Part+ shapes
-      # that have no canonical Open Responses equivalent so that lossless
-      # round-tripping is preserved:
+      # The response parser silently skips +Part+ shapes that have no canonical
+      # Open Responses equivalent:
       # - +inlineData+ / +fileData+ parts (image/audio output blobs)
       # - +executableCode+ / +codeExecutionResult+ parts
       # - server-side +toolCall+ / +toolResponse+ parts
       # - +Part+s with no recognized content key
+      #
+      # When a response contains multiple candidates, only the first is parsed.
       class Response < Base
         FAILED_FINISH_REASONS = %w[
           SAFETY
@@ -65,12 +66,9 @@ module PromptBuilder
           def deserialize_response(hash)
             usage = build_usage(hash["usageMetadata"])
 
+            # Only the first candidate is parsed; additional candidates have no
+            # canonical multi-candidate representation and are silently dropped.
             candidates = hash["candidates"] || []
-            if candidates.length > 1
-              raise UnsupportedFormatError,
-                "Gemini format cannot parse multiple candidates into a single canonical Response"
-            end
-
             first_candidate = candidates[0]
 
             response_id = hash["responseId"]
@@ -201,25 +199,15 @@ module PromptBuilder
                   **(part["thoughtSignature"] ? {thought_signature: part["thoughtSignature"]} : {})
                 )
               else
-                raise UnsupportedFormatError,
-                  "Gemini format cannot parse response part #{describe_part(part)}; " \
-                  "no canonical Open Responses equivalent. Drop the part from the " \
-                  "raw response or extend the parser."
+                # Parts with no canonical Open Responses equivalent (inlineData,
+                # fileData, executableCode, etc.) are silently skipped.
+                next
               end
             end
 
             flush_text_contents!(output, text_contents)
             flush_reasoning_contents!(output, reasoning_contents)
             output
-          end
-
-          def describe_part(part)
-            recognized = part.keys.find do |k|
-              %w[inlineData fileData executableCode codeExecutionResult videoMetadata toolCall toolResponse].include?(k)
-            end
-            return recognized.inspect if recognized
-
-            "with keys #{part.keys.inspect}"
           end
 
           def flush_text_contents!(output, text_contents)

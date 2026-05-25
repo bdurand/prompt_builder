@@ -10,28 +10,6 @@ module PromptBuilder
         class << self
           private
 
-          # Anthropic content block types this gem understands and parses
-          # back into canonical items.
-          KNOWN_CONTENT_BLOCK_TYPES = %w[text tool_use thinking redacted_thinking].freeze
-          private_constant :KNOWN_CONTENT_BLOCK_TYPES
-
-          # Anthropic content block types produced by built-in tools that this
-          # gem does not model. Listed explicitly so the error message tells
-          # the user what they hit (rather than just "unknown type").
-          BUILT_IN_TOOL_BLOCK_TYPES = %w[
-            bash_code_execution_tool_result
-            code_execution_tool_result
-            container_upload
-            mcp_tool_result
-            mcp_tool_use
-            server_tool_use
-            tool_search_tool_result
-            web_fetch_tool_result
-            web_search_tool_result
-            search_result
-          ].freeze
-          private_constant :BUILT_IN_TOOL_BLOCK_TYPES
-
           def deserialize_response(hash)
             usage_hash = hash["usage"]
             usage = build_usage(usage_hash) if usage_hash
@@ -129,26 +107,15 @@ module PromptBuilder
                 flush_text_contents!(output, text_contents)
                 reasoning_contents << deserialize_reasoning_block(block)
               else
-                raise UnsupportedFormatError, unsupported_block_message(type)
+                # Unsupported content block types (e.g. built-in tool results)
+                # are silently skipped rather than raising.
+                next
               end
             end
 
             flush_text_contents!(output, text_contents)
             flush_reasoning_contents!(output, reasoning_contents)
             output
-          end
-
-          def unsupported_block_message(type)
-            if BUILT_IN_TOOL_BLOCK_TYPES.include?(type)
-              "Messages format cannot parse #{type.inspect} content blocks " \
-                "(produced by Anthropic built-in tools such as web search, code execution, " \
-                "MCP, computer use, or container uploads). These features are not modeled " \
-                "by this gem; remove the corresponding tool from the request or parse the " \
-                "response with a provider-specific parser."
-            else
-              "Messages format does not recognize content block type #{type.inspect}; " \
-                "known types are #{KNOWN_CONTENT_BLOCK_TYPES.join(", ")}"
-            end
           end
 
           def deserialize_reasoning_block(block)

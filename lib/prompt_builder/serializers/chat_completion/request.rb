@@ -7,31 +7,34 @@ module PromptBuilder
       #
       # === Unsupported Open Responses features
       #
-      # These session fields are not supported and raise +UnsupportedFormatError+:
+      # These session fields are not supported and are silently omitted from the
+      # serialized output:
       # - +background+ — Chat Completions has no background/async mode
       # - +include+ — response-field inclusion is an Open Responses-only concept
       # - +max_tool_calls+ — per-request tool-call caps are not supported
       # - +truncation+ — server-side context truncation is not supported
       #
-      # Partially supported session fields (unsupported keys raise +UnsupportedFormatError+):
+      # Partially supported session fields (unsupported keys are omitted):
       # - +text+ — only +format+ (mapped to +response_format+) and +verbosity+
       #   (mapped to top-level +verbosity+) are supported
       # - +reasoning+ — only the +effort+ key is mapped to +reasoning_effort+
-      # - +stream_options+ — only +include_usage+ and +include_obfuscation+ are supported
+      # - +stream_options+ — only +include_usage+ and +include_obfuscation+ are
+      #   supported, and only when +stream+ is set (otherwise it is omitted)
       #
       # Input content restrictions:
-      # - +InputVideo+ content is not supported in any message
-      # - +Reasoning+ items are not supported
+      # - +InputVideo+ content is not supported in any message (omitted)
+      # - +Reasoning+ items are not supported (skipped)
       # - +RefusalContent+ is dropped silently (a parsed Chat Completions
       #   refusal can stay in session history without breaking subsequent
       #   request_payload calls)
-      # - +InputImage+ content is only supported in user messages (not assistant/developer/system)
+      # - +InputImage+ content is only supported in user messages (assistant/developer/system images are omitted)
       # - +InputImage+ with +file_id+ in +extra+ is not supported (the +image_file+
-      #   content type is Assistants API only; use +image_url+ instead)
+      #   content type is Assistants API only); a +file_id+-only image is omitted
       # - +InputFile+ is mapped to a +file+ content block (Files API id via +extra+,
-      #   base64 +file_data+, or both with +filename+); +InputFile.file_url+ is not
-      #   supported because Chat Completions has no remote-URL form for files
-      # - Only text content is supported in tool (+FunctionCallOutput+) results
+      #   base64 +file_data+, or both with +filename+); a +file_url+-only +InputFile+
+      #   is omitted because Chat Completions has no remote-URL form for files
+      # - Only text content is supported in tool (+FunctionCallOutput+) results;
+      #   other content is omitted
       # - +OutputText.annotations+ are dropped silently on request serialization
       #   so a parsed response with citations can sit in session history without
       #   breaking subsequent +request_payload+ calls
@@ -51,17 +54,13 @@ module PromptBuilder
       # - +tool_choice+ +allowed_tools+ shape and custom (non-function) tool types
       class Request < Base
         SUPPORTED_MESSAGE_ROLES = %w[assistant developer system user].freeze
-        SUPPORTED_REASONING_KEYS = %w[effort].freeze
         SUPPORTED_STREAM_OPTION_KEYS = %w[include_obfuscation include_usage].freeze
-        SUPPORTED_TEXT_KEYS = %w[format verbosity].freeze
         SUPPORTED_TOOL_CHOICE_VALUES = %w[auto none required].freeze
 
         class << self
           private
 
           def serialize_request(session)
-            validate_session!(session)
-
             h = {}
             h["model"] = session.model if session.model
             h["messages"] = build_messages(session)
@@ -82,7 +81,12 @@ module PromptBuilder
             h["prompt_cache_key"] = session.prompt_cache_key if session.prompt_cache_key
             h["prompt_cache_retention"] = session.prompt_cache_retention if session.prompt_cache_retention
             h["stream"] = session.stream unless session.stream.nil?
-            h["stream_options"] = normalize_hash(session.stream_options) if session.stream_options
+            # stream_options is only valid alongside stream; otherwise it is omitted.
+            # Unsupported stream_options keys are dropped.
+            if session.stream_options && session.stream
+              stream_options = normalize_hash(session.stream_options).slice(*SUPPORTED_STREAM_OPTION_KEYS)
+              h["stream_options"] = stream_options unless stream_options.empty?
+            end
 
             if session.text
               text = normalize_hash(session.text)
@@ -99,7 +103,8 @@ module PromptBuilder
             h["tools"] = tools unless tools.empty?
 
             if session.tool_choice
-              h["tool_choice"] = serialize_tool_choice(session.tool_choice, tools.empty?)
+              tool_choice = serialize_tool_choice(session.tool_choice, tools.empty?)
+              h["tool_choice"] = tool_choice if tool_choice
             end
 
             # Session extra: recognized keys for Chat Completions API
@@ -117,24 +122,6 @@ module PromptBuilder
             h["web_search_options"] = extra["web_search_options"] if extra.key?("web_search_options")
             h["modalities"] = extra["modalities"] if extra.key?("modalities")
             h["audio"] = extra["audio"] if extra.key?("audio")
-          end
-
-          def validate_session!(session)
-            raise_unsupported_field!("include") if session.include
-            raise_unsupported_field!("background") unless session.background.nil?
-            raise_unsupported_field!("max_tool_calls") if session.max_tool_calls
-            raise_unsupported_field!("truncation") if session.truncation
-
-            validate_hash_keys!(session.text, SUPPORTED_TEXT_KEYS, "text") if session.text
-            validate_hash_keys!(session.reasoning, SUPPORTED_REASONING_KEYS, "reasoning") if session.reasoning
-
-            return unless session.stream_options
-
-            unless session.stream
-              raise UnsupportedFormatError, "stream_options requires stream: true in Chat Completions format"
-            end
-
-            validate_hash_keys!(session.stream_options, SUPPORTED_STREAM_OPTION_KEYS, "stream_options")
           end
 
           def build_messages(session)
@@ -165,14 +152,10 @@ module PromptBuilder
                   "tool_call_id" => item.call_id,
                   "content" => serialize_function_call_output_content(item.output)
                 }
-              when Items::Reasoning
-                # Reasoning items can be provided by the response but are not supported in the request,
-                # so ignore them rather than raising an error.
+              when Items::Reasoning, Items::Compaction, Items::ItemReference
+                # Reasoning, Compaction, and ItemReference items are not supported
+                # in the request, so ignore them rather than raising an error.
                 next
-              when Items::Compaction
-                raise UnsupportedFormatError, "Chat Completions format does not support Compaction items"
-              when Items::ItemReference
-                raise UnsupportedFormatError, "Chat Completions format does not support ItemReference items"
               end
             end
 
@@ -181,9 +164,8 @@ module PromptBuilder
           end
 
           def serialize_message(item)
-            unless SUPPORTED_MESSAGE_ROLES.include?(item.role)
-              raise UnsupportedFormatError, "Unsupported message role for Chat Completions format: #{item.role}"
-            end
+            # Messages with an unsupported role are silently skipped.
+            return nil unless SUPPORTED_MESSAGE_ROLES.include?(item.role)
 
             # RefusalContent can land in the session via a parsed Chat Completions
             # response; drop it silently so subsequent request_payload calls
@@ -194,9 +176,12 @@ module PromptBuilder
             # tool calls, flush_tool_calls! synthesizes a placeholder later.
             return nil if visible_content.empty?
 
+            content = visible_content.filter_map { |c| serialize_content(item.role, c) }
+            return nil if content.empty?
+
             {
               "role" => item.role,
-              "content" => visible_content.map { |c| serialize_content(item.role, c) }
+              "content" => content
             }
           end
 
@@ -205,26 +190,24 @@ module PromptBuilder
             when Content::InputText, Content::OutputText
               serialize_text_content(content)
             when Content::InputImage
-              unless role == "user"
-                raise UnsupportedFormatError,
-                  "#{role} messages do not support #{content.class.name.split("::").last} content in Chat Completions format"
-              end
+              # Image content is only supported in user messages; omit otherwise.
+              return nil unless role == "user"
 
               serialize_image_content(content)
             when Content::InputFile
-              unless role == "user"
-                raise UnsupportedFormatError,
-                  "#{role} messages do not support InputFile content in Chat Completions format"
-              end
+              # File content is only supported in user messages; omit otherwise.
+              return nil unless role == "user"
 
               serialize_file_content(content)
             when Content::InputVideo
-              raise UnsupportedFormatError, "InputVideo is not supported in Chat Completions format"
+              # InputVideo content is not supported; omit it.
+              nil
             when Content::RefusalContent
               # Filtered out in serialize_message; defensive no-op here.
               nil
             else
-              raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
+              # Unsupported content types are silently omitted.
+              nil
             end
           end
 
@@ -243,13 +226,12 @@ module PromptBuilder
             return "" if output.nil?
             return output unless output.is_a?(Array)
 
-            output.map do |content|
+            # Only text content is supported in tool output; other content types
+            # are silently omitted.
+            output.filter_map do |content|
               case content
               when Content::InputText, Content::OutputText
                 serialize_text_content(content)
-              else
-                raise UnsupportedFormatError,
-                  "#{content.class.name.split("::").last} is not supported in tool output in Chat Completions format"
               end
             end
           end
@@ -280,28 +262,20 @@ module PromptBuilder
             end
           end
 
+          # Unsupported tool_choice values (including a tool_choice that requires
+          # tools when none are present) are silently omitted by returning nil.
           def serialize_tool_choice(choice, tools_empty)
             case choice
             when String
-              unless SUPPORTED_TOOL_CHOICE_VALUES.include?(choice)
-                raise UnsupportedFormatError, "Unsupported tool_choice for Chat Completions format: #{choice.inspect}"
-              end
-
-              if tools_empty && choice != "none"
-                raise UnsupportedFormatError, "tool_choice requires at least one tool in Chat Completions format"
-              end
+              return nil unless SUPPORTED_TOOL_CHOICE_VALUES.include?(choice)
+              return nil if tools_empty && choice != "none"
 
               choice
             when Hash
               choice = normalize_hash(choice)
 
-              if choice["type"] != "function"
-                raise UnsupportedFormatError, "Unsupported tool_choice for Chat Completions format: #{choice.inspect}"
-              end
-
-              if tools_empty
-                raise UnsupportedFormatError, "tool_choice requires at least one tool in Chat Completions format"
-              end
+              return nil if choice["type"] != "function"
+              return nil if tools_empty
 
               name = choice["name"] || choice.dig("function", "name")
               unless name
@@ -309,8 +283,6 @@ module PromptBuilder
               end
 
               {"type" => "function", "function" => {"name" => name}}
-            else
-              raise UnsupportedFormatError, "Unsupported tool_choice for Chat Completions format: #{choice.inspect}"
             end
           end
 
@@ -324,12 +296,6 @@ module PromptBuilder
           end
 
           def serialize_file_content(content)
-            if content.file_url
-              raise UnsupportedFormatError,
-                "InputFile.file_url is not supported in Chat Completions format; " \
-                "use file_id (in extra) or base64 file_data with filename instead"
-            end
-
             file_id = content.extra && content.extra["file_id"]
             media_type = content.extra && content.extra["media_type"]
 
@@ -341,7 +307,12 @@ module PromptBuilder
               file["file_data"] = "data:#{mime};base64,#{content.file_data}"
             end
 
-            if file.empty?
+            # InputFile.file_url has no Chat Completions representation. When a
+            # usable source is present it is used; when file_url is the only
+            # source, the block is omitted rather than raising.
+            unless file["file_id"] || file["file_data"]
+              return nil if content.file_url
+
               raise UnsupportedFormatError,
                 "InputFile requires file_id (in extra) or file_data in Chat Completions format"
             end
@@ -350,22 +321,22 @@ module PromptBuilder
           end
 
           def serialize_image_content(content)
-            file_id = content.extra && content.extra["file_id"]
-            if file_id
-              raise UnsupportedFormatError,
-                "InputImage file_id (in extra) is not supported in Chat Completions format; " \
-                "the image_file content type is Assistants API only. Use image_url instead."
-            end
-
             url = content.image_url
 
-            unless url
-              raise UnsupportedFormatError, "InputImage requires image_url in Chat Completions format"
+            if url
+              # InputImage file_id (in extra) is ignored: the image_file content
+              # type is Assistants API only. image_url is used instead.
+              image_url = {"url" => url}
+              image_url["detail"] = content.detail if content.detail
+              return {"type" => "image_url", "image_url" => image_url}
             end
 
-            image_url = {"url" => url}
-            image_url["detail"] = content.detail if content.detail
-            {"type" => "image_url", "image_url" => image_url}
+            # No usable image_url. If file_id was provided, its only source is the
+            # unsupported image_file content type, so omit the block.
+            file_id = content.extra && content.extra["file_id"]
+            return nil if file_id
+
+            raise UnsupportedFormatError, "InputImage requires image_url in Chat Completions format"
           end
 
           def extract_response_format(format)
@@ -381,18 +352,6 @@ module PromptBuilder
           def normalize_hash(value)
             value.each_with_object({}) do |(key, nested_value), hash|
               hash[key.to_s] = nested_value.is_a?(Hash) ? normalize_hash(nested_value) : nested_value
-            end
-          end
-
-          def raise_unsupported_field!(field_name)
-            raise UnsupportedFormatError, "#{field_name} is not supported in Chat Completions format"
-          end
-
-          def validate_hash_keys!(value, supported_keys, field_name)
-            normalize_hash(value).each_key do |key|
-              next if supported_keys.include?(key)
-
-              raise UnsupportedFormatError, "#{field_name}.#{key} is not supported in Chat Completions format"
             end
           end
         end

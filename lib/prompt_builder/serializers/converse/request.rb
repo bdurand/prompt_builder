@@ -10,7 +10,8 @@ module PromptBuilder
       #
       # === Unsupported Open Responses features
       #
-      # These session fields are not supported and raise +UnsupportedFormatError+:
+      # These session fields are not supported and are silently omitted from the
+      # serialized output:
       # - +background+ — background/async mode is not supported on the Converse endpoint
       # - +frequency_penalty+ — not supported by the Converse API
       # - +include+ — response-field inclusion is an Open Responses-only concept
@@ -26,29 +27,30 @@ module PromptBuilder
       # - +top_logprobs+ — log probability output is not supported
       # - +truncation+ — server-side context truncation is not supported
       #
-      # Partially supported session fields:
-      # - +metadata+ — values must be scalar so they can map to +requestMetadata+
+      # Partially supported session fields (unsupported keys/values are omitted):
+      # - +metadata+ — only scalar values are forwarded to +requestMetadata+; Hash/Array values are omitted
       # - +text+ — only +format.type == "json_schema"+ is supported
       #
       # Tool choice restrictions:
-      # - +tool_choice: "none"+ is not supported by the Converse API
+      # - +tool_choice: "none"+ has no Converse representation and is omitted
       #
       # Input content restrictions:
       # - +Reasoning+ items are silently skipped
       # - +RefusalContent+ is dropped silently (a parsed response refusal can
       #   stay in session history without breaking subsequent request_payload calls)
       # - +OutputText.annotations+ and +OutputText.logprobs+ are dropped silently
-      # - +InputImage+ content is only supported in user messages (not assistant)
-      # - +InputImage.detail+ and +InputImage.file_id+ are not supported
-      # - +InputFile+ content is only supported in user messages (not assistant)
-      # - +InputFile.file_id+ is not supported
-      # - +InputVideo+ content is only supported in user messages (not assistant)
-      # - +InputImage+ requires base64 +data+ or an S3 URI (+s3://...+) — public URLs
-      #   are not accepted
-      # - +InputFile+ requires base64 +file_data+ or an S3 URI — public URLs are not
-      #   accepted; format is detected from the filename or +file_url+ extension
-      # - +InputVideo+ requires an S3 URI (+s3://...+) — public URLs are not accepted
-      # - Tool (+FunctionCallOutput+) results support text, image, document, and video content
+      # - +InputImage+ content is only supported in user messages (assistant images are omitted)
+      # - +InputImage.detail+ and +InputImage.file_id+ are silently ignored
+      # - +InputFile+ content is only supported in user messages (assistant files are omitted)
+      # - +InputFile.file_id+ is silently ignored
+      # - +InputVideo+ content is only supported in user messages (assistant videos are omitted)
+      # - +InputImage+ requires base64 +data+ or an S3 URI (+s3://...+); content with a
+      #   public URL is omitted
+      # - +InputFile+ requires base64 +file_data+ or an S3 URI; format is detected from the
+      #   filename or +file_url+ extension
+      # - +InputVideo+ requires an S3 URI (+s3://...+); a non-S3 URL is omitted
+      # - Tool (+FunctionCallOutput+) results support text, image, document, and video content;
+      #   other content is omitted
       #
       # === Features in Converse not available through Open Responses
       #
@@ -105,15 +107,10 @@ module PromptBuilder
           "3gp" => "three_gp"
         }.freeze
 
-        SUPPORTED_TEXT_KEYS = %w[format].freeze
-        private_constant :SUPPORTED_TEXT_KEYS
-
         class << self
           private
 
           def serialize_request(session)
-            validate_supported_session_fields!(session)
-
             # document_name_counts is scoped per request (passed through the
             # build chain) so concurrent serializations don't share counter state.
             ctx = {document_name_counts: Hash.new(0)}
@@ -167,30 +164,6 @@ module PromptBuilder
             h["promptVariables"] = extra["prompt_variables"] if extra.key?("prompt_variables")
           end
 
-          def validate_supported_session_fields!(session)
-            unsupported_fields = []
-            unsupported_fields << "include" if session.include
-            unsupported_fields << "presence_penalty" if session.presence_penalty
-            unsupported_fields << "frequency_penalty" if session.frequency_penalty
-            unsupported_fields << "stream" unless session.stream.nil?
-            unsupported_fields << "stream_options" if session.stream_options
-            unsupported_fields << "background" unless session.background.nil?
-            unsupported_fields << "max_tool_calls" if session.max_tool_calls
-            unsupported_fields << "safety_identifier" if session.safety_identifier
-            unsupported_fields << "prompt_cache_key" if session.prompt_cache_key
-            unsupported_fields << "prompt_cache_retention" if session.prompt_cache_retention
-            unsupported_fields << "truncation" if session.truncation
-            unsupported_fields << "store" unless session.store.nil?
-            unsupported_fields << "top_logprobs" if session.top_logprobs
-            unsupported_fields << "parallel_tool_calls" unless session.parallel_tool_calls.nil?
-            unsupported_fields << "reasoning" if session.reasoning
-
-            return if unsupported_fields.empty?
-
-            raise UnsupportedFormatError,
-              "Converse format does not support session fields: #{unsupported_fields.join(", ")}"
-          end
-
           def build_system(session)
             parts = []
 
@@ -201,7 +174,10 @@ module PromptBuilder
               next unless item.role == "system" || item.role == "developer"
 
               item.content.each do |content|
-                parts << serialize_system_content(content)
+                serialized = serialize_system_content(content)
+                next unless serialized
+
+                parts << serialized
                 if content.respond_to?(:extra) && content.extra && content.extra["cache_point"]
                   parts << {"cachePoint" => {"type" => "default"}}
                 end
@@ -224,11 +200,15 @@ module PromptBuilder
                 next if visible_content.empty?
                 content = []
                 visible_content.each do |c|
-                  content << serialize_content(c, role: role, ctx: ctx)
+                  serialized = serialize_content(c, role: role, ctx: ctx)
+                  next unless serialized
+
+                  content << serialized
                   if c.respond_to?(:extra) && c.extra && c.extra["cache_point"]
                     content << {"cachePoint" => {"type" => "default"}}
                   end
                 end
+                next if content.empty?
                 raw_messages << {"role" => role, "content" => content}
               when Items::FunctionCall
                 raw_messages << {
@@ -246,14 +226,10 @@ module PromptBuilder
                   "role" => "user",
                   "content" => [serialize_tool_result(item, ctx)]
                 }
-              when Items::Reasoning
-                # Reasoning items can be provided by the response but are not supported in the request,
-                # so ignore them rather than raising an error.
+              when Items::Reasoning, Items::Compaction, Items::ItemReference
+                # Reasoning, Compaction, and ItemReference items are not supported
+                # in the request, so ignore them rather than raising an error.
                 next
-              when Items::Compaction
-                raise UnsupportedFormatError, "Converse format does not support Compaction items"
-              when Items::ItemReference
-                raise UnsupportedFormatError, "Converse format does not support ItemReference items"
               end
             end
 
@@ -268,8 +244,9 @@ module PromptBuilder
               validate_output_text!(content)
               {"text" => content.text}
             else
-              raise UnsupportedFormatError,
-                "Converse format only supports text content in system and developer messages"
+              # Only text content is supported in system/developer messages;
+              # other content types are silently omitted.
+              nil
             end
           end
 
@@ -293,24 +270,18 @@ module PromptBuilder
               validate_output_text!(content) if content.is_a?(Content::OutputText)
               {"text" => content.text}
             when Content::InputImage
-              if role == "assistant"
-                raise UnsupportedFormatError,
-                  "Converse format does not support assistant InputImage content"
-              end
+              # Assistant image content is not supported; omit it.
+              return nil if role == "assistant"
 
               serialize_image(content)
             when Content::InputFile
-              if role == "assistant"
-                raise UnsupportedFormatError,
-                  "Converse format does not support assistant InputFile content"
-              end
+              # Assistant file content is not supported; omit it.
+              return nil if role == "assistant"
 
               serialize_document(content, ctx)
             when Content::InputVideo
-              if role == "assistant"
-                raise UnsupportedFormatError,
-                  "Converse format does not support assistant InputVideo content"
-              end
+              # Assistant video content is not supported; omit it.
+              return nil if role == "assistant"
 
               serialize_video(content)
             when Content::RefusalContent
@@ -318,7 +289,8 @@ module PromptBuilder
               # drop it silently so subsequent request_payload calls don't fail.
               nil
             else
-              raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
+              # Unsupported content types are silently omitted.
+              nil
             end
           end
 
@@ -330,16 +302,8 @@ module PromptBuilder
           end
 
           def serialize_image(content)
-            if content.detail
-              raise UnsupportedFormatError,
-                "Converse format does not support InputImage.detail"
-            end
-
-            if content.extra && content.extra["file_id"]
-              raise UnsupportedFormatError,
-                "Converse format does not support file_id in extra for InputImage"
-            end
-
+            # InputImage.detail and file_id (in extra) are not supported and are
+            # silently ignored.
             format = detect_image_format(content)
             parsed = PromptBuilder.parse_data_url(content.image_url)
             source = if parsed
@@ -392,11 +356,7 @@ module PromptBuilder
           }.freeze
 
           def serialize_document(content, ctx)
-            if content.extra && content.extra["file_id"]
-              raise UnsupportedFormatError,
-                "Converse format does not support file_id in extra for InputFile"
-            end
-
+            # file_id (in extra) is not supported and is silently ignored.
             format = detect_document_format(content)
             source = if content.file_data
               {"bytes" => content.file_data}
@@ -464,10 +424,8 @@ module PromptBuilder
                 "Converse format requires InputVideo.video_url"
             end
 
-            unless content.video_url.start_with?("s3://")
-              raise UnsupportedFormatError,
-                "Converse format requires an S3 URI for InputVideo.video_url"
-            end
+            # Only S3 URIs are supported; other video URLs are silently omitted.
+            return nil unless content.video_url.start_with?("s3://")
 
             ext = File.extname(content.video_url).delete_prefix(".").downcase
             format = VIDEO_URL_EXTENSION_FORMATS[ext]
@@ -487,7 +445,7 @@ module PromptBuilder
             result["status"] = status if status
 
             content = if item.output.is_a?(Array)
-              item.output.map { |c| serialize_tool_result_content(c, ctx) }
+              item.output.filter_map { |c| serialize_tool_result_content(c, ctx) }
             elsif !item.output.nil? && !item.output.empty?
               [{"text" => item.output}]
             else
@@ -529,8 +487,8 @@ module PromptBuilder
             when Content::InputVideo
               serialize_video(content)
             else
-              raise UnsupportedFormatError,
-                "#{content.class.name.split("::").last} is not supported in tool output in Converse format"
+              # Unsupported content types in tool output are silently omitted.
+              nil
             end
           end
 
@@ -561,19 +519,12 @@ module PromptBuilder
           def build_output_config(session)
             return {} unless session.text
 
-            unsupported_keys = session.text.keys - SUPPORTED_TEXT_KEYS
-            unless unsupported_keys.empty?
-              raise UnsupportedFormatError,
-                "Converse format does not support text.#{unsupported_keys.first}"
-            end
-
+            # Unsupported text.* keys are silently omitted; only format is mapped.
             format = session.text["format"]
             return {} unless format
 
-            unless format.is_a?(Hash) && format["type"] == "json_schema"
-              raise UnsupportedFormatError,
-                "Converse format only supports text.format type \"json_schema\""
-            end
+            # Only json_schema output is supported; other format types are omitted.
+            return {} unless format.is_a?(Hash) && format["type"] == "json_schema"
 
             schema = format.dig("json_schema", "schema") || format["schema"]
             unless schema
@@ -598,11 +549,10 @@ module PromptBuilder
           def build_request_metadata(session)
             return {} unless session.metadata
 
+            # Only scalar metadata values are supported; Hash/Array values are
+            # silently omitted.
             session.metadata.each_with_object({}) do |(key, value), metadata|
-              if value.is_a?(Hash) || value.is_a?(Array)
-                raise UnsupportedFormatError,
-                  "Converse format only supports scalar metadata values"
-              end
+              next if value.is_a?(Hash) || value.is_a?(Array)
 
               metadata[key.to_s] = value.to_s
             end
@@ -614,7 +564,12 @@ module PromptBuilder
 
             config = {}
             config["tools"] = tools unless tools.empty?
-            config["toolChoice"] = serialize_tool_choice(session.tool_choice, tools.empty?) if session.tool_choice
+            if session.tool_choice
+              tool_choice = serialize_tool_choice(session.tool_choice, tools.empty?)
+              config["toolChoice"] = tool_choice if tool_choice
+            end
+
+            return nil if config.empty?
 
             config
           end
@@ -630,20 +585,17 @@ module PromptBuilder
             end
           end
 
+          # Unsupported tool_choice values (including tool_choice without tools
+          # and "none", which Converse has no representation for) are silently
+          # omitted by returning nil.
           def serialize_tool_choice(choice, tools_empty)
-            if tools_empty
-              raise UnsupportedFormatError,
-                "Converse format does not support tool_choice without tools"
-            end
+            return nil if tools_empty
 
             case choice
             when "auto"
               {"auto" => {}}
             when "required"
               {"any" => {}}
-            when "none"
-              raise UnsupportedFormatError,
-                "Converse format does not support tool_choice 'none'"
             when Hash
               if choice["type"] == "function"
                 name = choice["name"] || choice.dig("function", "name")
@@ -653,13 +605,7 @@ module PromptBuilder
                 end
 
                 {"tool" => {"name" => name}}
-              else
-                raise UnsupportedFormatError,
-                  "Converse format does not support tool_choice #{choice.inspect}"
               end
-            else
-              raise UnsupportedFormatError,
-                "Converse format does not support tool_choice #{choice.inspect}"
             end
           end
         end

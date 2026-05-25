@@ -16,7 +16,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session.user("Hello")
 
       h = described_class.request_payload(session)
-      expect(h["model"]).to eq("gemini-2.0-flash")
+      expect(h.include?("model")).to be(false)
       expect(h["generationConfig"]["temperature"]).to eq(0.7)
       expect(h["generationConfig"]["maxOutputTokens"]).to eq(1024)
       expect(h["systemInstruction"]["parts"]).to eq([{"text" => "You are helpful."}])
@@ -375,16 +375,17 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(part["fileData"]["mimeType"]).to eq("image/png")
     end
 
-    it "raises for InputImage with arbitrary public URL" do
+    it "passes through InputImage with arbitrary public URL" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /arbitrary public image URLs/)
+      h = described_class.request_payload(session)
+      part = h["contents"][0]["parts"][0]
+      expect(part["fileData"]["fileUri"]).to eq("https://example.com/img.png")
+      expect(part["fileData"]["mimeType"]).to eq("image/jpeg")
     end
 
     it "converts InputImage with file_id to fileData" do
@@ -451,16 +452,17 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(part["fileData"]["mimeType"]).to eq("application/pdf")
     end
 
-    it "raises for InputFile with arbitrary public URL" do
+    it "passes through InputFile with arbitrary public URL" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/file.pdf")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /arbitrary public file URLs/)
+      h = described_class.request_payload(session)
+      part = h["contents"][0]["parts"][0]
+      expect(part["fileData"]["fileUri"]).to eq("https://example.com/file.pdf")
+      expect(part["fileData"]["mimeType"]).to eq("application/pdf")
     end
 
     it "converts InputFile with base64 data to inlineData using explicit media_type" do
@@ -562,16 +564,17 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(part["fileData"]["mimeType"]).to eq("video/mp4")
     end
 
-    it "raises for InputVideo with an arbitrary public URL" do
+    it "passes through InputVideo with arbitrary public URL" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/video.mp4")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /arbitrary public video URLs/)
+      h = described_class.request_payload(session)
+      part = h["contents"][0]["parts"][0]
+      expect(part["fileData"]["fileUri"]).to eq("https://example.com/video.mp4")
+      expect(part["fileData"]["mimeType"]).to eq("video/mp4")
     end
 
     it "raises for InputVideo without URL" do
@@ -600,16 +603,16 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h["contents"].map { |c| c["role"] }).to eq(["user"])
     end
 
-    it "raises for model-role InputImage" do
+    it "omits model-role InputImage" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::InputImage.new(image_url: "https://example.com/img.png")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support assistant InputImage/)
+      h = described_class.request_payload(session)
+      expect(h["contents"]).to eq([{"role" => "user", "parts" => [{"text" => "Hi"}]}])
     end
 
     it "passes thoughtSignature through on reasoning blocks" do
@@ -667,69 +670,63 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(roles).to eq(["user"])
     end
 
-    it "raises for unsupported session field: include" do
+    it "omits unsupported session field: include" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", include: ["some"])
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support session fields.*include/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("include")
     end
 
-    it "raises for unsupported session field: stream_options" do
+    it "omits unsupported session field: stream_options" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", stream_options: {})
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support session fields.*stream_options/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("stream_options")
     end
 
-    it "raises for unsupported session field: parallel_tool_calls" do
+    it "omits unsupported session field: parallel_tool_calls" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", parallel_tool_calls: true)
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support session fields.*parallel_tool_calls/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("parallel_tool_calls")
     end
 
-    it "raises for unsupported text sub-field" do
+    it "omits unsupported text sub-fields while mapping the supported ones" do
       session = PromptBuilder::Session.new(
         model: "gemini-2.0-flash",
         text: {"format" => {"type" => "json_object"}, "verbosity" => "high"}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support text.verbosity/)
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["responseMimeType"]).to eq("application/json")
+      expect(h["generationConfig"]).not_to have_key("verbosity")
     end
 
-    it "raises for unsupported reasoning sub-field" do
+    it "omits unsupported reasoning sub-fields while mapping the supported ones" do
       session = PromptBuilder::Session.new(
         model: "gemini-2.0-flash",
         reasoning: {"budget_tokens" => 5000, "display" => "visible"}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support reasoning.display/)
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["thinkingConfig"]).to eq({"thinkingBudget" => 5000})
     end
 
-    it "raises for unsupported reasoning effort and summary values" do
+    it "omits unsupported reasoning effort and summary values" do
       session = PromptBuilder::Session.new(model: "gemini-3-flash-preview", reasoning: {"effort" => "extreme"})
       session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /reasoning.effort values/)
+      h = described_class.request_payload(session)
+      expect(h.dig("generationConfig", "thinkingConfig")).to be_nil
 
       session = PromptBuilder::Session.new(model: "gemini-3-flash-preview", reasoning: {"summary" => "detailed"})
       session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /reasoning.summary value auto/)
+      h = described_class.request_payload(session)
+      expect(h.dig("generationConfig", "thinkingConfig")).to be_nil
     end
 
     it "ignores session.stream because Gemini selects streaming via endpoint" do
@@ -748,16 +745,15 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h).not_to have_key("stream")
     end
 
-    it "raises for tool_choice without tools" do
+    it "omits tool_choice without tools" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", tool_choice: "auto")
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool_choice without tools/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("toolConfig")
     end
 
-    it "raises for unsupported tool_choice hash type" do
+    it "omits an unsupported tool_choice hash type" do
       session = PromptBuilder::Session.new(
         model: "gemini-2.0-flash",
         tool_choice: {"type" => "allowed_tools", "tools" => ["search"]}
@@ -765,9 +761,9 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       session.register_tool("search") { |_| "ok" }
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool_choice/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("toolConfig")
+      expect(h["tools"]).not_to be_nil
     end
 
     it "raises for function tool_choice without name" do
@@ -792,28 +788,28 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h).not_to have_key("toolConfig")
     end
 
-    it "raises for model-role InputFile content" do
+    it "omits model-role InputFile content" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::InputFile.new(file_url: "https://example.com/doc.pdf")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /assistant InputFile/)
+      h = described_class.request_payload(session)
+      expect(h["contents"]).to eq([{"role" => "user", "parts" => [{"text" => "Hi"}]}])
     end
 
-    it "raises for model-role InputVideo content" do
+    it "omits model-role InputVideo content" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
         content: [PromptBuilder::Content::InputVideo.new(video_url: "https://example.com/video.mp4")]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /assistant InputVideo/)
+      h = described_class.request_payload(session)
+      expect(h["contents"]).to eq([{"role" => "user", "parts" => [{"text" => "Hi"}]}])
     end
 
     it "converts FunctionCallOutput with array content to string" do
@@ -832,7 +828,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(result).to eq("72F sunny")
     end
 
-    it "raises when FunctionCallOutput contains non-text content" do
+    it "omits non-text content in FunctionCallOutput" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.user("Look at this")
       session.add_item(PromptBuilder::Items::FunctionCall.new(
@@ -845,9 +841,9 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
         )]
       ))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /tool output in Gemini/)
+      h = described_class.request_payload(session)
+      result = h["contents"][2]["parts"][0]["functionResponse"]["response"]["result"]
+      expect(result).to eq("")
     end
 
     it "raises when FunctionCallOutput cannot be matched to a FunctionCall" do
@@ -890,38 +886,28 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h).not_to have_key("generationConfig")
     end
 
-    it "raises for unsupported session fields: background, max_tool_calls, safety_identifier" do
+    it "omits unsupported session fields: background, max_tool_calls, safety_identifier" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", background: true)
       session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /background/)
+      expect(described_class.request_payload(session)).not_to have_key("background")
 
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", max_tool_calls: 5)
       session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /max_tool_calls/)
+      expect(described_class.request_payload(session)).not_to have_key("max_tool_calls")
 
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", safety_identifier: "safe_1")
       session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /safety_identifier/)
+      expect(described_class.request_payload(session)).not_to have_key("safety_identifier")
     end
 
-    it "raises for unsupported session fields: prompt_cache_key, truncation" do
+    it "omits unsupported session fields: prompt_cache_key, truncation" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", prompt_cache_key: "cache_1")
       session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /prompt_cache_key/)
+      expect(described_class.request_payload(session)).not_to have_key("prompt_cache_key")
 
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", truncation: "auto")
       session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /truncation/)
+      expect(described_class.request_payload(session)).not_to have_key("truncation")
     end
 
     it "maps store and supported service_tier values" do
@@ -932,18 +918,15 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h["serviceTier"]).to eq("flex")
     end
 
-    it "raises for unsupported service_tier values and metadata" do
+    it "omits unsupported service_tier values and metadata" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", service_tier: "auto")
       session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /service_tier values/)
+      expect(described_class.request_payload(session)).not_to have_key("serviceTier")
 
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", metadata: {"key" => "value"})
       session.user("Hi")
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /metadata/)
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("metadata")
     end
 
     it "maps top_logprobs to responseLogprobs and logprobs" do
@@ -966,26 +949,27 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h["generationConfig"]["responseMimeType"]).to eq("text/plain")
     end
 
-    it "raises for strict tool definitions" do
+    it "omits the strict flag on tool definitions" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.register_tool("test", strict: true) { |_| "ok" }
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /strict tool definitions/)
+      h = described_class.request_payload(session)
+      function_declaration = h["tools"][0]["functionDeclarations"][0]
+      expect(function_declaration["name"]).to eq("test")
+      expect(function_declaration).not_to have_key("strict")
     end
 
-    it "raises for unknown text.format type" do
+    it "omits an unknown text.format type" do
       session = PromptBuilder::Session.new(
         model: "gemini-2.0-flash",
         text: {"format" => {"type" => "json_array"}}
       )
       session.user("Hi")
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /text\.format type "json_array"/)
+      h = described_class.request_payload(session)
+      expect(h.dig("generationConfig", "responseMimeType")).to be_nil
+      expect(h.dig("generationConfig", "responseSchema")).to be_nil
     end
 
     it "can be resolved via symbol alias" do
@@ -1005,24 +989,22 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires InputFile\.file_url, InputFile\.file_data, or file_id in extra/)
     end
 
-    it "raises for Compaction items" do
+    it "silently skips Compaction items" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Compaction.new(encrypted_content: "abc"))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /Compaction/)
+      h = described_class.request_payload(session)
+      expect(h["contents"]).to eq([{"role" => "user", "parts" => [{"text" => "Hi"}]}])
     end
 
-    it "raises for ItemReference items" do
+    it "silently skips ItemReference items" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.user("Hi")
       session.add_item(PromptBuilder::Items::ItemReference.new(id: "msg_1"))
 
-      expect {
-        described_class.request_payload(session)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /ItemReference/)
+      h = described_class.request_payload(session)
+      expect(h["contents"]).to eq([{"role" => "user", "parts" => [{"text" => "Hi"}]}])
     end
   end
 
@@ -1066,7 +1048,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(response.status).to be_nil
     end
 
-    it "raises when a response contains multiple candidates" do
+    it "parses only the first candidate when multiple are present" do
       response_hash = {
         "candidates" => [
           {"content" => {"parts" => [{"text" => "one"}]}, "finishReason" => "STOP"},
@@ -1074,29 +1056,28 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
         ]
       }
 
-      expect {
-        described_class.parse_response(response_hash)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /multiple candidates/)
+      response = described_class.parse_response(response_hash)
+      expect(response.output.length).to eq(1)
+      expect(response.output[0].content[0].text).to eq("one")
     end
 
-    it "raises on unknown response Part shapes (executableCode, codeExecutionResult, inlineData, fileData)" do
+    it "skips unknown response Part shapes (executableCode, codeExecutionResult, inlineData, fileData)" do
       %w[executableCode codeExecutionResult inlineData fileData toolCall toolResponse].each do |key|
         response_hash = {
           "candidates" => [
             {
-              "content" => {"parts" => [{key => {"foo" => "bar"}}]},
+              "content" => {"parts" => [{key => {"foo" => "bar"}}, {"text" => "hi"}]},
               "finishReason" => "STOP"
             }
           ]
         }
-        expect {
-          described_class.parse_response(response_hash)
-        }.to raise_error(PromptBuilder::UnsupportedFormatError, /response part #{Regexp.escape(key.inspect)}/),
-          "expected #{key} part to raise"
+        response = described_class.parse_response(response_hash)
+        expect(response.output.length).to eq(1), "expected #{key} part to be skipped"
+        expect(response.output[0].content[0].text).to eq("hi")
       end
     end
 
-    it "raises on response Part with no recognized content key" do
+    it "skips a response Part with no recognized content key" do
       response_hash = {
         "candidates" => [
           {
@@ -1105,9 +1086,8 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
           }
         ]
       }
-      expect {
-        described_class.parse_response(response_hash)
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /unknownKey/)
+      response = described_class.parse_response(response_hash)
+      expect(response.output).to eq([])
     end
 
     it "preserves text parts whose text is an empty string" do

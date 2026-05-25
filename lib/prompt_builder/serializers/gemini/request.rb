@@ -9,7 +9,8 @@ module PromptBuilder
       #
       # === Unsupported Open Responses features
       #
-      # These session fields are not supported and raise +UnsupportedFormatError+:
+      # These session fields are not supported and are silently omitted from the
+      # serialized output:
       # - +background+ — Gemini has no background/async mode on the generate endpoint
       # - +include+ — response-field inclusion is an Open Responses-only concept
       # - +max_tool_calls+ — per-request tool-call caps are not supported
@@ -21,21 +22,20 @@ module PromptBuilder
       # - +truncation+ — server-side context truncation is not supported
       #
       # Input content restrictions:
-      # - +InputImage+ content is only supported in user messages (not assistant)
-      # - +InputImage+ with +image_url+ requires either base64 +data+ or a Files API /
-      #   Cloud Storage URI (+gs://+, +https://generativelanguage.googleapis.com/+);
-      #   arbitrary public URLs are not fetched by Gemini and are rejected
-      # - +InputFile+ content is only supported in user messages (not assistant)
+      # - +InputImage+ content is only supported in user messages (assistant images are omitted)
+      # - +InputImage+ with +image_url+ requires either base64 +data+ or a URL;
+      #   content without +image_url+ or +file_id+ raises
+      # - +InputFile+ content is only supported in user messages (assistant files are omitted)
       # - +InputFile+ requires +media_type+ when +file_data+ is provided, or a
       #   recognized extension on +filename+ / +file_url+
-      # - +InputVideo+ requires +video_url+ (only URL-based video is supported)
+      # - +InputVideo+ requires +video_url+
       # - +RefusalContent+ is dropped silently (a parsed Chat Completions
       #   refusal can stay in session history without breaking subsequent
       #   request_payload calls)
-      # - +redacted_thinking+ reasoning blocks are silently skipped
-      # - +Reasoning+ items with +summary+ blocks are silently skipped
-      # - +FunctionCallOutput+ array contents must be text-only
-      # - +Compaction+ and +ItemReference+ items are not supported
+      # - +redacted_thinking+ and unknown reasoning blocks are silently skipped
+      # - +Reasoning+ items with +summary+ blocks have the summary skipped
+      # - +FunctionCallOutput+ array contents must be text-only; other content is omitted
+      # - +Compaction+ and +ItemReference+ items are silently skipped
       #
       # === Features in Gemini not available through Open Responses
       #
@@ -66,8 +66,6 @@ module PromptBuilder
       # - +cachedContent+ — referencing a CachedContent resource by name
       # - Top-level +labels+ (Vertex flavor only)
       class Request < Base
-        SUPPORTED_TEXT_KEYS = %w[format].freeze
-        SUPPORTED_REASONING_KEYS = %w[budget_tokens effort summary].freeze
         SUPPORTED_REASONING_EFFORTS = %w[minimal low medium high].freeze
         SUPPORTED_REASONING_SUMMARIES = %w[auto].freeze
         SUPPORTED_SERVICE_TIERS = %w[unspecified standard flex priority].freeze
@@ -103,25 +101,18 @@ module PromptBuilder
         }.freeze
         private_constant :FILE_EXTENSION_MIME_TYPES
 
-        GOOGLE_FILE_URL_PREFIXES = [
-          "gs://",
-          "https://generativelanguage.googleapis.com/",
-          "https://storage.googleapis.com/"
-        ].freeze
-        private_constant :GOOGLE_FILE_URL_PREFIXES
+
 
         class << self
           private
 
           def serialize_request(session)
-            validate_supported_session_fields!(session)
-
             h = {}
             raise UnsupportedFormatError, "Gemini format requires session.model" unless session.model
 
-            h["model"] = session.model
             h["store"] = session.store unless session.store.nil?
-            h["serviceTier"] = serialize_service_tier(session.service_tier) if session.service_tier
+            service_tier = serialize_service_tier(session.service_tier) if session.service_tier
+            h["serviceTier"] = service_tier if service_tier
 
             system_instruction = build_system_instruction(session)
             h["systemInstruction"] = system_instruction if system_instruction
@@ -159,25 +150,6 @@ module PromptBuilder
             generation_config["responseModalities"] = extra["response_modalities"] if extra.key?("response_modalities")
             generation_config["mediaResolution"] = extra["media_resolution"] if extra.key?("media_resolution")
             h.delete("generationConfig") if generation_config.empty?
-          end
-
-          def validate_supported_session_fields!(session)
-            unsupported_fields = []
-            unsupported_fields << "include" if session.include
-            unsupported_fields << "stream_options" if session.stream_options
-            unsupported_fields << "background" unless session.background.nil?
-            unsupported_fields << "max_tool_calls" if session.max_tool_calls
-            unsupported_fields << "safety_identifier" if session.safety_identifier
-            unsupported_fields << "prompt_cache_key" if session.prompt_cache_key
-            unsupported_fields << "prompt_cache_retention" if session.prompt_cache_retention
-            unsupported_fields << "truncation" if session.truncation
-            unsupported_fields << "metadata" if session.metadata
-            unsupported_fields << "parallel_tool_calls" unless session.parallel_tool_calls.nil?
-
-            return if unsupported_fields.empty?
-
-            raise UnsupportedFormatError,
-              "Gemini format does not support session fields: #{unsupported_fields.join(", ")}"
           end
 
           def build_system_instruction(session)
@@ -222,7 +194,8 @@ module PromptBuilder
                 # via a parsed Chat Completions response but cannot be sent.
                 visible_content = item.content.reject { |c| c.is_a?(Content::RefusalContent) }
                 next if visible_content.empty?
-                parts = visible_content.map { |content| serialize_content(content, role: role) }
+                parts = visible_content.filter_map { |content| serialize_content(content, role: role) }
+                next if parts.empty?
                 raw_contents << {"role" => role, "parts" => parts}
               when Items::FunctionCall
                 function_call = {
@@ -257,10 +230,9 @@ module PromptBuilder
 
                 thought_parts = item.content.filter_map { |block| serialize_thinking_block(block) }
                 raw_contents << {"role" => "model", "parts" => thought_parts} unless thought_parts.empty?
-              when Items::Compaction
-                raise UnsupportedFormatError, "Gemini format does not support Compaction items"
-              when Items::ItemReference
-                raise UnsupportedFormatError, "Gemini format does not support ItemReference items"
+              when Items::Compaction, Items::ItemReference
+                # Compaction and ItemReference items are not supported; skip them.
+                next
               end
             end
 
@@ -291,13 +263,12 @@ module PromptBuilder
           # response is still a valid object.
           def serialize_function_output(output)
             if output.is_a?(Array)
-              text = output.map do |content|
+              # Only text content is supported in tool output; other content
+              # types are silently omitted.
+              text = output.filter_map do |content|
                 case content
                 when Content::InputText, Content::OutputText
                   content.text
-                else
-                  raise UnsupportedFormatError,
-                    "#{content.class.name.split("::").last} is not supported in tool output in Gemini format"
                 end
               end.join("\n")
               {"result" => text}
@@ -336,34 +307,22 @@ module PromptBuilder
               end
               part
             when Content::InputImage
-              if role == "model"
-                raise UnsupportedFormatError,
-                  "Gemini format does not support assistant InputImage content"
-              end
+              # Assistant image content is not supported; omit it.
+              return nil if role == "model"
 
               serialize_image(content)
             when Content::InputFile
-              if role == "model"
-                raise UnsupportedFormatError,
-                  "Gemini format does not support assistant InputFile content"
-              end
+              # Assistant file content is not supported; omit it.
+              return nil if role == "model"
 
               serialize_file(content)
             when Content::InputVideo
-              if role == "model"
-                raise UnsupportedFormatError,
-                  "Gemini format does not support assistant InputVideo content"
-              end
+              # Assistant video content is not supported; omit it.
+              return nil if role == "model"
 
               unless content.video_url
                 raise UnsupportedFormatError,
                   "Gemini format requires InputVideo.video_url"
-              end
-
-              unless google_file_uri?(content.video_url)
-                raise UnsupportedFormatError,
-                  "Gemini format does not support arbitrary public video URLs; use a gs:// or " \
-                  "Files API InputVideo.video_url"
               end
 
               mime = video_mime_type(content.video_url)
@@ -372,7 +331,8 @@ module PromptBuilder
               # Filtered out before reaching here; defensive no-op.
               nil
             else
-              raise UnsupportedFormatError, "Unsupported content type: #{content.class}"
+              # Unsupported content types are silently omitted.
+              nil
             end
           end
 
@@ -388,12 +348,6 @@ module PromptBuilder
               parsed = PromptBuilder.parse_data_url(content.image_url)
               if parsed
                 return {"inlineData" => {"mimeType" => parsed[0], "data" => parsed[1]}}
-              end
-
-              unless google_file_uri?(content.image_url)
-                raise UnsupportedFormatError,
-                  "Gemini format does not support arbitrary public image URLs; use a data URL in InputImage.image_url, " \
-                  "a file_id in extra, or a gs:// / Files API InputImage.image_url"
               end
 
               return {"fileData" => {"mimeType" => media_type || "image/jpeg", "fileUri" => content.image_url}}
@@ -418,16 +372,10 @@ module PromptBuilder
             end
 
             if content.file_url
-              unless google_file_uri?(content.file_url)
-                raise UnsupportedFormatError,
-                  "Gemini format does not support arbitrary public file URLs; use base64 InputFile.file_data, " \
-                  "a file_id in extra, or a gs:// / Files API InputFile.file_url"
-              end
-
               mime = media_type || file_mime_type(content)
               unless mime
                 raise UnsupportedFormatError,
-                  "Gemini format requires media_type in extra or a recognized filename extension for gs:// or Files API URLs"
+                  "Gemini format requires media_type in extra or a recognized filename extension for file URLs"
               end
 
               return {"fileData" => {"mimeType" => mime, "fileUri" => content.file_url}}
@@ -447,9 +395,7 @@ module PromptBuilder
               "Gemini format requires InputFile.file_url, InputFile.file_data, or file_id in extra"
           end
 
-          def google_file_uri?(uri)
-            GOOGLE_FILE_URL_PREFIXES.any? { |prefix| uri.start_with?(prefix) }
-          end
+
 
           def file_mime_type(content)
             [content.filename, content.file_url].each do |path|
@@ -508,12 +454,7 @@ module PromptBuilder
             end
 
             if session.text
-              unsupported_keys = session.text.keys - SUPPORTED_TEXT_KEYS
-              unless unsupported_keys.empty?
-                raise UnsupportedFormatError,
-                  "Gemini format does not support text.#{unsupported_keys.first}"
-              end
-
+              # Unsupported text.* keys are silently omitted; only format is mapped.
               format = session.text["format"]
               if format.is_a?(Hash)
                 case format["type"]
@@ -525,43 +466,28 @@ module PromptBuilder
                   config["responseMimeType"] = "application/json"
                   schema = format.dig("json_schema", "schema") || format["schema"]
                   config["responseSchema"] = schema if schema
-                else
-                  raise UnsupportedFormatError,
-                    "Gemini format does not support text.format type #{format["type"].inspect}"
+                  # Unsupported format types are silently omitted.
                 end
               end
             end
 
             if session.reasoning
-              unsupported_keys = session.reasoning.keys - SUPPORTED_REASONING_KEYS
-              unless unsupported_keys.empty?
-                raise UnsupportedFormatError,
-                  "Gemini format does not support reasoning.#{unsupported_keys.first}"
-              end
-
+              # Unsupported reasoning.* keys are silently omitted.
               thinking_config = {}
 
               if session.reasoning["budget_tokens"]
                 thinking_config["thinkingBudget"] = session.reasoning["budget_tokens"]
               end
 
-              if session.reasoning["effort"]
-                effort = session.reasoning["effort"]
-                unless SUPPORTED_REASONING_EFFORTS.include?(effort)
-                  raise UnsupportedFormatError,
-                    "Gemini format only supports reasoning.effort values minimal, low, medium, and high"
-                end
-
+              effort = session.reasoning["effort"]
+              # Unsupported effort levels are silently omitted.
+              if effort && SUPPORTED_REASONING_EFFORTS.include?(effort)
                 thinking_config["thinkingLevel"] = effort.upcase
               end
 
-              if session.reasoning["summary"]
-                summary = session.reasoning["summary"]
-                unless SUPPORTED_REASONING_SUMMARIES.include?(summary)
-                  raise UnsupportedFormatError,
-                    "Gemini format only supports reasoning.summary value auto"
-                end
-
+              summary = session.reasoning["summary"]
+              # Unsupported summary values are silently omitted.
+              if summary && SUPPORTED_REASONING_SUMMARIES.include?(summary)
                 thinking_config["includeThoughts"] = true
               end
 
@@ -571,22 +497,16 @@ module PromptBuilder
             config
           end
 
+          # Unsupported service_tier values are silently omitted.
           def serialize_service_tier(service_tier)
-            return service_tier if SUPPORTED_SERVICE_TIERS.include?(service_tier)
-
-            raise UnsupportedFormatError,
-              "Gemini format only supports service_tier values unspecified, standard, flex, and priority"
+            service_tier if SUPPORTED_SERVICE_TIERS.include?(service_tier)
           end
 
           def build_tools(session)
             return [] if session.tool_definitions.empty?
 
-            strict_definition = session.tool_definitions.find(&:strict)
-            if strict_definition
-              raise UnsupportedFormatError,
-                "Gemini format does not support strict tool definitions"
-            end
-
+            # Strict tool definitions are not supported; the strict flag is
+            # silently omitted (Gemini tools have no strict field).
             [
               {
                 "functionDeclarations" => session.tool_definitions.map do |definition|
@@ -602,14 +522,11 @@ module PromptBuilder
           def build_tool_config(tool_choice, tools:)
             return nil if tool_choice.nil?
 
-            config = {}
+            # tool_choice cannot be expressed without tools (except "none", which
+            # has no effect); omit it.
+            return nil if tools.empty? && tool_choice != "none"
 
-            if tools.empty?
-              if tool_choice != "none"
-                raise UnsupportedFormatError,
-                  "Gemini format does not support tool_choice without tools"
-              end
-            end
+            config = {}
 
             case tool_choice
             when "auto"
@@ -631,12 +548,12 @@ module PromptBuilder
                   "allowedFunctionNames" => [name]
                 }
               else
-                raise UnsupportedFormatError,
-                  "Gemini format does not support tool_choice #{tool_choice.inspect}"
+                # Unsupported tool_choice values are silently omitted.
+                return nil
               end
             else
-              raise UnsupportedFormatError,
-                "Gemini format does not support tool_choice #{tool_choice.inspect}"
+              # Unsupported tool_choice values are silently omitted.
+              return nil
             end
 
             config
