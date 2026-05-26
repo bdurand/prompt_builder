@@ -106,6 +106,38 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(content).not_to have_key("extra")
     end
 
+    it "serializes InputFile with data URL as file_data" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(url: "data:application/pdf;base64,abc123", filename: "doc.pdf")]
+      ))
+
+      payload = described_class.request_payload(session)
+      content = payload["input"][0]["content"][0]
+
+      expect(content["type"]).to eq("input_file")
+      expect(content["file_data"]).to eq("data:application/pdf;base64,abc123")
+      expect(content["filename"]).to eq("doc.pdf")
+      expect(content).not_to have_key("url")
+    end
+
+    it "serializes InputFile with http URL as file_url" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(url: "https://example.com/doc.pdf", filename: "doc.pdf")]
+      ))
+
+      payload = described_class.request_payload(session)
+      content = payload["input"][0]["content"][0]
+
+      expect(content["type"]).to eq("input_file")
+      expect(content["file_url"]).to eq("https://example.com/doc.pdf")
+      expect(content["filename"]).to eq("doc.pdf")
+      expect(content).not_to have_key("url")
+    end
+
     it "strips extra from FunctionCallOutput content" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
@@ -396,7 +428,8 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
         PromptBuilder::Content::InputImage.new(extra: {"file_id" => "file_abc"}),
         PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,aGVsbG8="),
         PromptBuilder::Content::InputFile.new(url: "https://example.com/doc.pdf", filename: "doc.pdf"),
-        PromptBuilder::Content::InputFile.new(extra: {"file_id" => "file_xyz"})
+        PromptBuilder::Content::InputFile.new(extra: {"file_id" => "file_xyz"}),
+        PromptBuilder::Content::InputFile.new(url: "data:application/pdf;base64,aGVsbG8=", filename: "inline.pdf")
       ])
 
       session.add_item(PromptBuilder::Items::Reasoning.new(

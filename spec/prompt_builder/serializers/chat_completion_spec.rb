@@ -195,6 +195,59 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(block["file"]["file_data"]).to start_with("data:application/octet-stream;base64,")
     end
 
+    it "inlines text-based InputFile (text/html) as text content" do
+      html = "<h1>Hello</h1>"
+      encoded = [html].pack("m0")
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(
+          url: "data:text/html;base64,#{encoded}",
+          filename: "page.html",
+          media_type: "text/html"
+        )]
+      ))
+
+      h = described_class.request_payload(session)
+      block = h["messages"][0]["content"][0]
+      expect(block).to eq({"type" => "text", "text" => html})
+    end
+
+    it "inlines text-based InputFile (application/json) as text content" do
+      json = '{"key": "value"}'
+      encoded = [json].pack("m0")
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(
+          url: "data:application/json;base64,#{encoded}",
+          filename: "data.json",
+          media_type: "application/json"
+        )]
+      ))
+
+      h = described_class.request_payload(session)
+      block = h["messages"][0]["content"][0]
+      expect(block).to eq({"type" => "text", "text" => json})
+    end
+
+    it "inlines text-based InputFile (text/csv) as text content using data URL mime" do
+      csv = "name,age\nAlice,30"
+      encoded = [csv].pack("m0")
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "user",
+        content: [PromptBuilder::Content::InputFile.new(
+          url: "data:text/csv;base64,#{encoded}",
+          filename: "data.csv"
+        )]
+      ))
+
+      h = described_class.request_payload(session)
+      block = h["messages"][0]["content"][0]
+      expect(block).to eq({"type" => "text", "text" => csv})
+    end
+
     it "omits InputFile that has only a url (no Chat Completions representation)" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.user("Hi")

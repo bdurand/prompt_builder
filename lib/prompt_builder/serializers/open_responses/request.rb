@@ -93,9 +93,8 @@ module PromptBuilder
               when "input_file"
                 if block.key?("url")
                   url = block.delete("url")
-                  parsed = PromptBuilder.parse_data_url(url)
-                  if parsed
-                    block["file_data"] = parsed[1]
+                  if PromptBuilder.parse_data_url(url)
+                    block["file_data"] = url
                   else
                     block["file_url"] = url
                   end

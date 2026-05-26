@@ -101,8 +101,6 @@ module PromptBuilder
         }.freeze
         private_constant :FILE_EXTENSION_MIME_TYPES
 
-
-
         class << self
           private
 
@@ -395,8 +393,6 @@ module PromptBuilder
             raise UnsupportedFormatError,
               "Gemini format requires InputFile.url or file_id in extra"
           end
-
-
 
           def file_mime_type(content)
             [content.filename, content.url].each do |path|

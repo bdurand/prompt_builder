@@ -35,6 +35,15 @@ module PromptBuilder
       end
     end
 
+    # Construct a base64-encoded data URL from raw binary data and a content type.
+    #
+    # @param data [String] the raw binary data
+    # @param content_type [String] the MIME content type (e.g. "image/png", "application/pdf")
+    # @return [String] a data URL in the form "data:<content_type>;base64,<encoded_data>"
+    def data_url(data, content_type)
+      "data:#{content_type};base64,#{[data].pack("m0")}"
+    end
+
     # Parse a data URL into its media type and base64-encoded data.
     #
     # @param url [String, nil] a URL that may be a data URL

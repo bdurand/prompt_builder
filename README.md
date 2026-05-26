@@ -270,7 +270,7 @@ session.user([
 session.user([
   PromptBuilder::Content::InputText.new(text: "What is in this image?"),
   PromptBuilder::Content::InputImage.new(
-    url: PromptBuilder::Content.data_url(File.binread("photo.png"), "image/png")
+    url: PromptBuilder.data_url(File.binread("photo.png"), "image/png")
   )
 ])
 ```
@@ -290,7 +290,7 @@ session.user([
 session.user([
   PromptBuilder::Content::InputText.new(text: "What does this spreadsheet contain?"),
   PromptBuilder::Content::InputFile.new(
-    url: PromptBuilder::Content.data_url(File.binread("data.csv"), "text/csv"),
+    url: PromptBuilder.data_url(File.binread("data.csv"), "text/csv"),
     filename: "data.csv"
   )
 ])

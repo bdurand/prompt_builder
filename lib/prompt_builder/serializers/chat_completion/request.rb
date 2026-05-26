@@ -299,13 +299,21 @@ module PromptBuilder
             file_id = content.extra && content.extra["file_id"]
             media_type = content.extra && content.extra["media_type"]
 
+            parsed = PromptBuilder.parse_data_url(content.url)
+            mime = media_type || (parsed && parsed[0])
+
+            # Text-based files are inlined as text content blocks since the Chat
+            # Completions file type is not universally supported for text formats.
+            if parsed && text_media_type?(mime)
+              text = parsed[1].unpack1("m").force_encoding("utf-8")
+              return {"type" => "text", "text" => text}
+            end
+
             file = {}
             file["file_id"] = file_id if file_id
             file["filename"] = content.filename if content.filename
 
-            parsed = PromptBuilder.parse_data_url(content.url)
             if parsed
-              mime = media_type || parsed[0]
               file["file_data"] = "data:#{mime};base64,#{parsed[1]}"
             end
 
@@ -320,6 +328,24 @@ module PromptBuilder
             end
 
             {"type" => "file", "file" => file}
+          end
+
+          def text_media_type?(media_type)
+            return false unless media_type
+
+            media_type.start_with?("text/") ||
+              media_type == "application/json" ||
+              media_type == "application/xml" ||
+              media_type == "application/javascript" ||
+              media_type == "application/yaml" ||
+              media_type == "application/x-yaml" ||
+              media_type == "application/csv" ||
+              media_type == "application/xhtml+xml" ||
+              media_type == "application/sql" ||
+              media_type == "application/graphql" ||
+              media_type == "application/ld+json" ||
+              media_type.end_with?("+xml") ||
+              media_type.end_with?("+json")
           end
 
           def serialize_image_content(content)
