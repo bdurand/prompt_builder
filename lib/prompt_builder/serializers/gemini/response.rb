@@ -64,6 +64,9 @@ module PromptBuilder
           private
 
           def deserialize_response(hash)
+            require_response_key!(hash, "candidates")
+            require_response_key!(hash, "modelVersion")
+
             usage = build_usage(hash["usageMetadata"])
 
             # Only the first candidate is parsed; additional candidates have no

@@ -310,7 +310,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
     end
 
     it "handles minimal response hashes" do
-      response = described_class.parse_response({"status" => "completed"})
+      response = described_class.parse_response({"object" => "response", "status" => "completed"})
 
       expect(response).to be_a(PromptBuilder::Response)
       expect(response.status).to eq("completed")
@@ -320,6 +320,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
 
     it "round-trips RefusalContent through output" do
       hash = {
+        "object" => "response",
         "status" => "completed",
         "output" => [{
           "type" => "message",
@@ -359,6 +360,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
 
     it "round-trips Compaction through response output" do
       hash = {
+        "object" => "response",
         "status" => "completed",
         "output" => [{
           "type" => "compaction",

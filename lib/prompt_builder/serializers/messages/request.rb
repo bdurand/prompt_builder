@@ -71,7 +71,6 @@ module PromptBuilder
       # - +anthropic-beta+ headers and API versioning (this gem produces no HTTP
       #   request — set headers in your HTTP client)
       class Request < Base
-        DEFAULT_MAX_TOKENS = 4096
         SUPPORTED_METADATA_KEYS = ["user_id"].freeze
         EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"].freeze
         SUPPORTED_THINKING_TYPES = ["adaptive", "disabled", "enabled"].freeze
@@ -85,7 +84,7 @@ module PromptBuilder
             raise UnsupportedFormatError, "Messages format requires session.model" unless session.model
 
             h["model"] = session.model
-            h["max_tokens"] = session.max_output_tokens || DEFAULT_MAX_TOKENS
+            h["max_tokens"] = session.max_output_tokens if session.max_output_tokens
             h["temperature"] = session.temperature if session.temperature
             h["top_p"] = session.top_p if session.top_p
             effective_metadata = build_effective_metadata(session)

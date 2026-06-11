@@ -109,6 +109,8 @@ module PromptBuilder
             if hash["object"] == "chat.completion.chunk"
               raise UnsupportedFormatError, "Chat Completions streaming chunks are not supported"
             end
+            require_response_key!(hash, "choices")
+            require_response_key!(hash, "model")
             # Responses with multiple choices have no canonical multi-candidate
             # representation; only the first choice is parsed (handled by the
             # caller using choices[0]).

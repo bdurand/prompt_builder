@@ -1016,6 +1016,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "marks safety-blocked prompts as failed even when candidates is empty" do
       response_hash = {
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [],
         "promptFeedback" => {"blockReason" => "SAFETY"}
       }
@@ -1028,6 +1029,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
         UNEXPECTED_TOOL_CALL TOO_MANY_TOOL_CALLS MODEL_ARMOR IMAGE_PROHIBITED_CONTENT IMAGE_OTHER NO_IMAGE
         IMAGE_RECITATION MISSING_THOUGHT_SIGNATURE MALFORMED_RESPONSE].each do |reason|
         response = described_class.parse_response({
+          "modelVersion" => "gemini-2.0-flash",
           "candidates" => [{"content" => {"parts" => [{"text" => ""}]}, "finishReason" => reason}]
         })
         expect(response.status).to eq("failed"), "expected #{reason} to map to failed"
@@ -1036,6 +1038,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "treats FINISH_REASON_UNSPECIFIED as nil status" do
       response = described_class.parse_response({
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [{"content" => {"parts" => [{"text" => "x"}]}, "finishReason" => "FINISH_REASON_UNSPECIFIED"}]
       })
       expect(response.status).to be_nil
@@ -1043,6 +1046,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "parses only the first candidate when multiple are present" do
       response_hash = {
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [
           {"content" => {"parts" => [{"text" => "one"}]}, "finishReason" => "STOP"},
           {"content" => {"parts" => [{"text" => "two"}]}, "finishReason" => "STOP"}
@@ -1057,6 +1061,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
     it "skips unknown response Part shapes (executableCode, codeExecutionResult, inlineData, fileData)" do
       %w[executableCode codeExecutionResult inlineData fileData toolCall toolResponse].each do |key|
         response_hash = {
+          "modelVersion" => "gemini-2.0-flash",
           "candidates" => [
             {
               "content" => {"parts" => [{key => {"foo" => "bar"}}, {"text" => "hi"}]},
@@ -1072,6 +1077,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "skips a response Part with no recognized content key" do
       response_hash = {
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [
           {
             "content" => {"parts" => [{"unknownKey" => "x"}]},
@@ -1085,6 +1091,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "preserves text parts whose text is an empty string" do
       response_hash = {
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [
           {"content" => {"parts" => [{"text" => ""}]}, "finishReason" => "STOP"}
         ]
@@ -1097,6 +1104,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
     it "surfaces grounding, citation, safety, and logprobs metadata on extra" do
       response_hash = {
         "responseId" => "resp_xyz",
+        "modelVersion" => "gemini-2.0-flash",
         "createTime" => "2026-05-04T12:00:00Z",
         "modelStatus" => {"modelStage" => "STABLE"},
         "promptFeedback" => {"safetyRatings" => [{"category" => "HARM_CATEGORY_HARASSMENT", "probability" => "NEGLIGIBLE"}]},
@@ -1133,6 +1141,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "leaves extra nil when no metadata is present" do
       response_hash = {
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [{"content" => {"parts" => [{"text" => "x"}]}, "finishReason" => "STOP"}]
       }
       response = described_class.parse_response(response_hash)
@@ -1141,6 +1150,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "surfaces additional usage breakdowns (tool-use prompt tokens and modality details)" do
       response_hash = {
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [{"content" => {"parts" => [{"text" => "ok"}]}, "finishReason" => "STOP"}],
         "usageMetadata" => {
           "promptTokenCount" => 100,
@@ -1430,6 +1440,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "maps RECITATION finish reason to failed" do
       response_hash = {
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [
           {
             "content" => {"parts" => []},
@@ -1444,6 +1455,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "assigns sequential synthetic call_ids to multiple tool calls" do
       response_hash = {
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [
           {
             "content" => {
@@ -1471,6 +1483,7 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
     it "handles empty functionCall args" do
       response_hash = {
+        "modelVersion" => "gemini-2.0-flash",
         "candidates" => [
           {
             "content" => {
