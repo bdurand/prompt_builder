@@ -25,12 +25,12 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["messages"][0]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
     end
 
-    it "defaults max_tokens to 4096" do
+    it "defaults max_tokens to nil" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.user("Hello")
 
       h = described_class.request_payload(session)
-      expect(h["max_tokens"]).to eq(4096)
+      expect(h["max_tokens"]).to be_nil
     end
 
     it "raises when there are no user/assistant messages" do

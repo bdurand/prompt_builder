@@ -766,6 +766,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "maps length finish_reason to incomplete" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{"message" => {"content" => "partial"}, "finish_reason" => "length"}]
       })
       expect(response.status).to eq("incomplete")
@@ -773,6 +774,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "parses content returned as an array of content blocks" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {
             "role" => "assistant",
@@ -794,6 +796,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "omits the assistant message when content is an empty string" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {"role" => "assistant", "content" => "", "tool_calls" => [
             {"id" => "call_1", "type" => "function", "function" => {"name" => "f", "arguments" => "{}"}}
@@ -808,6 +811,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "maps content_filter to failed" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{"message" => {"content" => ""}, "finish_reason" => "content_filter"}]
       })
       expect(response.status).to eq("failed")
@@ -826,6 +830,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "parses a refusal response into a RefusalContent message" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {"role" => "assistant", "content" => nil, "refusal" => "I cannot help with that."},
           "finish_reason" => "stop"
@@ -844,6 +849,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       logprob_data = [{"token" => "Hello", "logprob" => -0.5, "bytes" => [72], "top_logprobs" => []}]
 
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {"role" => "assistant", "content" => "Hello"},
           "logprobs" => {"content" => logprob_data},
@@ -858,6 +864,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "copies message.annotations onto OutputText (string content form)" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {
             "role" => "assistant",
@@ -879,6 +886,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "copies message.annotations onto OutputText (array content form)" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {
             "role" => "assistant",
@@ -895,6 +903,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "round-trips an assistant message with annotations through request_payload" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {
             "role" => "assistant",
@@ -917,6 +926,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "populates service_tier from the response" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "service_tier" => "default",
         "choices" => [{"message" => {"content" => "Hi"}, "finish_reason" => "stop"}]
       })
@@ -926,6 +936,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "captures system_fingerprint in extra" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "system_fingerprint" => "fp_abc",
         "choices" => [{"message" => {"content" => "Hi"}, "finish_reason" => "stop"}]
       })
@@ -941,6 +952,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "parses only the first choice when multiple are present" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [
           {"message" => {"content" => "One"}, "finish_reason" => "stop"},
           {"message" => {"content" => "Two"}, "finish_reason" => "stop"}
@@ -953,6 +965,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "skips unsupported response content block types" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {"content" => [
             {"type" => "input_audio", "input_audio" => {}},
@@ -968,6 +981,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "skips custom (non-function) tool calls" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {"content" => nil, "tool_calls" => [{"id" => "call_1", "type" => "custom"}]},
           "finish_reason" => "tool_calls"
@@ -979,6 +993,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "ignores audio responses" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{
           "message" => {"content" => nil, "audio" => {"id" => "audio_1"}},
           "finish_reason" => "stop"
@@ -990,6 +1005,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "maps the legacy function_call finish_reason to completed" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{"message" => {"content" => "Hi"}, "finish_reason" => "function_call"}]
       })
       expect(response.status).to eq("completed")
@@ -997,6 +1013,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
     it "parses prompt_tokens_details and completion_tokens_details into usage" do
       response = described_class.parse_response({
+        "model" => "gpt-4o",
         "choices" => [{"message" => {"content" => "Hi"}, "finish_reason" => "stop"}],
         "usage" => {
           "prompt_tokens" => 10,

@@ -15,4 +15,7 @@ module PromptBuilder
 
   # Raised when an operation is invalid for the current session state.
   class InvalidStateError < Error; end
+
+  # Raised when a response payload does not match the expected shape.
+  class UnexpectedPayloadError < Error; end
 end

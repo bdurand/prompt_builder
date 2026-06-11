@@ -11,6 +11,9 @@ module PromptBuilder
           private
 
           def deserialize_response(hash)
+            require_response_key!(hash, "output")
+            require_response_key!(hash, "stopReason")
+
             usage_hash = hash["usage"]
             usage = if usage_hash
               cache_read = usage_hash["cacheReadInputTokens"]

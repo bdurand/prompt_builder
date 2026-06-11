@@ -9,6 +9,9 @@ module PromptBuilder
           private
 
           def deserialize_response(hash)
+            require_response_key!(hash, "status")
+            require_response_key!(hash, "object")
+
             PromptBuilder::Response.from_h(hash)
           end
         end
