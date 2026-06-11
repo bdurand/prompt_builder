@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Responseses will now raise an `UnsupportedFormatError` if the response shape is missing key elements.
+- Responses will now raise an `UnsupportedFormatError` if the response shape is missing key elements.
 - Removed the default `max_tokens` value of 4096 from the request serializer. If `max_output_tokens` is not set on the session, the request will simply omit the `max_tokens` parameter, allowing the API to apply its own defaults.
 
 ## 0.1.0

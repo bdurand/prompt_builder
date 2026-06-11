@@ -43,8 +43,9 @@ module PromptBuilder
         def require_response_key!(hash, key)
           return if hash.is_a?(Hash) && hash.key?(key)
 
+          body = JSON.generate(hash)[0..200]
           raise UnexpectedPayloadError,
-            "unexpected response payload, missing #{key.inspect}: #{hash.inspect}"
+            "unexpected response payload, missing #{key.inspect}: #{body}"
         end
       end
     end
