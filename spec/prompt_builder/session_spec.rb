@@ -53,6 +53,62 @@ RSpec.describe PromptBuilder::Session do
     end
   end
 
+  describe "#add_function_call_output" do
+    it "appends a FunctionCallOutput item with the result as output" do
+      item = session.add_function_call_output(call_id: "call_1", result: "42")
+      expect(item).to be_a(PromptBuilder::Items::FunctionCallOutput)
+      expect(session.items).to include(item)
+      expect(item.call_id).to eq("call_1")
+      expect(item.output).to eq("42")
+    end
+
+    it "accepts an array of content objects" do
+      item = session.add_function_call_output(
+        call_id: "call_1",
+        result: [PromptBuilder::Content::InputText.new(text: "sunny")]
+      )
+      expect(item.output.length).to eq(1)
+      expect(item.output[0].text).to eq("sunny")
+    end
+
+    it "supports the documented agentic tool loop round-trip" do
+      session.register_tool("get_weather", parameters: {"type" => "object", "properties" => {"city" => {"type" => "string"}}})
+      session.user("Weather in Paris?")
+
+      response = PromptBuilder::Response.parse(
+        {
+          "id" => "chatcmpl-1",
+          "object" => "chat.completion",
+          "model" => "gpt-5.2",
+          "choices" => [{
+            "message" => {
+              "role" => "assistant",
+              "content" => nil,
+              "tool_calls" => [{
+                "id" => "call_abc",
+                "type" => "function",
+                "function" => {"name" => "get_weather", "arguments" => "{\"city\":\"Paris\"}"}
+              }]
+            },
+            "finish_reason" => "tool_calls"
+          }]
+        },
+        :chat_completion
+      )
+      session.add_response(response)
+
+      response.tool_calls.each do |call|
+        session.add_function_call_output(call_id: call.call_id, result: "18C and sunny")
+      end
+
+      payload = session.request_payload(:chat_completion)
+      tool_message = payload["messages"].last
+      expect(tool_message["role"]).to eq("tool")
+      expect(tool_message["tool_call_id"]).to eq("call_abc")
+      expect(tool_message["content"]).to eq("18C and sunny")
+    end
+  end
+
   describe "#to_h" do
     it "serializes as an Open Responses request payload" do
       session.user("Hello")

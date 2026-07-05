@@ -94,6 +94,14 @@ RSpec.describe PromptBuilder::Response do
     end
   end
 
+  describe "#provider_data" do
+    it "is an alias for extra" do
+      response = described_class.new(status: "completed", extra: {"system_fingerprint" => "fp_1"})
+      expect(response.provider_data).to eq({"system_fingerprint" => "fp_1"})
+      expect(response.provider_data).to eq(response.extra)
+    end
+  end
+
   describe "#completed?" do
     it "returns true when completed" do
       response = described_class.from_h({"status" => "completed"})
