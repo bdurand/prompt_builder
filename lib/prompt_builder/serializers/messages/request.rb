@@ -76,6 +76,17 @@ module PromptBuilder
         SUPPORTED_THINKING_TYPES = ["adaptive", "disabled", "enabled"].freeze
         SUPPORTED_TOOL_CHOICE_TYPES = ["any", "auto", "none", "tool"].freeze
 
+        # Citation types accepted by the Messages API on text blocks. Annotations
+        # parsed from other providers (e.g. Chat Completions url_citation) have
+        # no Anthropic equivalent and are silently dropped.
+        SUPPORTED_CITATION_TYPES = [
+          "char_location",
+          "content_block_location",
+          "page_location",
+          "search_result_location",
+          "web_search_result_location"
+        ].freeze
+
         class << self
           private
 
@@ -340,7 +351,8 @@ module PromptBuilder
               {"type" => "text", "text" => content.text}
             when Content::OutputText
               text = {"type" => "text", "text" => content.text}
-              text["citations"] = content.annotations unless content.annotations.empty?
+              citations = serialize_citations(content.annotations)
+              text["citations"] = citations unless citations.empty?
               text
             when Content::InputImage
               # Assistant image content is not supported; omit it.
@@ -421,6 +433,16 @@ module PromptBuilder
             else
               # Unsupported content types are silently omitted.
               nil
+            end
+          end
+
+          # Only annotations that are valid Anthropic citation objects can be
+          # replayed as citations. Annotations from other providers (e.g. a
+          # Chat Completions url_citation) are silently dropped so a
+          # cross-provider session history doesn't produce an invalid request.
+          def serialize_citations(annotations)
+            annotations.select do |annotation|
+              annotation.is_a?(Hash) && SUPPORTED_CITATION_TYPES.include?(annotation["type"])
             end
           end
 

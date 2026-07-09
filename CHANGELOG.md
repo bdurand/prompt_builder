@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.2
+
+### Fixed
+
+- `Session#add_function_call_output` raised a `NameError`; it now correctly builds an `Items::FunctionCallOutput`.
+- Provider-specific `extra` data on items, content blocks, and tool definitions (e.g. `cache_control`, `cache_point`, `thought_signature`, `media_type`) leaked into Open Responses request payloads and would be rejected as unknown parameters. It is now stripped from `request_payload(:open_responses)`.
+- The Messages serializer emitted all `OutputText.annotations` as text-block `citations`, including annotation shapes from other providers (e.g. Chat Completions `url_citation`) that the Anthropic API rejects. Only valid Anthropic citation types are now emitted.
+- The Chat Completions serializer emitted tool messages with an empty content array when a tool result contained no text content; it now collapses to an empty string.
+- The Chat Completions response parser duplicated message-level `annotations` and `logprobs` onto every text block; they are now attached only to the first.
+- `PromptBuilder.parse_data_url` now accepts data URLs with media type parameters (e.g. `data:text/plain;charset=utf-8;base64,...`).
+
+### Added
+
+- `Response#provider_data` as an alias for `Response#extra`.
+
 ## 0.1.1
 
 ### Changed

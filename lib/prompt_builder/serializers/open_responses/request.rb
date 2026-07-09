@@ -5,6 +5,15 @@ module PromptBuilder
     class OpenResponses < Base
       # Request serializer for the OpenAI Open Responses API format.
       class Request < Base
+        # Content extra keys that are part of the Open Responses API schema and
+        # must survive extra-stripping (the canonical content classes have no
+        # dedicated attribute for them).
+        CANONICAL_EXTRA_KEYS = {
+          "input_file" => ["file_id"].freeze,
+          "input_image" => ["file_id"].freeze
+        }.freeze
+        private_constant :CANONICAL_EXTRA_KEYS
+
         class << self
           # Export a session to Open Responses API request payload.
           #
@@ -12,9 +21,9 @@ module PromptBuilder
           # @return [Hash] the serialized request payload
           def request_payload(session)
             payload = session.to_h
-            apply_server_state!(payload, session)
+            items = apply_server_state!(payload, session)
             payload.delete("extra")
-            strip_extra(payload)
+            strip_extra(payload, items, session.tool_definitions)
             normalize_content_urls!(payload)
             strip_non_replayable_reasoning!(payload)
             strip_output_only_fields!(payload)
@@ -28,36 +37,78 @@ module PromptBuilder
           # When the session is in server-state mode, replace the full input
           # array with only items added after the last response boundary and
           # include previous_response_id for the API to resolve history.
+          # Returns the item objects backing the payload's input array.
           def apply_server_state!(payload, session)
-            return if session.local_state?
+            return session.items if session.local_state?
 
             payload.delete("input")
-            new_items = session.items[session.response_boundary_index..]
-            payload["input"] = new_items.map(&:to_h) if new_items && !new_items.empty?
+            new_items = session.items[session.response_boundary_index..] || []
+            payload["input"] = new_items.map(&:to_h) unless new_items.empty?
+            new_items
           end
 
-          # Walk the payload and remove any "extra" keys from items, content
-          # blocks, and tool definitions since they are not part of the Open
-          # Responses API schema.
-          def strip_extra(payload)
+          # Remove provider-specific extra data from items, content blocks, and
+          # tool definitions since it is not part of the Open Responses API
+          # schema. Items, content blocks, and tool definitions serialize their
+          # extras flat into the hash, so the extra keys must be looked up on
+          # the backing objects rather than removed as a nested "extra" key.
+          def strip_extra(payload, items, tool_definitions)
             input = payload["input"]
             if input.is_a?(Array)
-              input.each do |item|
-                next unless item.is_a?(Hash)
+              input.each_with_index do |item_hash, index|
+                next unless item_hash.is_a?(Hash)
 
-                item.delete("extra")
+                item = items[index]
+                next unless item
 
-                if item["type"] == "function_call_output" && item["output"].is_a?(Array)
-                  strip_extra_from_blocks!(item["output"])
-                else
-                  content = item["content"]
-                  strip_extra_from_blocks!(content) if content.is_a?(Array)
+                strip_extra_keys!(item_hash, item.extra)
+
+                case item
+                when Items::Message
+                  strip_extra_from_blocks!(item_hash["content"], item.content)
+                when Items::FunctionCallOutput
+                  strip_extra_from_blocks!(item_hash["output"], item.output) if item.output.is_a?(Array)
                 end
               end
             end
 
             tools = payload["tools"]
-            strip_extra_from_blocks!(tools) if tools.is_a?(Array)
+            if tools.is_a?(Array)
+              tools.each_with_index do |tool_hash, index|
+                next unless tool_hash.is_a?(Hash)
+
+                definition = tool_definitions[index]
+                strip_extra_keys!(tool_hash, definition.extra) if definition
+              end
+            end
+          end
+
+          def strip_extra_from_blocks!(blocks, contents)
+            return unless blocks.is_a?(Array)
+
+            blocks.each_with_index do |block, index|
+              next unless block.is_a?(Hash)
+
+              content = contents[index]
+              next unless content.respond_to?(:extra)
+
+              keep = CANONICAL_EXTRA_KEYS.fetch(block["type"], [])
+              strip_extra_keys!(block, content.extra, keep: keep)
+            end
+          end
+
+          def strip_extra_keys!(hash, extra, keep: [])
+            return unless extra.is_a?(Hash)
+
+            extra.each_key do |key|
+              # "type" is canonical on every item and content block; an extra
+              # named "type" never survives serialization, so deleting it here
+              # would corrupt the block.
+              next if key == "type"
+              next if keep.include?(key)
+
+              hash.delete(key)
+            end
           end
 
           # Convert canonical "url" keys back to Open Responses API keys:
@@ -199,14 +250,6 @@ module PromptBuilder
 
             normalized = value.strip
             normalized.empty? ? nil : normalized
-          end
-
-          def strip_extra_from_blocks!(blocks)
-            blocks.each do |block|
-              next unless block.is_a?(Hash)
-
-              block.delete("extra")
-            end
           end
 
           # Normalize text.format for the Responses API. If the format uses

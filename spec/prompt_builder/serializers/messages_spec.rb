@@ -159,6 +159,36 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["messages"][1]["content"][0]["citations"]).to eq([citation])
     end
 
+    it "drops annotations that are not valid Anthropic citation types" do
+      url_citation = {
+        "type" => "url_citation",
+        "url_citation" => {"url" => "https://example.com", "title" => "Example", "start_index" => 0, "end_index" => 5}
+      }
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "assistant",
+        content: [PromptBuilder::Content::OutputText.new(text: "Hello", annotations: [url_citation])]
+      ))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][1]["content"][0]).not_to have_key("citations")
+    end
+
+    it "keeps valid citations while dropping foreign annotation shapes" do
+      valid = {"type" => "web_search_result_location", "url" => "https://example.com", "cited_text" => "Hello"}
+      foreign = {"type" => "url_citation", "url_citation" => {"url" => "https://example.com"}}
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "assistant",
+        content: [PromptBuilder::Content::OutputText.new(text: "Hello", annotations: [valid, foreign])]
+      ))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][1]["content"][0]["citations"]).to eq([valid])
+    end
+
     it "serializes Anthropic thinking blocks with signatures" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.user("Think hard")

@@ -628,7 +628,7 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(tool_msg["content"]).to eq([{"type" => "text", "text" => "72F sunny"}])
     end
 
-    it "omits unsupported content types in array output" do
+    it "omits unsupported content types in array output and collapses to an empty string" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
         call_id: "call_1",
@@ -638,7 +638,15 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       h = described_class.request_payload(session)
       tool_msg = h["messages"].last
       expect(tool_msg["role"]).to eq("tool")
-      expect(tool_msg["content"]).to eq([])
+      expect(tool_msg["content"]).to eq("")
+    end
+
+    it "collapses an empty array output to an empty string" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: "call_1", output: []))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"].last["content"]).to eq("")
     end
 
     it "omits allowed_tools tool_choice" do
@@ -899,6 +907,30 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
 
       out = response.output[0].content[0]
       expect(out.annotations).to eq([{"type" => "url_citation"}])
+    end
+
+    it "attaches message.annotations and logprobs to only the first text block" do
+      response = described_class.parse_response({
+        "model" => "gpt-4o",
+        "choices" => [{
+          "message" => {
+            "role" => "assistant",
+            "content" => [
+              {"type" => "text", "text" => "First"},
+              {"type" => "text", "text" => "Second"}
+            ],
+            "annotations" => [{"type" => "url_citation"}]
+          },
+          "logprobs" => {"content" => [{"token" => "First", "logprob" => -0.1}]},
+          "finish_reason" => "stop"
+        }]
+      })
+
+      contents = response.output[0].content
+      expect(contents[0].annotations).to eq([{"type" => "url_citation"}])
+      expect(contents[0].logprobs).to eq([{"token" => "First", "logprob" => -0.1}])
+      expect(contents[1].annotations).to eq([])
+      expect(contents[1].logprobs).to eq([])
     end
 
     it "round-trips an assistant message with annotations through request_payload" do

@@ -44,14 +44,16 @@ module PromptBuilder
       "data:#{content_type};base64,#{[data].pack("m0")}"
     end
 
-    # Parse a data URL into its media type and base64-encoded data.
+    # Parse a data URL into its media type and base64-encoded data. Media type
+    # parameters (e.g. "data:text/plain;charset=utf-8;base64,...") are allowed
+    # and excluded from the returned media type.
     #
     # @param url [String, nil] a URL that may be a data URL
     # @return [Array(String, String), nil] a two-element array of +[media_type, data]+
-    #   or nil if the URL is not a data URL
+    #   or nil if the URL is not a base64-encoded data URL
     def parse_data_url(url)
       return nil unless url
-      match = url.match(/\Adata:([^;]+);base64,(.*)\z/m)
+      match = url.match(/\Adata:([^;,]+)(?:;[^,]*)?;base64,(.*)\z/m)
       return nil unless match
       [match[1], match[2]]
     end

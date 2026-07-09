@@ -55,15 +55,17 @@ module PromptBuilder
       # === Features in Converse not available through Open Responses
       #
       # The following Converse parameters cannot be set through the Open Responses
-      # canonical format:
-      # - +stopSequences+ — custom stop sequences
-      # - Guardrail policies (+guardrailConfig+)
-      # - Per-model passthrough fields (+additionalModelRequestFields+)
-      # - Requested provider response fields (+additionalModelResponseFieldPaths+)
-      # - Cross-region routing via inference profiles
-      # - +performanceConfig+ latency settings beyond +serviceTier+
-      # - Prompt management variables (+promptVariables+)
-      # - Prompt caching markers (+cachePoint+)
+      # canonical format but are recognized via session +extra+ keys:
+      # - +stopSequences+ — custom stop sequences (+stop_sequences+)
+      # - Guardrail policies (+guardrail_config+)
+      # - Per-model passthrough fields (+additional_model_request_fields+)
+      # - Requested provider response fields (+additional_model_response_field_paths+)
+      # - +performanceConfig+ latency settings (+performance_config+)
+      # - Prompt management variables (+prompt_variables+)
+      #
+      # Prompt caching markers (+cachePoint+) are emitted via the +cache_point+
+      # content extra. Cross-region routing via inference profiles is selected
+      # through the model id and needs no request field.
       class Request < Base
         IMAGE_MEDIA_TYPE_FORMATS = {
           "image/jpeg" => "jpeg",

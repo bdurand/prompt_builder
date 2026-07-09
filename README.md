@@ -78,10 +78,10 @@ Once you've built a session, serialize it to a request payload for the API you w
 **Open Responses API**:
 
 ```ruby
-payload = session.to_h
-# or
 payload = session.request_payload(:open_responses)
 ```
+
+Note that `session.to_h` is *not* a request payload — it is the persistence format used by `Session.from_h` and keeps provider-specific `extra` data, canonical `url` content keys, and non-replayable items that the Open Responses API would reject. Always build request payloads through `request_payload`.
 
 **OpenAI Chat Completions API**:
 
@@ -117,7 +117,7 @@ uri = URI("https://api.openai.com/v1/responses")
 request = Net::HTTP::Post.new(uri)
 request["Authorization"] = "Bearer #{api_key}"
 request["Content-Type"] = "application/json"
-request.body = JSON.generate(session.to_h)
+request.body = JSON.generate(session.request_payload(:open_responses))
 
 response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) do |http|
   http.request(request)
@@ -535,7 +535,7 @@ The following table shows which session configuration fields are supported by ea
 ⁹ `RefusalContent` blocks are dropped silently by all request serializers so a parsed refusal can sit in session history without breaking subsequent `request_payload` calls. A message left empty after stripping is omitted entirely.
 ¹⁰ Chat Completions sends `InputFile` as a `{"type": "file", "file": {...}}` content block. `file_id` (Files API) and base64 data URL (with optional `filename`/`media_type`) are supported. A URL-only `InputFile` (non-data URL) is omitted because Chat Completions has no remote-URL form for files.
 ¹¹ `OutputText.annotations` (e.g. URL citations from `web_search_options`) are parsed onto the assistant message and round-trip through session history, but are dropped silently on Chat Completions and Converse request serialization since those formats have no request-side equivalent. `OutputText.logprobs` is likewise dropped.
-¹² Messages text-block `citations` are parsed into `OutputText.annotations` and emitted back as `citations` when serializing Messages history. Document/tool-result citation opt-ins are still not modeled.
+¹² Messages text-block `citations` are parsed into `OutputText.annotations` and emitted back as `citations` when serializing Messages history. Annotations from other providers (e.g. a Chat Completions `url_citation`) are silently dropped since they are not valid Anthropic citation shapes. Document/tool-result citation opt-ins are still not modeled.
 ¹³ Converse `requestMetadata` only accepts string key/value pairs. This serializer stringifies scalar metadata values and silently omits nested arrays or objects.
 
 ### Features Not Accessible Through Open Responses
@@ -617,7 +617,7 @@ Request-side mappings worth calling out:
 | `InputFile` with data URL (+ optional `filename`/`media_type`) | `{"type": "file", "file": {"filename": ..., "file_data": "data:<media_type>;base64,..."}}` |
 | `InputImage` with data URL (+ `media_type`) | `{"type": "image_url", "image_url": {"url": "data:<media_type>;base64,..."}}` |
 
-Unsupported Chat Completions request features not exposed by this gem include audio input/output (`audio`, `modalities`, `input_audio` content), `web_search_options`, custom tools, `tool_choice: {"type": "allowed_tools", ...}`, `seed`, `stop`, `logit_bias`, `n`, `prediction`, and the deprecated `functions`, `function_call`, `max_tokens`, and `user` fields. Use the modern canonical fields when available (`tools`, `tool_choice`, `max_output_tokens`, `safety_identifier`, `prompt_cache_key`).
+Chat Completions request features with no canonical Open Responses field are available through `session.extra` (`stop`, `seed`, `logit_bias`, `n`, `prediction`, `web_search_options`, `modalities`, `audio`). Features not exposed at all include `input_audio` content blocks, custom tools, `tool_choice: {"type": "allowed_tools", ...}`, and the deprecated `functions`, `function_call`, `max_tokens`, and `user` fields. Use the modern canonical fields when available (`tools`, `tool_choice`, `max_output_tokens`, `safety_identifier`, `prompt_cache_key`).
 
 Response-side behavior and limitations:
 
@@ -676,7 +676,7 @@ Content and message restrictions:
 - Assistant messages map to `role: "model"`; consecutive same-role turns are merged automatically.
 - `InputImage`, `InputFile`, and `InputVideo` are only supported in user messages; the same content on an assistant message is omitted.
 - `InputImage` accepts any URL, a base64 data URL (with required `media_type`), or a Files API `file_id`.
-- `InputFile` accepts any URL, a base64 data URL, or `file_id`. `media_type` is required when not inferable from a `filename` or URL extension. Recognized extensions: `pdf`, `txt`, `md`/`markdown`, `html`/`htm`, `csv`, `json`, `xml`, `rtf`.
+- `InputFile` accepts any URL, a base64 data URL, or `file_id`. `media_type` is required when not inferable from a `filename` or URL extension. Recognized extensions cover documents (`pdf`, `txt`, `md`/`markdown`, `html`/`htm`, `csv`, `json`, `xml`, `rtf`), images (`png`, `jpg`/`jpeg`, `webp`, `heic`, `heif`), audio (`mp3`, `wav`, `aiff`, `aac`, `ogg`, `flac`), and video (`mp4`, `mov`, `webm`, `mpeg`/`mpg`).
 - `InputVideo` requires a URL; raw bytes are not modeled.
 - `RefusalContent` is dropped silently so a parsed Chat Completions refusal can sit in session history without breaking subsequent serialization.
 - `Reasoning` items round-trip via `parts[].thought` with `thoughtSignature` preserved. `redacted_thinking`, `summary`, and unknown reasoning block types are silently skipped.
@@ -689,7 +689,7 @@ Response-side limitations:
 
 - Unknown response `Part` shapes (`inlineData`, `fileData`, `executableCode`, `codeExecutionResult`, `videoMetadata`, server-side `toolCall`/`toolResponse`, or any `Part` without a recognized content key) are silently skipped.
 - Only `candidates[0]` is parsed. When `candidateCount > 1`, additional candidates are dropped (their index is preserved on `provider_data`).
-- Function-call `id` from the response is dropped; the parser synthesizes `gemini_call_<seed>_<n>` so multiple calls in one response share a deterministic seed.
+- Function-call `id` from the response is preserved when present; otherwise the parser synthesizes `gemini_call_<seed>_<n>` so multiple calls in one response share a deterministic seed.
 - `finishReason` mappings: `STOP` → `completed`; `MAX_TOKENS` → `incomplete`; `SAFETY`, `RECITATION`, `OTHER`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `MALFORMED_FUNCTION_CALL`, `IMAGE_SAFETY`, `LANGUAGE`, `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS`, `MODEL_ARMOR` → `failed`. `FINISH_REASON_UNSPECIFIED` is treated as nil.
 - An empty `candidates` array combined with `promptFeedback.blockReason` is mapped to `failed`.
 - `usageMetadata.cachedContentTokenCount`, `toolUsePromptTokenCount`, `promptTokensDetails`, `cacheTokensDetails`, and `toolUsePromptTokensDetails` populate `response.usage.input_tokens_details`. `thoughtsTokenCount` and `candidatesTokensDetails` populate `response.usage.output_tokens_details`.
@@ -725,14 +725,15 @@ Content and message restrictions:
 - `FunctionCall.arguments` must parse to a JSON object; non-object JSON values raise (Bedrock's `toolUse.input` requires an object).
 - `FunctionCallOutput.output` content supports `InputText`/`OutputText`, `InputImage`, `InputFile`, and `InputVideo`, mapping to Converse `text`, `image`, `document`, and `video` tool result blocks. Converse also supports `json` and `searchResult` tool result blocks, but this gem has no canonical content types for them, so unsupported content is omitted. `FunctionCallOutput.status` is mapped: `completed` → `success`, `failed`/`incomplete` → `error`, anything else passes through or is dropped.
 - `tool_choice: "none"` and `tool_choice` without registered tools are both omitted.
-- Converse API request features not exposed by this gem include `stopSequences`, `additionalModelRequestFields`, `additionalModelResponseFieldPaths`, `guardrailConfig` / `guardContent`, `cachePoint`, Prompt Management `promptVariables`, audio blocks, `searchResult` blocks, and `performanceConfig.latency`.
+- Converse API request features with no canonical Open Responses field are available through `session.extra` (`stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables`) and content `extra` (`cache_point`). Features not exposed at all include `guardContent`, audio blocks, and `searchResult` blocks.
+- The serialized payload includes `modelId` as a convenience; the Converse REST endpoint takes the model id in the URL path (`/model/{modelId}/converse`), and AWS REST-JSON services ignore unrecognized body members. Remove it from the body if you prefer a strictly minimal payload.
 
 Response-side limitations:
 
 - Unknown content block keys (e.g. `citationsContent`, `guardContent`) are silently skipped.
 - `metrics.latencyMs`, `trace` (guardrail and prompt-router trace events), `additionalModelResponseFields`, `performanceConfig`, and the raw `serviceTier` object are exposed on `response.provider_data`. `response.service_tier` is also populated from `serviceTier.type`.
-- `stopReason` mappings: `end_turn` / `tool_use` / `stop_sequence` → `completed`, `max_tokens` / `model_context_window_exceeded` → `incomplete`, `guardrail_intervened` / `content_filtered` / `malformed_model_output` / `malformed_tool_use` → `failed`. Unlike the Messages serializer, the matched stop sequence text is not surfaced separately because Converse does not echo it back unless you request provider-specific fields through `additionalModelResponseFieldPaths`, which this gem cannot emit.
-- `usage.cacheReadInputTokens` and `usage.cacheWriteInputTokens` populate `response.usage.input_tokens_details["cached_tokens"]` and `["cache_creation_input_tokens"]`. Cache writes still require `cachePoint` markers in the request, which this gem cannot produce.
+- `stopReason` mappings: `end_turn` / `tool_use` / `stop_sequence` → `completed`, `max_tokens` / `model_context_window_exceeded` → `incomplete`, `guardrail_intervened` / `content_filtered` / `malformed_model_output` / `malformed_tool_use` → `failed`. Unlike the Messages serializer, the matched stop sequence text is not surfaced separately because Converse does not echo it back unless you request provider-specific fields through `additionalModelResponseFieldPaths` (available via the `additional_model_response_field_paths` session extra; the requested fields appear on `response.provider_data`).
+- `usage.cacheReadInputTokens` and `usage.cacheWriteInputTokens` populate `response.usage.input_tokens_details["cached_tokens"]` and `["cache_creation_input_tokens"]`. Cache writes require `cachePoint` markers in the request, which are emitted via the `cache_point` content extra.
 
 ## Installation
 

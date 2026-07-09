@@ -210,10 +210,10 @@ module PromptBuilder
     # Add a tool call output to the conversation.
     #
     # @param call_id [String] the tool call identifier
-    # @param result [String, Hash, Array, Content::Base, nil] the tool call result
-    # @return [Items::FunctionOutput] the added function output item
+    # @param result [String, Array<Content::Base, Hash>, nil] the tool call result
+    # @return [Items::FunctionCallOutput] the added function call output item
     def add_function_call_output(call_id:, result:)
-      add_item(Items::FunctionOutput.new(call_id: call_id, result: result))
+      add_item(Items::FunctionCallOutput.new(call_id: call_id, output: result))
     end
 
     # Add a raw item to the conversation.

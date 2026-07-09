@@ -228,12 +228,16 @@ module PromptBuilder
 
             # Only text content is supported in tool output; other content types
             # are silently omitted.
-            output.filter_map do |content|
+            content = output.filter_map do |content|
               case content
               when Content::InputText, Content::OutputText
                 serialize_text_content(content)
               end
             end
+
+            # Chat Completions rejects tool messages with an empty content
+            # array; collapse to an empty string like the other serializers.
+            content.empty? ? "" : content
           end
 
           def flush_tool_calls!(messages, pending_tool_calls, last_assistant_msg = nil)

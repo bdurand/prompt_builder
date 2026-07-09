@@ -104,6 +104,47 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
 
       expect(content["image_url"]).to eq("https://example.com/img.png")
       expect(content).not_to have_key("extra")
+      expect(content).not_to have_key("some_key")
+    end
+
+    it "strips provider-specific extras that are serialized flat into content, item, and tool hashes" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.system([PromptBuilder::Content::InputText.new(text: "sys", cache_control: {"type" => "ephemeral"})])
+      session.user([
+        PromptBuilder::Content::InputText.new(text: "ctx", cache_point: true),
+        PromptBuilder::Content::InputFile.new(file_id: "file_123", media_type: "application/pdf", citations: {"enabled" => true})
+      ])
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "f", call_id: "call_1", arguments: "{}", thought_signature: "sig123"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: "call_1", output: "ok"))
+      session.register_tool(
+        "search",
+        parameters: {"type" => "object", "properties" => {}},
+        cache_control: {"type" => "ephemeral"}
+      )
+
+      payload = described_class.request_payload(session)
+      json = JSON.generate(payload)
+
+      expect(json).not_to include("cache_control")
+      expect(json).not_to include("cache_point")
+      expect(json).not_to include("citations")
+      expect(json).not_to include("media_type")
+      expect(json).not_to include("thought_signature")
+
+      file_block = payload["input"][1]["content"][1]
+      expect(file_block).to eq({"type" => "input_file", "file_id" => "file_123"})
+    end
+
+    it "strips extras from items appended after the response boundary in server state mode" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4", previous_response_id: "resp_0")
+      session.user([PromptBuilder::Content::InputText.new(text: "hi", cache_control: {"type" => "ephemeral"})])
+
+      payload = described_class.request_payload(session)
+
+      expect(payload["previous_response_id"]).to eq("resp_0")
+      expect(payload["input"][0]["content"][0]).to eq({"type" => "input_text", "text" => "hi"})
     end
 
     it "serializes InputFile with data URL as file_data" do
@@ -153,6 +194,7 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
 
       expect(content["image_url"]).to eq("data:image/png;base64,abc")
       expect(content).not_to have_key("extra")
+      expect(content).not_to have_key("some_key")
     end
 
     it "strips reasoning items without encrypted_content" do

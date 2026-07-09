@@ -36,6 +36,10 @@ module PromptBuilder
                   content: [Content::RefusalContent.new(refusal: message["refusal"])]
                 )
               elsif message["content"].is_a?(Array)
+                # logprobs and annotations are reported once per message, so
+                # attach them to the first text block only to avoid duplicating
+                # them across blocks on round-trip.
+                first_text_block = true
                 contents = message["content"].each_with_object([]) do |block, acc|
                   case block["type"]
                   when "text", nil
@@ -44,9 +48,10 @@ module PromptBuilder
 
                     acc << Content::OutputText.new(
                       text: text,
-                      logprobs: logprobs_content,
-                      annotations: annotations
+                      logprobs: first_text_block ? logprobs_content : [],
+                      annotations: first_text_block ? annotations : []
                     )
+                    first_text_block = false
                   when "refusal"
                     acc << Content::RefusalContent.new(refusal: block["refusal"]) if block["refusal"]
                   else

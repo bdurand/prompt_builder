@@ -125,6 +125,14 @@ module PromptBuilder
     FIELDS.each { |f| attr_reader f }
     attr_reader :text_config, :output, :usage, :extra
 
+    # @!method provider_data
+    #   Provider-specific response metadata with no canonical Open Responses
+    #   slot (e.g. Gemini grounding metadata, Chat Completions system_fingerprint).
+    #   Alias for +extra+.
+    #
+    #   @return [Hash, nil]
+    alias_method :provider_data, :extra
+
     BOOLEAN_FIELDS.each { |f| alias_method("#{f}?", f) }
 
     # Create a new Response.
