@@ -24,6 +24,15 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(h["messages"][0]["content"]).to eq([{"text" => "Hello"}])
     end
 
+    it "raises when model is missing" do
+      session = PromptBuilder::Session.new
+      session.user("Hello")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires session.model/)
+    end
+
     it "raises when there are no user/assistant messages" do
       session = PromptBuilder::Session.new(model: "amazon.nova-lite-v1:0", instructions: "Be helpful")
       expect {
@@ -598,15 +607,21 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(h).not_to have_key("outputConfig")
     end
 
-    it "omits the reasoning field" do
+    it "omits the reasoning field with a warning" do
+      PromptBuilder::Serializers::Converse::Request.reset_reasoning_warning!
       session = PromptBuilder::Session.new(
         model: "amazon.nova-pro-v1:0",
         reasoning: {"budget_tokens" => 1024}
       )
       session.user("Hi")
 
-      h = described_class.request_payload(session)
+      h = nil
+      expect {
+        h = described_class.request_payload(session)
+      }.to output(/reasoning is not supported/).to_stderr
       expect(h).not_to have_key("reasoning")
+    ensure
+      PromptBuilder::Serializers::Converse::Request.reset_reasoning_warning!
     end
 
     it "omits the parallel_tool_calls field" do
@@ -1087,6 +1102,43 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(session.items.length).to eq(2)
       expect(session.items[1]).to be_a(PromptBuilder::Items::Message)
       expect(session.items[1].role).to eq("assistant")
+    end
+  end
+
+  describe "session helpers" do
+    before { PromptBuilder::Serializers::Converse::Request.reset_reasoning_warning! }
+    after { PromptBuilder::Serializers::Converse::Request.reset_reasoning_warning! }
+
+    it "serializes Session#json_output to outputConfig" do
+      schema = {"type" => "object", "properties" => {"answer" => {"type" => "string"}}}
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.json_output(schema, name: "reply")
+
+      h = described_class.request_payload(session)
+      expect(h["outputConfig"]).to eq({
+        "textFormat" => {
+          "type" => "json_schema",
+          "structure" => {
+            "jsonSchema" => {"schema" => JSON.generate(schema), "name" => "reply"}
+          }
+        }
+      })
+    end
+
+    it "warns once when reasoning is set and omits it from the payload" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.think(effort: :medium)
+
+      expect {
+        h = described_class.request_payload(session)
+        expect(h.keys).not_to include("reasoning")
+      }.to output(/reasoning is not supported by the Converse format/).to_stderr
+
+      expect {
+        described_class.request_payload(session)
+      }.not_to output.to_stderr
     end
   end
 end

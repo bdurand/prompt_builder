@@ -27,6 +27,19 @@ module PromptBuilder
     JSONIFY_FIELDS = %i[include tool_choice metadata text stream_options reasoning].freeze
     private_constant :JSONIFY_FIELDS
 
+    # Effort levels accepted by +think+. This is the union of the levels
+    # recognized across serializers; each serializer omits levels its target
+    # API does not support.
+    THINK_EFFORT_LEVELS = %w[minimal low medium high xhigh max].freeze
+    private_constant :THINK_EFFORT_LEVELS
+
+    # All keyword options accepted by +initialize+.
+    INITIALIZE_OPTIONS = (
+      STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS +
+        %i[input extra]
+    ).freeze
+    private_constant :INITIALIZE_OPTIONS
+
     # @!attribute [rw] model
     #   @return [String, nil] the model identifier
     # @!attribute [rw] instructions
@@ -145,14 +158,22 @@ module PromptBuilder
     # Create a new Session with the given options.
     # Accepts keyword arguments for all typed field groups (STRING_FIELDS,
     # FLOAT_FIELDS, INTEGER_FIELDS, BOOLEAN_FIELDS, JSONIFY_FIELDS); all default
-    # to +nil+. The +input+ shorthand auto-creates a user message if provided.
+    # to +nil+. The +input+ (or +user+) shorthand auto-creates a user message
+    # if provided. Unsupported keyword options raise an ArgumentError.
     #
     # @param attributes [Hash] keyword options; see attribute declarations above
     # @option attributes [String, nil] :input optional string shorthand; a user
     #   message is automatically added with this text
     # @option attributes [Hash, nil] :extra provider-specific extra data for
     #   serializers; recognized keys vary by target format
+    # @raise [ArgumentError] if an unsupported option is passed or aliased
+    #   options are passed together
     def initialize(**attributes)
+      unsupported = attributes.keys - INITIALIZE_OPTIONS
+      unless unsupported.empty?
+        raise ArgumentError, "unsupported option#{"s" if unsupported.size > 1}: #{unsupported.join(", ")}"
+      end
+
       (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS).each do |f|
         send(:"#{f}=", attributes[f])
       end
@@ -283,6 +304,118 @@ module PromptBuilder
           strict: defn.strict,
           **extra
         )
+      end
+    end
+
+    # Copy tool definitions from a ToolRegistry onto this session by name.
+    # With no names, all tools in the registry are copied (same as
+    # +register_tools+). Definitions are copied, so later registry changes do
+    # not affect the session and the tools survive +to_h+/+from_h+ round-trips.
+    #
+    # @param names [Array<String, Symbol>] the tool names to copy; empty for all
+    # @param registry [ToolRegistry, nil] the registry to copy from; defaults
+    #   to the global +PromptBuilder.tool_registry+
+    # @return [Array<Tools::Definition>] the definitions registered on the session
+    # @raise [ToolNotFoundError] if a name is not registered in the registry
+    # @example
+    #   session.use_tools("weather", "traffic_conditions")
+    #   session.use_tools                                  # all registry tools
+    #   session.use_tools(:weather, registry: my_registry)
+    def use_tools(*names, registry: nil)
+      registry ||= PromptBuilder.tool_registry
+      raise ArgumentError, "registry must be an instance of ToolRegistry" unless registry.is_a?(ToolRegistry)
+
+      definitions = if names.empty?
+        registry.definitions
+      else
+        names.map do |name|
+          registry.definition_for(name.to_s) ||
+            raise(ToolNotFoundError, "No tool registered with name: #{name.to_s.inspect}")
+        end
+      end
+
+      definitions.map do |defn|
+        extra = defn.extra.transform_keys(&:to_sym)
+        register_tool(
+          defn.name,
+          description: defn.description,
+          parameters: defn.parameters,
+          strict: defn.strict,
+          **extra
+        )
+      end
+    end
+
+    # Configure JSON Schema structured output. Writes the canonical
+    # +text.format+ wire hash consumed by all serializers, preserving any
+    # other +text+ keys (e.g. +verbosity+) already set.
+    #
+    # @param schema [Hash] the JSON Schema for the response
+    # @param name [String] the schema name
+    # @param strict [Boolean, nil] whether strict schema adherence is requested;
+    #   omitted from the format when nil
+    # @param description [String, nil] an optional schema description
+    # @return [Hash] the resulting +text+ configuration
+    # @example
+    #   session.json_output({"type" => "object", "properties" => {...}}, strict: true)
+    def json_output(schema, name: "response", strict: nil, description: nil)
+      format = {"type" => "json_schema", "name" => name.to_s, "schema" => schema}
+      format["strict"] = strict unless strict.nil?
+      format["description"] = description.to_s if description
+      self.text = (text || {}).merge("format" => format)
+    end
+
+    # Configure reasoning/extended thinking portably across serializers.
+    # Stores a normalized +reasoning+ configuration; each serializer maps it
+    # to its native parameter:
+    #
+    # - +effort+ — Messages (+output_config.effort+), Chat Completions
+    #   (+reasoning_effort+), Gemini (+thinkingConfig.thinkingLevel+), and
+    #   Open Responses (+reasoning.effort+)
+    # - +budget_tokens+ — Messages (+thinking.budget_tokens+) and Gemini
+    #   (+thinkingConfig.thinkingBudget+); ignored by effort-based APIs
+    # - Converse supports neither and warns once at serialization time
+    #
+    # Pass either +effort+ or +budget_tokens+, not both — providers reject
+    # requests that set both controls. Direct +session.reasoning = {...}+
+    # assignment keeps working for provider-specific keys.
+    #
+    # @param enabled [Boolean] pass +false+ to clear the reasoning configuration
+    # @param effort [String, Symbol, nil] a portable effort level; one of
+    #   +minimal+, +low+, +medium+, +high+, +xhigh+, +max+ (unsupported levels
+    #   are omitted by serializers whose target API does not accept them)
+    # @param budget_tokens [Integer, nil] an explicit thinking token budget
+    # @return [Hash, nil] the resulting +reasoning+ configuration
+    # @raise [ArgumentError] if neither or both of +effort+ and +budget_tokens+
+    #   are given when enabling, or the values are invalid
+    # @example
+    #   session.think(effort: :medium)       # portable across serializers
+    #   session.think(budget_tokens: 8_000)  # explicit where supported
+    #   session.think(false)                 # disable
+    def think(enabled = true, effort: nil, budget_tokens: nil)
+      unless enabled
+        raise ArgumentError, "cannot combine think(false) with effort or budget_tokens" if effort || budget_tokens
+
+        return self.reasoning = nil
+      end
+
+      if effort && budget_tokens
+        raise ArgumentError, "pass either effort or budget_tokens, not both"
+      elsif effort.nil? && budget_tokens.nil?
+        raise ArgumentError, "think requires effort: or budget_tokens:"
+      end
+
+      if effort
+        effort = effort.to_s
+        unless THINK_EFFORT_LEVELS.include?(effort)
+          raise ArgumentError, "effort must be one of: #{THINK_EFFORT_LEVELS.join(", ")}"
+        end
+        self.reasoning = {"effort" => effort}
+      else
+        budget_tokens = Integer(budget_tokens)
+        raise ArgumentError, "budget_tokens must be positive" unless budget_tokens.positive?
+
+        self.reasoning = {"budget_tokens" => budget_tokens}
       end
     end
 

@@ -4,6 +4,9 @@ module PromptBuilder
   module Serializers
     class OpenResponses < Base
       # Request serializer for the OpenAI Open Responses API format.
+      #
+      # Required session fields (an UnsupportedFormatError is raised when missing):
+      # - +model+
       class Request < Base
         # Content extra keys that are part of the Open Responses API schema and
         # must survive extra-stripping (the canonical content classes have no
@@ -20,6 +23,8 @@ module PromptBuilder
           # @param session [Session] the session to export
           # @return [Hash] the serialized request payload
           def request_payload(session)
+            raise UnsupportedFormatError, "Open Responses format requires session.model" unless session.model
+
             payload = session.to_h
             items = apply_server_state!(payload, session)
             payload.delete("extra")

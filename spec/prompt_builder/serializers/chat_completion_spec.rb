@@ -25,6 +25,23 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["messages"][1]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
     end
 
+    it "raises when model is missing" do
+      session = PromptBuilder::Session.new
+      session.user("Hello")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires session.model/)
+    end
+
+    it "raises when there are no messages" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /at least one message/)
+    end
+
     it "converts tool definitions" do
       session = PromptBuilder::Session.new(model: "gpt-4o")
       session.register_tool(
@@ -1063,6 +1080,39 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(response.usage.output_tokens_details).to eq({"reasoning_tokens" => 2, "audio_tokens" => 0})
       expect(response.usage.cached_tokens).to eq(4)
       expect(response.usage.reasoning_tokens).to eq(2)
+    end
+  end
+
+  describe "session helpers" do
+    it "serializes Session#json_output to response_format" do
+      schema = {"type" => "object", "properties" => {"answer" => {"type" => "string"}}}
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
+      session.json_output(schema, name: "reply", strict: true)
+
+      h = described_class.request_payload(session)
+      expect(h["response_format"]).to eq({
+        "type" => "json_schema",
+        "json_schema" => {"name" => "reply", "schema" => schema, "strict" => true}
+      })
+    end
+
+    it "serializes Session#think effort to reasoning_effort" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
+      session.think(effort: :medium)
+
+      h = described_class.request_payload(session)
+      expect(h["reasoning_effort"]).to eq("medium")
+    end
+
+    it "omits reasoning when Session#think sets only budget_tokens" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
+      session.think(budget_tokens: 8_000)
+
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("reasoning_effort")
     end
   end
 end

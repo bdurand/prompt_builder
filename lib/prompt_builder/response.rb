@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module PromptBuilder
   # Represents a parsed API response from the Open Responses API.
   # All fields are optional and will be nil if not present in the response.
@@ -173,6 +175,23 @@ module PromptBuilder
         attrs = FIELDS.each_with_object({}) { |f, acc| acc[f] = hash[f.to_s] }
         new(**attrs, text_config: hash["text"], output: output, usage: usage, extra: hash["extra"])
       end
+
+      # Synthesize a Response containing a single assistant text message.
+      # Useful for canned answers (halt messages, cached responses) and tests
+      # without assembling Items::Message and Content::OutputText by hand.
+      #
+      # @param text [String] the assistant message text
+      # @param status [String] the response status
+      # @param attributes [Hash] any other Response attributes (e.g. +model+,
+      #   +usage+, +id+)
+      # @return [Response]
+      # @example
+      #   PromptBuilder::Response.from_text("Authentication failed.",
+      #     model: llm_response.model, usage: llm_response.usage)
+      def from_text(text, status: "completed", **attributes)
+        message = Items::Message.new(role: "assistant", content: [Content::OutputText.new(text: text)])
+        new(status: status, output: [message], **attributes)
+      end
     end
 
     # Check if the response completed successfully.
@@ -224,6 +243,40 @@ module PromptBuilder
       nil
     end
 
+    # Parse the response text as JSON, for use with structured output
+    # (see +Session#json_output+). Strips a fenced ```json wrapper when
+    # present — a common provider quirk. Returns nil when the response has
+    # no text or the text is not valid JSON; use +parsed_json!+ to raise
+    # instead.
+    #
+    # @return [Hash, Array, Object, nil] the parsed JSON value, or nil
+    def parsed_json
+      raw = text
+      return nil unless raw
+
+      begin
+        JSON.parse(strip_json_fences(raw))
+      rescue JSON::ParserError
+        nil
+      end
+    end
+
+    # Parse the response text as JSON, raising when it cannot be parsed.
+    #
+    # @return [Hash, Array, Object] the parsed JSON value
+    # @raise [ParseError] if the response has no text or the text is not
+    #   valid JSON; the error message includes the raw text
+    def parsed_json!
+      raw = text
+      raise ParseError, "Response has no text output to parse as JSON" unless raw
+
+      begin
+        JSON.parse(strip_json_fences(raw))
+      rescue JSON::ParserError => e
+        raise ParseError, "Response text is not valid JSON (#{e.message}); raw text: #{raw}"
+      end
+    end
+
     # Serialize to a Hash with string keys. Nil values are omitted.
     #
     # @return [Hash]
@@ -245,6 +298,12 @@ module PromptBuilder
     end
 
     private
+
+    def strip_json_fences(raw)
+      stripped = raw.strip
+      match = stripped.match(/\A```(?:json)?\s*\n(.*?)\n?```\z/m)
+      match ? match[1] : stripped
+    end
 
     def coerce_field(field, value)
       return value if value.nil?
