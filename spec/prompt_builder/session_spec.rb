@@ -14,6 +14,12 @@ RSpec.describe PromptBuilder::Session do
     )
   end
 
+  describe "#initialize" do
+    it "raises an ArgumentError when an unsupported option is passed" do
+      expect { described_class.new(bogus: "value") }.to raise_error(ArgumentError, /bogus/)
+    end
+  end
+
   describe "#user" do
     it "adds a user message" do
       session.user("Hello")
@@ -242,7 +248,7 @@ RSpec.describe PromptBuilder::Session do
     end
 
     it "OpenResponses serializer sends only new items since last response" do
-      s = described_class.new(previous_response_id: "resp_0")
+      s = described_class.new(model: "gpt-5.2", previous_response_id: "resp_0")
       s.user("First")
 
       response = PromptBuilder::Response.new(id: "resp_1", status: "completed")
@@ -274,6 +280,143 @@ RSpec.describe PromptBuilder::Session do
       session.register_tools(registry)
       names = session.tool_definitions.map(&:name)
       expect(names).to contain_exactly("tool_a", "tool_b")
+    end
+  end
+
+  describe "#use_tools" do
+    let(:registry) do
+      registry = PromptBuilder::ToolRegistry.new
+      registry.register("weather", description: "Get weather", parameters: {"type" => "object"}, strict: true) { |_| "sunny" }
+      registry.register("traffic", description: "Get traffic") { |_| "clear" }
+      registry.register("news", description: "Get news") { |_| "quiet" }
+      registry
+    end
+
+    it "copies the named tool definitions from the registry" do
+      session.use_tools("weather", "traffic", registry: registry)
+
+      names = session.tool_definitions.map(&:name)
+      expect(names).to contain_exactly("weather", "traffic")
+
+      defn = session.tool_definitions.find { |d| d.name == "weather" }
+      expect(defn.description).to eq("Get weather")
+      expect(defn.parameters).to eq({"type" => "object"})
+      expect(defn.strict).to be(true)
+    end
+
+    it "accepts symbol names" do
+      session.use_tools(:weather, registry: registry)
+      expect(session.tool_definitions.map(&:name)).to eq(["weather"])
+    end
+
+    it "copies all registry tools when no names are given" do
+      session.use_tools(registry: registry)
+      expect(session.tool_definitions.map(&:name)).to contain_exactly("weather", "traffic", "news")
+    end
+
+    it "defaults to the global tool registry" do
+      PromptBuilder.register_tool("global_tool", description: "Global") { |_| "ok" }
+
+      session.use_tools("global_tool")
+      expect(session.tool_definitions.map(&:name)).to eq(["global_tool"])
+    end
+
+    it "raises ToolNotFoundError for unknown tool names" do
+      expect {
+        session.use_tools("weather", "no_such_tool", registry: registry)
+      }.to raise_error(PromptBuilder::ToolNotFoundError, /no_such_tool/)
+    end
+
+    it "copies definitions so they survive to_h/from_h round-trips" do
+      session.use_tools("weather", registry: registry)
+      restored = described_class.from_h(session.to_h)
+
+      defn = restored.tool_definitions.find { |d| d.name == "weather" }
+      expect(defn).not_to be_nil
+      expect(defn.description).to eq("Get weather")
+      expect(defn.strict).to be(true)
+    end
+
+    it "raises ArgumentError when registry is not a ToolRegistry" do
+      expect { session.use_tools("weather", registry: {}) }.to raise_error(ArgumentError)
+    end
+  end
+
+  describe "#json_output" do
+    let(:schema) { {"type" => "object", "properties" => {"answer" => {"type" => "string"}}} }
+
+    it "writes the canonical text.format wire hash" do
+      session.json_output(schema, name: "reply", strict: true)
+
+      expect(session.text).to eq({
+        "format" => {
+          "type" => "json_schema",
+          "name" => "reply",
+          "schema" => schema,
+          "strict" => true
+        }
+      })
+    end
+
+    it "defaults the name to response and omits strict when nil" do
+      session.json_output(schema)
+
+      expect(session.text["format"]).to eq({
+        "type" => "json_schema",
+        "name" => "response",
+        "schema" => schema
+      })
+    end
+
+    it "includes an optional description" do
+      session.json_output(schema, description: "The answer")
+      expect(session.text["format"]["description"]).to eq("The answer")
+    end
+
+    it "preserves other text keys" do
+      session.text = {"verbosity" => "low"}
+      session.json_output(schema)
+
+      expect(session.text["verbosity"]).to eq("low")
+      expect(session.text["format"]["type"]).to eq("json_schema")
+    end
+  end
+
+  describe "#think" do
+    it "stores a normalized effort configuration" do
+      session.think(effort: :medium)
+      expect(session.reasoning).to eq({"effort" => "medium"})
+    end
+
+    it "stores a normalized budget_tokens configuration" do
+      session.think(budget_tokens: 8_000)
+      expect(session.reasoning).to eq({"budget_tokens" => 8_000})
+    end
+
+    it "clears the reasoning configuration with think(false)" do
+      session.think(effort: :low)
+      session.think(false)
+      expect(session.reasoning).to be_nil
+    end
+
+    it "raises when neither effort nor budget_tokens is given" do
+      expect { session.think }.to raise_error(ArgumentError, /effort.*budget_tokens/)
+    end
+
+    it "raises when both effort and budget_tokens are given" do
+      expect { session.think(effort: :low, budget_tokens: 1_000) }.to raise_error(ArgumentError, /not both/)
+    end
+
+    it "raises on an unknown effort level" do
+      expect { session.think(effort: :extreme) }.to raise_error(ArgumentError, /effort must be one of/)
+    end
+
+    it "raises on a non-positive budget" do
+      expect { session.think(budget_tokens: 0) }.to raise_error(ArgumentError, /positive/)
+    end
+
+    it "raises when think(false) is combined with options" do
+      expect { session.think(false, effort: :low) }.to raise_error(ArgumentError, /think\(false\)/)
     end
   end
 

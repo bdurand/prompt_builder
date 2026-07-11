@@ -13,8 +13,17 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(described_class.request_payload(session)).to eq(session.to_h)
     end
 
+    it "raises when model is missing" do
+      session = PromptBuilder::Session.new
+      session.user("Hello")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires session.model/)
+    end
+
     it "returns session.to_h for server state sessions" do
-      session = PromptBuilder::Session.new(previous_response_id: "resp_123")
+      session = PromptBuilder::Session.new(model: "gpt-5.4", previous_response_id: "resp_123")
       session.user("follow up")
 
       expect(described_class.request_payload(session)).to eq(session.to_h)
@@ -528,6 +537,32 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       }
       errors = JSON::Validator.fully_validate(schema, bad_payload, fragment: fragment)
       expect(errors).not_to be_empty
+    end
+  end
+
+  describe "session helpers" do
+    it "serializes Session#json_output to the canonical text.format" do
+      schema = {"type" => "object", "properties" => {"answer" => {"type" => "string"}}}
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hi")
+      session.json_output(schema, strict: true)
+
+      payload = described_class.request_payload(session)
+      expect(payload["text"]["format"]).to eq({
+        "type" => "json_schema",
+        "name" => "response",
+        "schema" => schema,
+        "strict" => true
+      })
+    end
+
+    it "serializes Session#think effort to reasoning" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hi")
+      session.think(effort: :medium)
+
+      payload = described_class.request_payload(session)
+      expect(payload["reasoning"]).to eq({"effort" => "medium"})
     end
   end
 end

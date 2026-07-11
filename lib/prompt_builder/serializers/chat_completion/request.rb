@@ -5,6 +5,11 @@ module PromptBuilder
     class ChatCompletion < Base
       # Request serializer for the OpenAI Chat Completions API format.
       #
+      # Required session fields (an UnsupportedFormatError is raised when missing):
+      # - +model+
+      # - at least one message (+instructions+ or a conversation item that
+      #   serializes to a message)
+      #
       # === Unsupported Open Responses features
       #
       # These session fields are not supported and are silently omitted from the
@@ -62,8 +67,14 @@ module PromptBuilder
 
           def serialize_request(session)
             h = {}
-            h["model"] = session.model if session.model
-            h["messages"] = build_messages(session)
+            raise UnsupportedFormatError, "Chat Completions format requires session.model" unless session.model
+
+            h["model"] = session.model
+            messages = build_messages(session)
+            if messages.empty?
+              raise UnsupportedFormatError, "Chat Completions format requires at least one message"
+            end
+            h["messages"] = messages
             h["temperature"] = session.temperature if session.temperature
             h["top_p"] = session.top_p if session.top_p
             h["presence_penalty"] = session.presence_penalty if session.presence_penalty

@@ -18,4 +18,7 @@ module PromptBuilder
 
   # Raised when a response payload does not match the expected shape.
   class UnexpectedPayloadError < Error; end
+
+  # Raised by Response#parsed_json! when the response text is not valid JSON.
+  class ParseError < Error; end
 end

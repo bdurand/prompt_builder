@@ -25,23 +25,33 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["messages"][0]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
     end
 
-    it "defaults max_tokens to nil" do
+    it "raises when model is missing" do
+      session = PromptBuilder::Session.new(max_output_tokens: 1024)
+      session.user("Hello")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires session.model/)
+    end
+
+    it "raises when max_output_tokens is not set" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
       session.user("Hello")
 
-      h = described_class.request_payload(session)
-      expect(h["max_tokens"]).to be_nil
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /max_output_tokens/)
     end
 
     it "raises when there are no user/assistant messages" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", instructions: "Be helpful")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", instructions: "Be helpful", max_output_tokens: 1024)
       expect {
         described_class.request_payload(session)
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /at least one user\/assistant message/)
     end
 
     it "raises when the first message is not from the user" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.assistant("Out of order")
       expect {
         described_class.request_payload(session)
@@ -50,6 +60,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "raises when reasoning is enabled without budget_tokens" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         reasoning: {"type" => "enabled"}
       )
@@ -60,7 +71,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "omits unsupported content blocks in a tool_result" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Read this")
       session.add_item(PromptBuilder::Items::FunctionCall.new(
         name: "fetch", call_id: "toolu_1", arguments: "{}"
@@ -76,7 +87,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "merges system and developer messages into top-level system" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", instructions: "Base instruction")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", instructions: "Base instruction", max_output_tokens: 1024)
       session.system("Extra system context")
       session.developer("Developer note")
       session.user("Hello")
@@ -91,7 +102,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts tool definitions" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.register_tool(
         "get_weather",
         description: "Get weather",
@@ -108,7 +119,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts function call items to tool_use blocks" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Weather?")
       session.add_item(PromptBuilder::Items::FunctionCall.new(
         name: "get_weather", call_id: "toolu_1", arguments: '{"city":"London"}'
@@ -135,7 +146,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "merges consecutive same-role messages" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("First")
       session.user("Second")
 
@@ -148,7 +159,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "maps OutputText annotations to Anthropic text citations" do
       citation = {"type" => "char_location", "start_char_index" => 0, "end_char_index" => 5}
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
@@ -164,7 +175,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
         "type" => "url_citation",
         "url_citation" => {"url" => "https://example.com", "title" => "Example", "start_index" => 0, "end_index" => 5}
       }
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
@@ -178,7 +189,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     it "keeps valid citations while dropping foreign annotation shapes" do
       valid = {"type" => "web_search_result_location", "url" => "https://example.com", "cited_text" => "Hello"}
       foreign = {"type" => "url_citation", "url_citation" => {"url" => "https://example.com"}}
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
@@ -190,7 +201,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "serializes Anthropic thinking blocks with signatures" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Think hard")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         content: [{"type" => "thinking", "thinking" => "Let me think...", "signature" => "sig_123"}]
@@ -206,7 +217,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts InputImage with URL and drops the unsupported detail field" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(url: "https://example.com/img.png", detail: "low")]
@@ -220,7 +231,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts InputImage with base64 data" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(url: "data:image/png;base64,abc123")]
@@ -237,7 +248,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts InputFile with URL" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new(url: "https://example.com/doc.pdf")]
@@ -250,7 +261,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts InputFile with base64 data" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new(url: "data:application/octet-stream;base64,abc123")]
@@ -267,7 +278,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts InputImage.file_id to a file source (Anthropic Files API)" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new(file_id: "file_abc123")]
@@ -280,7 +291,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts InputFile.file_id to a file source (Anthropic Files API)" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new(file_id: "file_xyz789")]
@@ -293,7 +304,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "raises with a clear message when InputImage has no usable source" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputImage.new]
@@ -305,7 +316,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "raises with a clear message when InputFile has no usable source" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new]
@@ -317,7 +328,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "marks tool_result as is_error when FunctionCallOutput.status is failed" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Run it")
       session.add_item(PromptBuilder::Items::FunctionCall.new(
         name: "run", call_id: "toolu_1", arguments: "{}"
@@ -332,7 +343,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "does not set is_error for completed tool outputs" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Run it")
       session.add_item(PromptBuilder::Items::FunctionCall.new(
         name: "run", call_id: "toolu_1", arguments: "{}"
@@ -346,7 +357,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "honors InputFile.media_type for base64 documents" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
         content: [PromptBuilder::Content::InputFile.new(url: "data:text/plain;base64,abc123", media_type: "text/plain")]
@@ -358,7 +369,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "silently skips Compaction items" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Compaction.new(encrypted_content: "abc"))
 
@@ -368,7 +379,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "silently skips ItemReference items" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hi")
       session.add_item(PromptBuilder::Items::ItemReference.new(id: "msg_1"))
 
@@ -378,7 +389,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts tool_choice 'auto' to hash" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", tool_choice: "auto")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", tool_choice: "auto", max_output_tokens: 1024)
       session.register_tool("test") { |_| "ok" }
       session.user("Hi")
 
@@ -387,7 +398,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts tool_choice 'required' to any" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", tool_choice: "required")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", tool_choice: "required", max_output_tokens: 1024)
       session.register_tool("test") { |_| "ok" }
       session.user("Hi")
 
@@ -397,6 +408,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "converts specific function tool_choice" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         tool_choice: {"type" => "function", "name" => "get_weather"}
       )
@@ -409,6 +421,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "accepts the nested OpenAI tool_choice shape" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         tool_choice: {"type" => "function", "function" => {"name" => "get_weather"}}
       )
@@ -421,6 +434,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "passes through optional parameters" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         top_p: 0.9,
         metadata: {"user_id" => "123"},
@@ -437,7 +451,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "maps strict tool definitions" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.register_tool("get_weather", strict: true) { |_| "sunny" }
       session.user("Hi")
 
@@ -454,6 +468,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
         "additionalProperties" => false
       }
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_schema", "schema" => schema}}
       )
@@ -469,6 +484,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     it "maps nested json_schema text.format to output_config.format" do
       schema = {"type" => "object"}
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_schema", "json_schema" => {"schema" => schema}}}
       )
@@ -483,6 +499,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "omits text.format json_object (only json_schema is supported)" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_object"}}
       )
@@ -494,6 +511,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "ignores unsupported text.format keys" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_schema", "schema" => {"type" => "object"}, "unknown_key" => "value"}}
       )
@@ -505,6 +523,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "ignores unsupported nested text.format json_schema keys" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_schema", "json_schema" => {"unknown_key" => "value", "schema" => {"type" => "object"}}}}
       )
@@ -516,6 +535,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "ignores name, strict, and description in flat text.format" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_schema", "name" => "Weather", "strict" => true, "description" => "A weather response", "schema" => {"type" => "object"}}}
       )
@@ -528,6 +548,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "ignores name, strict, and description in nested json_schema" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         text: {"format" => {"type" => "json_schema", "json_schema" => {"name" => "Weather", "strict" => true, "description" => "A desc", "schema" => {"type" => "object"}}}}
       )
@@ -540,6 +561,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "maps reasoning.effort to output_config.effort" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         reasoning: {"effort" => "medium"}
       )
@@ -552,6 +574,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "omits unsupported reasoning.effort values" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         reasoning: {"effort" => "tiny"}
       )
@@ -563,6 +586,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "maps adaptive thinking without budget_tokens" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-opus-4-7",
         reasoning: {"type" => "adaptive", "display" => "omitted", "effort" => "xhigh"}
       )
@@ -575,6 +599,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "defaults thinking.type to 'enabled' when only budget_tokens is provided" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 4096,
         model: "claude-sonnet-4-20250514",
         reasoning: {"budget_tokens" => 2048}
       )
@@ -588,7 +613,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "skips a Reasoning item with only summary blocks" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         summary: [{"type" => "summary_text", "text" => "Thinking about it..."}]
@@ -599,7 +624,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "drops summary blocks but serializes the signed thinking content alongside them" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         summary: [{"type" => "summary_text", "text" => "Summary"}],
@@ -612,7 +637,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "drops unsigned thinking blocks rather than raising (cross-provider history)" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         content: [{"type" => "thinking", "thinking" => "from a Gemini turn"}]
@@ -626,6 +651,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "maps reasoning thinking config to top-level thinking" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 4096,
         model: "claude-sonnet-4-20250514",
         reasoning: {
           "type" => "enabled",
@@ -645,6 +671,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "maps parallel_tool_calls to disable_parallel_tool_use" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         parallel_tool_calls: false
       )
@@ -660,6 +687,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "omits unsupported session fields" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         include: ["foo"],
         presence_penalty: 0.1,
@@ -675,6 +703,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "omits unsupported metadata keys, keeping user_id" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         metadata: {"user_id" => "123", "team" => "ops"}
       )
@@ -686,6 +715,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "omits unsupported reasoning keys while mapping the supported ones" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 4096,
         model: "claude-sonnet-4-20250514",
         reasoning: {"budget_tokens" => 2048, "summary" => "detailed"}
       )
@@ -697,6 +727,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "raises when thinking is combined with forced tool_choice" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 4096,
         model: "claude-sonnet-4-20250514",
         tool_choice: "required",
         reasoning: {"type" => "enabled", "budget_tokens" => 2048}
@@ -711,6 +742,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "omits tool_choice when parallel_tool_calls are set without tools" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         parallel_tool_calls: false
       )
@@ -721,7 +753,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "converts array output on FunctionCallOutput to content blocks in tool_result" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Weather?")
       session.add_item(PromptBuilder::Items::FunctionCall.new(
         name: "get_weather", call_id: "toolu_1", arguments: '{"city":"London"}'
@@ -739,7 +771,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "always emits a content field on tool_result even for empty output" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Run it")
       session.add_item(PromptBuilder::Items::FunctionCall.new(
         name: "run", call_id: "toolu_1", arguments: "{}"
@@ -753,6 +785,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
     it "omits allowed_tools tool_choice" do
       session = PromptBuilder::Session.new(
+        max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
         tool_choice: {"type" => "allowed_tools", "tools" => ["search"], "mode" => "auto"}
       )
@@ -765,7 +798,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "omits InputVideo content" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hi")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "user",
@@ -777,7 +810,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "drops RefusalContent silently so a parsed refusal can stay in session history" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hello")
       session.add_item(PromptBuilder::Items::Message.new(
         role: "assistant",
@@ -1018,7 +1051,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
     end
 
     it "can be added to a session" do
-      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514")
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.user("Hello")
 
       response = described_class.parse_response(anthropic_response)
@@ -1047,6 +1080,47 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(response.usage.output_tokens_details).to eq({"reasoning_tokens" => 1})
       expect(response.usage.cached_tokens).to eq(3)
       expect(response.usage.reasoning_tokens).to eq(1)
+    end
+  end
+
+  describe "session helpers" do
+    it "serializes Session#json_output to output_config.format" do
+      schema = {"type" => "object", "properties" => {"answer" => {"type" => "string"}}}
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
+      session.user("Hi")
+      session.json_output(schema)
+
+      h = described_class.request_payload(session)
+      expect(h["output_config"]["format"]).to eq({"type" => "json_schema", "schema" => schema})
+    end
+
+    it "serializes Session#think effort to output_config.effort" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
+      session.user("Hi")
+      session.think(effort: :medium)
+
+      h = described_class.request_payload(session)
+      expect(h["output_config"]).to eq({"effort" => "medium"})
+      expect(h).not_to have_key("thinking")
+    end
+
+    it "serializes Session#think budget_tokens to thinking" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 4096)
+      session.user("Hi")
+      session.think(budget_tokens: 2048)
+
+      h = described_class.request_payload(session)
+      expect(h["thinking"]).to eq({"budget_tokens" => 2048, "type" => "enabled"})
+    end
+
+    it "raises before serialization when max_output_tokens is not greater than the thinking budget" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 2048)
+      session.user("Hi")
+      session.think(budget_tokens: 2048)
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /greater than reasoning.budget_tokens/)
     end
   end
 end

@@ -203,6 +203,107 @@ RSpec.describe PromptBuilder::Response do
     end
   end
 
+  describe "#parsed_json" do
+    def response_with_text(text)
+      described_class.from_h({
+        "output" => [{
+          "type" => "message",
+          "role" => "assistant",
+          "content" => [{"type" => "output_text", "text" => text}]
+        }]
+      })
+    end
+
+    it "parses clean JSON output" do
+      response = response_with_text('{"answer": 42}')
+      expect(response.parsed_json).to eq({"answer" => 42})
+    end
+
+    it "parses fenced ```json output" do
+      response = response_with_text("```json\n{\"answer\": 42}\n```")
+      expect(response.parsed_json).to eq({"answer" => 42})
+    end
+
+    it "parses fenced output without a language tag" do
+      response = response_with_text("```\n[1, 2, 3]\n```")
+      expect(response.parsed_json).to eq([1, 2, 3])
+    end
+
+    it "returns nil when the response has no text" do
+      response = described_class.from_h({"status" => "completed"})
+      expect(response.parsed_json).to be_nil
+    end
+
+    it "returns nil when the text is not valid JSON" do
+      response = response_with_text("I'm sorry, I can't do that.")
+      expect(response.parsed_json).to be_nil
+    end
+  end
+
+  describe "#parsed_json!" do
+    def response_with_text(text)
+      described_class.from_h({
+        "output" => [{
+          "type" => "message",
+          "role" => "assistant",
+          "content" => [{"type" => "output_text", "text" => text}]
+        }]
+      })
+    end
+
+    it "parses JSON output" do
+      response = response_with_text('{"answer": 42}')
+      expect(response.parsed_json!).to eq({"answer" => 42})
+    end
+
+    it "raises ParseError including the raw text when the text is not valid JSON" do
+      response = response_with_text("not json at all")
+      expect {
+        response.parsed_json!
+      }.to raise_error(PromptBuilder::ParseError, /not json at all/)
+    end
+
+    it "raises ParseError when the response has no text" do
+      response = described_class.from_h({"status" => "completed"})
+      expect { response.parsed_json! }.to raise_error(PromptBuilder::ParseError, /no text/)
+    end
+  end
+
+  describe ".from_text" do
+    it "synthesizes a completed assistant text response" do
+      response = described_class.from_text("Authentication failed.")
+
+      expect(response.status).to eq("completed")
+      expect(response).to be_completed
+      expect(response.text).to eq("Authentication failed.")
+      expect(response.output.length).to eq(1)
+      expect(response.output.first.role).to eq("assistant")
+    end
+
+    it "accepts model, usage, and other response attributes" do
+      usage = PromptBuilder::Usage.new(input_tokens: 10, output_tokens: 5)
+      response = described_class.from_text("Cached answer.", model: "gpt-5.2", usage: usage, id: "resp_9")
+
+      expect(response.model).to eq("gpt-5.2")
+      expect(response.usage.input_tokens).to eq(10)
+      expect(response.id).to eq("resp_9")
+    end
+
+    it "accepts an explicit status" do
+      response = described_class.from_text("Stopped.", status: "incomplete")
+      expect(response).to be_incomplete
+    end
+
+    it "round-trips through to_h and from_h" do
+      response = described_class.from_text("Hello!", model: "gpt-5.2")
+      restored = described_class.from_h(response.to_h)
+
+      expect(restored.text).to eq("Hello!")
+      expect(restored.model).to eq("gpt-5.2")
+      expect(restored.status).to eq("completed")
+    end
+  end
+
   describe "#to_h" do
     it "round-trips through from_h and to_h" do
       response = described_class.from_h(response_hash)

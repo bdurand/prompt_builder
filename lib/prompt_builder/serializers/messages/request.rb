@@ -5,6 +5,10 @@ module PromptBuilder
     class Messages < Base
       # Request serializer for the Anthropic Messages API format.
       #
+      # Required session fields (an UnsupportedFormatError is raised when missing):
+      # - +model+
+      # - +max_output_tokens+ — populates the required +max_tokens+ parameter
+      #
       # === Unsupported Open Responses features
       #
       # These session fields are not supported and are silently omitted from the
@@ -27,7 +31,9 @@ module PromptBuilder
       # - +service_tier+ — only +auto+ and +standard_only+ are accepted
       # - +text+ — +format.type=json_schema+ is mapped to +output_config.format+
       # - +reasoning+ — +budget_tokens+, +display+, +effort+, and +type+ are forwarded;
-      #   +temperature+ must be unset and +top_p+ must be >= 0.95 when reasoning is enabled
+      #   +temperature+ must be unset, +top_p+ must be >= 0.95, and
+      #   +max_output_tokens+ must be greater than +budget_tokens+ when reasoning
+      #   is enabled
       #
       # Input content restrictions:
       # - +InputVideo+ content is not supported and is omitted
@@ -95,7 +101,11 @@ module PromptBuilder
             raise UnsupportedFormatError, "Messages format requires session.model" unless session.model
 
             h["model"] = session.model
-            h["max_tokens"] = session.max_output_tokens if session.max_output_tokens
+            unless session.max_output_tokens
+              raise UnsupportedFormatError,
+                "Messages format requires session.max_output_tokens to populate the required max_tokens field"
+            end
+            h["max_tokens"] = session.max_output_tokens
             h["temperature"] = session.temperature if session.temperature
             h["top_p"] = session.top_p if session.top_p
             effective_metadata = build_effective_metadata(session)
@@ -248,6 +258,12 @@ module PromptBuilder
 
           def validate_thinking_compatibility!(session, thinking)
             return unless thinking
+
+            budget = thinking["budget_tokens"]
+            if budget && session.max_output_tokens && session.max_output_tokens <= budget
+              raise UnsupportedFormatError,
+                "Messages format requires max_output_tokens (max_tokens) to be greater than reasoning.budget_tokens"
+            end
 
             if session.temperature
               raise UnsupportedFormatError,

@@ -57,6 +57,8 @@ session = PromptBuilder::Session.new(
 )
 ```
 
+Passing an option the constructor doesn't recognize (or both halves of an alias pair) raises an `ArgumentError`.
+
 ### Conversation History
 
 Build up a multi-turn conversation by adding messages:
@@ -160,6 +162,52 @@ response.has_tool_calls? # => false
 response.usage           # => #<PromptBuilder::Usage input_tokens=25 output_tokens=12 ...>
 ```
 
+You can also synthesize a plain-text response without calling an API — useful for canned answers (e.g. halting an agent loop), cached responses, and tests:
+
+```ruby
+response = PromptBuilder::Response.from_text("Authentication failed.",
+  model: llm_response.model, usage: llm_response.usage)
+response.text        # => "Authentication failed."
+response.completed?  # => true
+```
+
+### Structured Output
+
+Use `json_output` to request JSON Schema structured output and `parsed_json` to read it back:
+
+```ruby
+schema = {
+  "type" => "object",
+  "properties" => {"answer" => {"type" => "string"}},
+  "required" => ["answer"]
+}
+
+session.json_output(schema, name: "response", strict: true)
+payload = session.request_payload(:messages)  # works with all five serializers
+
+# After parsing the API response:
+data = response.parsed_json    # => {"answer" => "..."} or nil if the text isn't valid JSON
+data = response.parsed_json!   # raises PromptBuilder::ParseError (including the raw text) instead
+```
+
+`parsed_json` strips fenced ```` ```json ```` wrappers, a common provider quirk. `json_output` is sugar for setting `session.text` to the canonical `format` wire hash, so direct `session.text = {...}` assignment keeps working.
+
+### Reasoning / Extended Thinking
+
+Use `think` to configure reasoning portably; each serializer maps it to its native parameter:
+
+```ruby
+session.think(effort: :medium)       # portable across serializers
+session.think(budget_tokens: 8_000)  # explicit token budget where supported
+session.think(false)                 # clear the reasoning configuration
+```
+
+- `effort:` (one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) maps to `output_config.effort` (Messages), `reasoning_effort` (Chat Completions), `thinkingConfig.thinkingLevel` (Gemini), and `reasoning.effort` (Open Responses). Levels a target API doesn't accept are omitted.
+- `budget_tokens:` maps to `thinking.budget_tokens` (Messages) and `thinkingConfig.thinkingBudget` (Gemini); effort-based APIs ignore it. The Messages serializer raises an `UnsupportedFormatError` at `request_payload` time when `max_output_tokens` is not greater than the budget, since the Anthropic API requires `max_tokens > budget_tokens`.
+- The Converse API has no reasoning parameter; the serializer warns once per process and omits the configuration.
+
+Direct `session.reasoning = {...}` assignment keeps working for provider-specific keys (e.g. Anthropic's `display`, Gemini's `summary`).
+
 ### Agentic Tool Loops
 
 You can register tool definitions on a session, add API responses to the conversation, and manually append tool outputs to build an agentic loop:
@@ -239,6 +287,16 @@ end
 
 session.register_tools(PromptBuilder.tool_registry)
 ```
+
+Use `use_tools` to attach a subset of registry tools by name without copying schemas by hand. Unknown names raise a `ToolNotFoundError`, so a typo fails fast instead of producing a silently absent tool:
+
+```ruby
+session.use_tools("weather", "traffic_conditions")   # from PromptBuilder.tool_registry
+session.use_tools                                     # all tools in the registry
+session.use_tools(:weather, registry: my_registry)    # explicit registry
+```
+
+Tool definitions are *copied* onto the session in all cases, so later registry changes don't affect the session and the tools survive `to_h`/`from_h` round-trips.
 
 ### Content Types
 
@@ -481,6 +539,9 @@ restored_session = PromptBuilder::Session.from_h(hash)
 
 This makes it straightforward to persist conversation state in a database or cache between requests.
 
+> [!WARNING]
+> `to_h` is the persistence format, not a request payload. It retains provider-specific `extra` data and non-replayable items that APIs reject. Send the output of `request_payload(serializer)` to APIs, and use `to_h`/`from_h` only for storage.
+
 ## Serializer Compatibility
 
 The Open Responses format is the canonical data model for this gem. When serializing to other formats, some features may not be available because either the target API does not support them or because the Open Responses format does not expose parameters unique to the target API. If you attempt to use a feature that is not supported by a particular serializer, it will be silently omitted from the serialized output.
@@ -601,6 +662,8 @@ For Messages specifically:
 
 ### Chat Completions-specific notes
 
+Serializing a session without `model` set, or one that produces no messages at all, raises a `PromptBuilder::UnsupportedFormatError`.
+
 Request-side mappings worth calling out:
 
 | Canonical field / value | Chat Completions mapping |
@@ -631,6 +694,8 @@ Response-side behavior and limitations:
 
 ### Anthropic Messages-specific mappings
 
+The Messages API requires the `max_tokens` parameter, which is populated from `session.max_output_tokens`. Serializing a session without `max_output_tokens` set raises a `PromptBuilder::UnsupportedFormatError`.
+
 A few features map between the canonical Open Responses format and the Messages API in non-obvious ways:
 
 | Canonical field / value | Messages mapping |
@@ -653,6 +718,8 @@ Response stop reasons are mapped to Open Responses statuses as follows: `end_tur
 Built-in tool response content blocks (`server_tool_use`, `web_search_tool_result`, `web_fetch_tool_result`, `code_execution_tool_result`, `bash_code_execution_tool_result`, `tool_search_tool_result`, `mcp_tool_use`, `mcp_tool_result`, `container_upload`, `search_result`) are silently skipped on parse, since this gem has no canonical representation for them.
 
 ### Gemini-specific notes
+
+Serializing a session without `model` set (the model belongs in the request URL, but it is validated at serialization time), or one that produces an empty `contents` array, raises a `PromptBuilder::UnsupportedFormatError`.
 
 Request-side mappings worth calling out:
 
@@ -696,6 +763,8 @@ Response-side limitations:
 - Response metadata with no canonical Open Responses slot is exposed on `response.provider_data`: `groundingMetadata`, `citationMetadata`, `urlContextMetadata`, `urlRetrievalMetadata`, `safetyRatings`, `groundingAttributions`, `avgLogprobs`, `logprobsResult`, `finishMessage`, candidate `index`, top-level `createTime`, and full `promptFeedback`. Streaming chunks are not parsed — this gem expects a fully assembled non-streaming response body.
 
 ### Converse-specific notes
+
+Serializing a session without `model` set (populates the required `modelId` parameter) raises a `PromptBuilder::UnsupportedFormatError`.
 
 Request-side restrictions worth calling out:
 

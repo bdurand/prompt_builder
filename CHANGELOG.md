@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+### Added
+
+- `Session#use_tools` copies tool definitions from a `ToolRegistry` (the global registry by default) onto the session by name, raising a `ToolNotFoundError` for unknown names.
+- `Session#json_output` configures JSON Schema structured output without writing the raw `text.format` wire hash by hand.
+- `Session#think` configures reasoning portably across serializers via `effort:` or `budget_tokens:`; `think(false)` clears the configuration.
+- `Response#parsed_json` parses the response text as JSON (stripping fenced ```json wrappers), returning `nil` when it cannot be parsed; `Response#parsed_json!` raises a `ParseError` including the raw text instead.
+- `Response.from_text` synthesizes a completed assistant text response for canned answers, cached responses, and tests.
+- `PromptBuilder::ParseError` error class.
+
+### Changed
+
+- `Session.new` raises an `ArgumentError` when passed an unsupported keyword option instead of silently ignoring it.
+- The Messages serializer raises an `UnsupportedFormatError` when `session.max_output_tokens` is not set, since the Messages API requires the `max_tokens` parameter.
+- Serializers now raise an `UnsupportedFormatError` for missing fields their target API requires instead of emitting an invalid payload: Chat Completions, Converse, and Open Responses require `session.model`; Chat Completions requires at least one message; Gemini requires a non-empty `contents` array.
+- The Messages serializer raises an `UnsupportedFormatError` when thinking is enabled with a `budget_tokens` that is not less than `max_output_tokens`, matching the Anthropic API requirement that `max_tokens` be greater than the thinking budget.
+- The Converse serializer warns once per process when `session.reasoning` is set instead of silently dropping it (the Converse endpoint has no reasoning parameter).
+
 ## 0.1.2
 
 ### Fixed

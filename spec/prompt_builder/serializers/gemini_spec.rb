@@ -34,6 +34,14 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /requires session.model/)
     end
 
+    it "raises when there are no user/model messages" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash", instructions: "Be helpful")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /at least one user\/model message/)
+    end
+
     it "merges system and developer messages into systemInstruction" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash", instructions: "Base instruction")
       session.system("Extra system context")
@@ -1521,6 +1529,37 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(session.items.length).to eq(2)
       expect(session.items[1]).to be_a(PromptBuilder::Items::Message)
       expect(session.items[1].role).to eq("assistant")
+    end
+  end
+
+  describe "session helpers" do
+    it "serializes Session#json_output to responseSchema" do
+      schema = {"type" => "object", "properties" => {"answer" => {"type" => "string"}}}
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.user("Hi")
+      session.json_output(schema)
+
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["responseMimeType"]).to eq("application/json")
+      expect(h["generationConfig"]["responseSchema"]).to eq(schema)
+    end
+
+    it "serializes Session#think effort to thinkingConfig.thinkingLevel" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.user("Hi")
+      session.think(effort: :medium)
+
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["thinkingConfig"]).to eq({"thinkingLevel" => "MEDIUM"})
+    end
+
+    it "serializes Session#think budget_tokens to thinkingConfig.thinkingBudget" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.user("Hi")
+      session.think(budget_tokens: 8_000)
+
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["thinkingConfig"]).to eq({"thinkingBudget" => 8_000})
     end
   end
 end

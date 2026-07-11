@@ -8,6 +8,9 @@ module PromptBuilder
     class Converse < Base
       # Request serializer for the Amazon Bedrock Converse API format.
       #
+      # Required session fields (an UnsupportedFormatError is raised when missing):
+      # - +model+ — populates the required +modelId+ parameter
+      #
       # === Unsupported Open Responses features
       #
       # These session fields are not supported and are silently omitted from the
@@ -19,7 +22,8 @@ module PromptBuilder
       # - +parallel_tool_calls+ — parallel tool call control is not supported
       # - +presence_penalty+ — not supported by the Converse API
       # - +prompt_cache_key+ / +prompt_cache_retention+ — explicit prompt cache keys are not supported
-      # - +reasoning+ — extended thinking is not supported on the Converse endpoint
+      # - +reasoning+ — extended thinking is not supported on the Converse endpoint;
+      #   a warning is issued (once per process) when +session.reasoning+ is set
       # - +safety_identifier+ — no equivalent user-safety field on the Converse endpoint
       # - +store+ — server-side response storage is not supported
       # - +stream+ — SSE streaming is handled outside the Converse request payload
@@ -110,6 +114,13 @@ module PromptBuilder
         }.freeze
 
         class << self
+          # Reset the once-per-process reasoning warning. Primarily used in tests.
+          #
+          # @return [void]
+          def reset_reasoning_warning!
+            @reasoning_warning_issued = false
+          end
+
           private
 
           def serialize_request(session)
@@ -118,7 +129,11 @@ module PromptBuilder
             ctx = {document_name_counts: Hash.new(0)}
 
             h = {}
-            h["modelId"] = session.model if session.model
+            raise UnsupportedFormatError, "Converse format requires session.model" unless session.model
+
+            warn_reasoning_unsupported! if session.reasoning
+
+            h["modelId"] = session.model
 
             system = build_system(session)
             h["system"] = system unless system.empty?
@@ -152,6 +167,16 @@ module PromptBuilder
             apply_session_extra!(h, session.extra) if session.extra
 
             h
+          end
+
+          # The Converse endpoint has no reasoning/extended thinking parameter,
+          # so the reasoning config is dropped. Warn once per process instead of
+          # dropping it silently.
+          def warn_reasoning_unsupported!
+            return if @reasoning_warning_issued
+
+            @reasoning_warning_issued = true
+            warn "PromptBuilder: session.reasoning is not supported by the Converse format and was omitted from the request payload"
           end
 
           def apply_session_extra!(h, extra)

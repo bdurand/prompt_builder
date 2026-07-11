@@ -7,6 +7,11 @@ module PromptBuilder
     class Gemini < Base
       # Request serializer for the Google Gemini API format.
       #
+      # Required session fields (an UnsupportedFormatError is raised when missing):
+      # - +model+ — not part of the payload (it belongs in the request URL) but
+      #   validated so an incomplete session fails at serialization time
+      # - at least one user/model message (the +contents+ array must not be empty)
+      #
       # === Unsupported Open Responses features
       #
       # These session fields are not supported and are silently omitted from the
@@ -115,7 +120,11 @@ module PromptBuilder
             system_instruction = build_system_instruction(session)
             h["systemInstruction"] = system_instruction if system_instruction
 
-            h["contents"] = build_contents(session)
+            contents = build_contents(session)
+            if contents.empty?
+              raise UnsupportedFormatError, "Gemini format requires at least one user/model message"
+            end
+            h["contents"] = contents
 
             generation_config = build_generation_config(session)
             h["generationConfig"] = generation_config unless generation_config.empty?
