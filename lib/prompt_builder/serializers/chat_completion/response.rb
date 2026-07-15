@@ -16,6 +16,18 @@ module PromptBuilder
         class << self
           private
 
+          # OpenAI errors arrive as {"error" => {"message" => ..., "type" =>
+          # ..., "code" => ...}}; some compatible servers return a bare string
+          # under "error".
+          def error_response_message(hash)
+            error = hash["error"]
+            return nil if error.nil? || hash.key?("choices")
+
+            return error.to_s unless error.is_a?(Hash)
+
+            [error["code"] || error["type"], error["message"]].compact.join(": ")
+          end
+
           def deserialize_response(hash)
             validate_response!(hash)
 

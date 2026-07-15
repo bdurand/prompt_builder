@@ -35,10 +35,8 @@ module PromptBuilder
 
     # All keyword options accepted by +initialize+.
     INITIALIZE_OPTIONS = (
-      STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS +
-        %i[input extra]
+      STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS + %i[input extra system]
     ).freeze
-    private_constant :INITIALIZE_OPTIONS
 
     # @!attribute [rw] model
     #   @return [String, nil] the model identifier
@@ -177,8 +175,12 @@ module PromptBuilder
       (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS).each do |f|
         send(:"#{f}=", attributes[f])
       end
+
       @extra = PromptBuilder.jsonify(attributes[:extra]) if attributes[:extra]
+
       @items = []
+      system(attributes[:system]) if attributes[:system]
+
       @tool_definitions = {}
       @response_boundary_index = 0
       user(attributes[:input]) if attributes[:input]

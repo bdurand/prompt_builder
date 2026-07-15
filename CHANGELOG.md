@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+### Added
+
+- Response parsers now recognize API error payloads (e.g. OpenAI/Gemini `error` envelopes, Anthropic `type: "error"` responses, Bedrock exception bodies and Coral service envelopes) and raise a `PromptBuilder::ErrorResponseError` containing the error message reported by the API instead of a generic missing-key `UnexpectedPayloadError`.
+- `PromptBuilder::ErrorResponseError` error class (a subclass of `UnexpectedPayloadError`).
+- `Items::Message#system?`, `#user?`, and `#assistant?` role predicates.
+
 ## 0.2.0
 
 ### Added

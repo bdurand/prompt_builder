@@ -864,6 +864,33 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       }
     end
 
+    it "raises an ErrorResponseError for an AWS Coral error envelope" do
+      expect {
+        described_class.parse_response({
+          "Output" => {"__type" => "com.amazon.coral.service#UnknownOperationException"},
+          "Version" => "1.0"
+        })
+      }.to raise_error(PromptBuilder::ErrorResponseError, "the API returned an error: com.amazon.coral.service#UnknownOperationException")
+    end
+
+    it "raises an ErrorResponseError for a Bedrock exception body" do
+      expect {
+        described_class.parse_response({"message" => "The provided model identifier is invalid."})
+      }.to raise_error(PromptBuilder::ErrorResponseError, /The provided model identifier is invalid/)
+    end
+
+    it "raises an ErrorResponseError for a JSON protocol error body" do
+      expect {
+        described_class.parse_response({"__type" => "ThrottlingException", "message" => "Rate exceeded"})
+      }.to raise_error(PromptBuilder::ErrorResponseError, /ThrottlingException: Rate exceeded/)
+    end
+
+    it "raises an UnexpectedPayloadError for unrecognized payloads" do
+      expect {
+        described_class.parse_response({"foo" => "bar"})
+      }.to raise_error(PromptBuilder::UnexpectedPayloadError, /missing "output"/)
+    end
+
     it "parses a basic Converse response" do
       response = described_class.parse_response(converse_response)
       expect(response.status).to eq("completed")

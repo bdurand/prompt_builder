@@ -10,6 +10,15 @@ module PromptBuilder
         class << self
           private
 
+          # Anthropic errors arrive as
+          # {"type" => "error", "error" => {"type" => ..., "message" => ...}}.
+          def error_response_message(hash)
+            error = hash["error"]
+            return nil unless error.is_a?(Hash) && !hash.key?("content")
+
+            [error["type"], error["message"]].compact.join(": ")
+          end
+
           def deserialize_response(hash)
             require_response_key!(hash, "content")
             require_response_key!(hash, "stop_reason")

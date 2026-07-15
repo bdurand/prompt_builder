@@ -1010,6 +1010,24 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
   end
 
   describe ".parse_response" do
+    it "raises an ErrorResponseError for a Gemini error envelope" do
+      expect {
+        described_class.parse_response({
+          "error" => {
+            "code" => 400,
+            "message" => "API key not valid. Please pass a valid API key.",
+            "status" => "INVALID_ARGUMENT"
+          }
+        })
+      }.to raise_error(PromptBuilder::ErrorResponseError, "the API returned an error: INVALID_ARGUMENT: API key not valid. Please pass a valid API key.")
+    end
+
+    it "raises an UnexpectedPayloadError for unrecognized payloads" do
+      expect {
+        described_class.parse_response({"foo" => "bar"})
+      }.to raise_error(PromptBuilder::UnexpectedPayloadError, /missing "candidates"/)
+    end
+
     it "preserves responseId" do
       response_hash = {
         "responseId" => "resp_xyz",

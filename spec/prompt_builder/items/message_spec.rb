@@ -156,6 +156,30 @@ RSpec.describe PromptBuilder::Items::Message do
     end
   end
 
+  describe "role predicates" do
+    it "#system? is true only for a system message" do
+      expect(described_class.new(role: "system", content: "x").system?).to be(true)
+      expect(described_class.new(role: "user", content: "x").system?).to be(false)
+    end
+
+    it "#user? is true only for a user message" do
+      expect(described_class.new(role: "user", content: "x").user?).to be(true)
+      expect(described_class.new(role: "assistant", content: "x").user?).to be(false)
+    end
+
+    it "#assistant? is true only for an assistant message" do
+      expect(described_class.new(role: "assistant", content: "x").assistant?).to be(true)
+      expect(described_class.new(role: "user", content: "x").assistant?).to be(false)
+    end
+
+    it "returns false for all three predicates on a developer message" do
+      message = described_class.new(role: "developer", content: "x")
+      expect(message.system?).to be(false)
+      expect(message.user?).to be(false)
+      expect(message.assistant?).to be(false)
+    end
+  end
+
   describe "round-trip" do
     it "round-trips through to_h and from_h" do
       original = described_class.new(role: "user", content: "Hello world")

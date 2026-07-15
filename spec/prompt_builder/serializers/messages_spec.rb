@@ -842,6 +842,21 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       }
     end
 
+    it "raises an ErrorResponseError for an Anthropic error envelope" do
+      expect {
+        described_class.parse_response({
+          "type" => "error",
+          "error" => {"type" => "authentication_error", "message" => "invalid x-api-key"}
+        })
+      }.to raise_error(PromptBuilder::ErrorResponseError, "the API returned an error: authentication_error: invalid x-api-key")
+    end
+
+    it "raises an UnexpectedPayloadError for unrecognized payloads" do
+      expect {
+        described_class.parse_response({"foo" => "bar"})
+      }.to raise_error(PromptBuilder::UnexpectedPayloadError, /missing "content"/)
+    end
+
     it "parses a basic Anthropic response" do
       response = described_class.parse_response(anthropic_response)
       expect(response.id).to eq("msg_123")

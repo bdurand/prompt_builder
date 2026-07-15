@@ -19,6 +19,11 @@ module PromptBuilder
   # Raised when a response payload does not match the expected shape.
   class UnexpectedPayloadError < Error; end
 
+  # Raised when a response payload is an error returned by the API rather
+  # than a completion (e.g. an authentication, validation, or throttling
+  # error envelope). The message contains the error reported by the API.
+  class ErrorResponseError < UnexpectedPayloadError; end
+
   # Raised by Response#parsed_json! when the response text is not valid JSON.
   class ParseError < Error; end
 end

@@ -327,6 +327,37 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
   end
 
   describe ".parse_response" do
+    it "raises an ErrorResponseError for an error envelope" do
+      expect {
+        described_class.parse_response({
+          "error" => {
+            "message" => "Incorrect API key provided",
+            "type" => "invalid_request_error",
+            "code" => "invalid_api_key"
+          }
+        })
+      }.to raise_error(PromptBuilder::ErrorResponseError, "the API returned an error: invalid_api_key: Incorrect API key provided")
+    end
+
+    it "raises an UnexpectedPayloadError for unrecognized payloads" do
+      expect {
+        described_class.parse_response({"foo" => "bar"})
+      }.to raise_error(PromptBuilder::UnexpectedPayloadError, /missing "status"/)
+    end
+
+    it "parses a failed response object with an error field as a failed Response" do
+      hash = {
+        "id" => "resp_123",
+        "object" => "response",
+        "status" => "failed",
+        "error" => {"code" => "server_error", "message" => "The model failed to generate a response."},
+        "output" => []
+      }
+
+      response = described_class.parse_response(hash)
+      expect(response.status).to eq("failed")
+    end
+
     it "parses an Open Responses hash into PromptBuilder::Response" do
       hash = {
         "id" => "resp_123",

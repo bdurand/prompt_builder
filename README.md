@@ -71,7 +71,7 @@ session.assistant("Hi there! How can I help you today?")
 session.user("What's the weather like?")
 ```
 
-Messages support the roles `user`, `assistant`, `system`, and `developer`.
+Messages support the roles `user`, `assistant`, `system`, and `developer`. A `Message` exposes `system?`, `user?`, and `assistant?` predicates for checking its role.
 
 ### Serializing Requests
 
@@ -160,6 +160,13 @@ response.text            # => "The capital of France is Paris."
 response.completed?      # => true
 response.has_tool_calls? # => false
 response.usage           # => #<PromptBuilder::Usage input_tokens=25 output_tokens=12 ...>
+```
+
+If the payload is an error returned by the API rather than a completion (e.g. an authentication failure, a validation error, or an AWS Coral service envelope), `Response.parse` raises a `PromptBuilder::ErrorResponseError` whose message contains the error reported by the API. Payloads that are neither a completion nor a recognizable error envelope raise a `PromptBuilder::UnexpectedPayloadError` (which `ErrorResponseError` subclasses) including the offending body.
+
+```ruby
+PromptBuilder::Response.parse({"error" => {"type" => "invalid_request_error", "message" => "Incorrect API key provided"}}, :chat_completion)
+# => raises PromptBuilder::ErrorResponseError: the API returned an error: invalid_request_error: Incorrect API key provided
 ```
 
 You can also synthesize a plain-text response without calling an API — useful for canned answers (e.g. halting an agent loop), cached responses, and tests:

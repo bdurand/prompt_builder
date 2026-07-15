@@ -23,6 +23,24 @@ module PromptBuilder
       # @return [Hash, nil] provider-specific extra data
       attr_reader :extra
 
+      class << self
+        # Deserialize a Message from a Hash.
+        #
+        # @param hash [Hash] a Hash with string keys
+        # @return [Message]
+        def from_h(hash)
+          content = (hash["content"] || []).map { |c| Content::Base.from_h(c) }
+          new(
+            id: hash["id"],
+            role: hash["role"],
+            status: hash["status"],
+            phase: hash["phase"],
+            content: content,
+            **hash.except("type", "id", "role", "status", "phase", "content").transform_keys(&:to_sym)
+          )
+        end
+      end
+
       # Create a new Message item.
       #
       # @param id [String, nil] the message identifier
@@ -40,22 +58,25 @@ module PromptBuilder
         @extra = extra.transform_keys(&:to_s)
       end
 
-      class << self
-        # Deserialize a Message from a Hash.
-        #
-        # @param hash [Hash] a Hash with string keys
-        # @return [Message]
-        def from_h(hash)
-          content = (hash["content"] || []).map { |c| Content::Base.from_h(c) }
-          new(
-            id: hash["id"],
-            role: hash["role"],
-            status: hash["status"],
-            phase: hash["phase"],
-            content: content,
-            **hash.except("type", "id", "role", "status", "phase", "content").transform_keys(&:to_sym)
-          )
-        end
+      # Check if the message is a system message.
+      #
+      # @return [Boolean]
+      def system?
+        role == "system"
+      end
+
+      # Check if the message is a user message.
+      #
+      # @return [Boolean]
+      def user?
+        role == "user"
+      end
+
+      # Check if the message is an assistant message.
+      #
+      # @return [Boolean]
+      def assistant?
+        role == "assistant"
       end
 
       # Serialize to a Hash with string keys.

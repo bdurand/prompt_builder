@@ -743,6 +743,30 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       }
     end
 
+    it "raises an ErrorResponseError for an OpenAI error envelope" do
+      expect {
+        described_class.parse_response({
+          "error" => {
+            "message" => "Incorrect API key provided",
+            "type" => "invalid_request_error",
+            "code" => "invalid_api_key"
+          }
+        })
+      }.to raise_error(PromptBuilder::ErrorResponseError, "the API returned an error: invalid_api_key: Incorrect API key provided")
+    end
+
+    it "raises an ErrorResponseError for a string error payload" do
+      expect {
+        described_class.parse_response({"error" => "model overloaded"})
+      }.to raise_error(PromptBuilder::ErrorResponseError, /model overloaded/)
+    end
+
+    it "raises an UnexpectedPayloadError for unrecognized payloads" do
+      expect {
+        described_class.parse_response({"foo" => "bar"})
+      }.to raise_error(PromptBuilder::UnexpectedPayloadError, /missing "choices"/)
+    end
+
     it "parses a basic OpenAI response" do
       response = described_class.parse_response(openai_response)
       expect(response.id).to eq("chatcmpl-123")
