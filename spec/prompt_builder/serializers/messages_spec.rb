@@ -101,6 +101,18 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["messages"].length).to eq(1)
     end
 
+    it "serializes OutputText content in system messages into top-level system" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "system",
+        content: [PromptBuilder::Content::OutputText.new(text: "From history")]
+      ))
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["system"]).to eq([{"type" => "text", "text" => "From history"}])
+    end
+
     it "converts tool definitions" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.register_tool(

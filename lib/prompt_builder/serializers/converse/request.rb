@@ -39,6 +39,8 @@ module PromptBuilder
       # - +tool_choice: "none"+ has no Converse representation and is omitted
       #
       # Input content restrictions:
+      # - System and developer messages are hoisted out of conversational order
+      #   into the top-level +system+ parameter, merged after +instructions+
       # - +Reasoning+ items are silently skipped
       # - +RefusalContent+ is dropped silently (a parsed response refusal can
       #   stay in session history without breaking subsequent request_payload calls)

@@ -48,16 +48,17 @@ session = PromptBuilder::Session.new(
 session.user("What is the capital of France?")
 ```
 
-You can also pass an `input` shorthand to create a user message in one step:
+You can also pass `system` and `input` shorthands to create a system message and a user message in one step (equivalent to calling `session.system(...)` and `session.user(...)`):
 
 ```ruby
 session = PromptBuilder::Session.new(
   model: "gpt-5.4",
+  system: "You are a helpful assistant.",
   input: "What is the capital of France?"
 )
 ```
 
-Passing an option the constructor doesn't recognize (or both halves of an alias pair) raises an `ArgumentError`.
+Passing an option the constructor doesn't recognize raises an `ArgumentError`.
 
 ### Conversation History
 

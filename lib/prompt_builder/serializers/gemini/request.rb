@@ -27,6 +27,10 @@ module PromptBuilder
       # - +truncation+ — server-side context truncation is not supported
       #
       # Input content restrictions:
+      # - System and developer messages are hoisted out of conversational order
+      #   into the top-level +systemInstruction+ field, merged after +instructions+
+      # - Only text content (+InputText+/+OutputText+) survives in system and
+      #   developer messages; other content is silently omitted
       # - +InputImage+ content is only supported in user messages (assistant images are omitted)
       # - +InputImage+ with +image_url+ requires either base64 +data+ or a URL;
       #   content without +image_url+ or +file_id+ raises
@@ -171,7 +175,9 @@ module PromptBuilder
               next unless item.role == "system" || item.role == "developer"
 
               item.content.each do |content|
-                parts << {"text" => content.text} if content.is_a?(Content::InputText)
+                if content.is_a?(Content::InputText) || content.is_a?(Content::OutputText)
+                  parts << {"text" => content.text}
+                end
               end
             end
 

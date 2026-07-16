@@ -36,6 +36,10 @@ module PromptBuilder
       #   is enabled
       #
       # Input content restrictions:
+      # - System and developer messages are hoisted out of conversational order
+      #   into the top-level +system+ parameter, merged after +instructions+
+      # - Only text content (+InputText+/+OutputText+) survives in system and
+      #   developer messages; other content is silently omitted
       # - +InputVideo+ content is not supported and is omitted
       # - +RefusalContent+ is dropped silently (a parsed refusal can stay in
       #   session history without breaking subsequent request_payload calls)
@@ -288,7 +292,7 @@ module PromptBuilder
               next unless item.role == "system" || item.role == "developer"
 
               item.content.each do |content|
-                if content.is_a?(Content::InputText)
+                if content.is_a?(Content::InputText) || content.is_a?(Content::OutputText)
                   part = {"type" => "text", "text" => content.text}
                   if content.extra && content.extra["cache_control"]
                     part["cache_control"] = content.extra["cache_control"]

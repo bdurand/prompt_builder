@@ -156,16 +156,17 @@ module PromptBuilder
     # Create a new Session with the given options.
     # Accepts keyword arguments for all typed field groups (STRING_FIELDS,
     # FLOAT_FIELDS, INTEGER_FIELDS, BOOLEAN_FIELDS, JSONIFY_FIELDS); all default
-    # to +nil+. The +input+ (or +user+) shorthand auto-creates a user message
-    # if provided. Unsupported keyword options raise an ArgumentError.
+    # to +nil+. The +system+ and +input+ shorthands auto-create a system and
+    # user message if provided. Unsupported keyword options raise an ArgumentError.
     #
     # @param attributes [Hash] keyword options; see attribute declarations above
+    # @option attributes [String, nil] :system optional string shorthand; a system
+    #   message is automatically added with this text
     # @option attributes [String, nil] :input optional string shorthand; a user
     #   message is automatically added with this text
     # @option attributes [Hash, nil] :extra provider-specific extra data for
     #   serializers; recognized keys vary by target format
-    # @raise [ArgumentError] if an unsupported option is passed or aliased
-    #   options are passed together
+    # @raise [ArgumentError] if an unsupported option is passed
     def initialize(**attributes)
       unsupported = attributes.keys - INITIALIZE_OPTIONS
       unless unsupported.empty?

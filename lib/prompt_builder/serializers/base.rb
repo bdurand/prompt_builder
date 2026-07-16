@@ -53,7 +53,7 @@ module PromptBuilder
 
         # Extract a human-readable message from an API error envelope.
         #
-        # @param hash [Hash] the raw response payload
+        # @param _hash [Hash] the raw response payload
         # @return [String, nil] nil when the payload is not recognized as an
         #   error envelope
         def error_response_message(_hash)
