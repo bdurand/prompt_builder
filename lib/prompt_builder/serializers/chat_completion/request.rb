@@ -27,6 +27,10 @@ module PromptBuilder
       #   supported, and only when +stream+ is set (otherwise it is omitted)
       #
       # Input content restrictions:
+      # - +instructions+ is serialized as a system message inserted after the
+      #   last system/developer message, or first when there are none
+      #   (instructions apply to the current request, matching Open Responses
+      #   semantics)
       # - +InputVideo+ content is not supported in any message (omitted)
       # - +Reasoning+ items are not supported (skipped)
       # - +RefusalContent+ is dropped silently (a parsed Chat Completions
@@ -138,10 +142,6 @@ module PromptBuilder
           def build_messages(session)
             messages = []
 
-            if session.instructions
-              messages << {"role" => "system", "content" => session.instructions}
-            end
-
             pending_tool_calls = []
             last_assistant_msg = nil
 
@@ -171,7 +171,16 @@ module PromptBuilder
             end
 
             flush_tool_calls!(messages, pending_tool_calls, last_assistant_msg)
+            insert_instructions!(messages, session.instructions) if session.instructions
             messages
+          end
+
+          # Instructions apply to the current request (matching Open Responses
+          # semantics), so they are inserted after the last system/developer
+          # message rather than before any of them.
+          def insert_instructions!(messages, instructions)
+            index = messages.rindex { |msg| msg["role"] == "system" || msg["role"] == "developer" }
+            messages.insert(index ? index + 1 : 0, {"role" => "system", "content" => instructions})
           end
 
           def serialize_message(item)

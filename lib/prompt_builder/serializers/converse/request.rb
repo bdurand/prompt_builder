@@ -40,7 +40,9 @@ module PromptBuilder
       #
       # Input content restrictions:
       # - System and developer messages are hoisted out of conversational order
-      #   into the top-level +system+ parameter, merged after +instructions+
+      #   into the top-level +system+ parameter, with +instructions+ merged last
+      #   (instructions apply to the current request, matching Open Responses
+      #   semantics)
       # - +Reasoning+ items are silently skipped
       # - +RefusalContent+ is dropped silently (a parsed response refusal can
       #   stay in session history without breaking subsequent request_payload calls)
@@ -196,8 +198,6 @@ module PromptBuilder
           def build_system(session)
             parts = []
 
-            parts << {"text" => session.instructions} if session.instructions
-
             session.items.each do |item|
               next unless item.is_a?(Items::Message)
               next unless item.role == "system" || item.role == "developer"
@@ -212,6 +212,11 @@ module PromptBuilder
                 end
               end
             end
+
+            # Instructions come last: in the Open Responses API they apply to
+            # the current request, so they must follow any system messages
+            # accumulated in the conversation history.
+            parts << {"text" => session.instructions} if session.instructions
 
             parts
           end

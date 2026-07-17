@@ -25,6 +25,20 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["messages"][1]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
     end
 
+    it "inserts instructions after the last system or developer message" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", instructions: "Base instruction")
+      session.system("Extra system context")
+      session.developer("Developer note")
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["messages"].length).to eq(4)
+      expect(h["messages"][0]).to eq({"role" => "system", "content" => [{"type" => "text", "text" => "Extra system context"}]})
+      expect(h["messages"][1]["role"]).to eq("developer")
+      expect(h["messages"][2]).to eq({"role" => "system", "content" => "Base instruction"})
+      expect(h["messages"][3]["role"]).to eq("user")
+    end
+
     it "raises when model is missing" do
       session = PromptBuilder::Session.new
       session.user("Hello")

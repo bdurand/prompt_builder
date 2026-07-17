@@ -28,7 +28,9 @@ module PromptBuilder
       #
       # Input content restrictions:
       # - System and developer messages are hoisted out of conversational order
-      #   into the top-level +systemInstruction+ field, merged after +instructions+
+      #   into the top-level +systemInstruction+ field, with +instructions+ merged
+      #   last (instructions apply to the current request, matching Open Responses
+      #   semantics)
       # - Only text content (+InputText+/+OutputText+) survives in system and
       #   developer messages; other content is silently omitted
       # - +InputImage+ content is only supported in user messages (assistant images are omitted)
@@ -166,10 +168,6 @@ module PromptBuilder
           def build_system_instruction(session)
             parts = []
 
-            if session.instructions
-              parts << {"text" => session.instructions}
-            end
-
             session.items.each do |item|
               next unless item.is_a?(Items::Message)
               next unless item.role == "system" || item.role == "developer"
@@ -179,6 +177,13 @@ module PromptBuilder
                   parts << {"text" => content.text}
                 end
               end
+            end
+
+            # Instructions come last: in the Open Responses API they apply to
+            # the current request, so they must follow any system messages
+            # accumulated in the conversation history.
+            if session.instructions
+              parts << {"text" => session.instructions}
             end
 
             return nil if parts.empty?

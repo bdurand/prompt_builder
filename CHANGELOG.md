@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Session#remove_tool` removes a single registered tool by name (string or symbol), returning the removed `Tools::Definition` or `nil` when not found.
 - `Session#clear_tools` removes all registered tools from the session, returning the removed definitions.
 
+### Changed
+
+- When a session has both `instructions` and system/developer messages, `instructions` is now serialized *after* the system/developer messages instead of before them (Chat Completions: inserted as a system message after the last system/developer message; Messages/Converse/Gemini: appended last in the merged top-level system field). This matches the Open Responses semantics of `instructions` applying to the current request, so it should follow system prompts accumulated in the conversation history.
+
 ## 0.2.0
 
 ### Added

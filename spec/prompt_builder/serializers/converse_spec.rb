@@ -170,9 +170,9 @@ RSpec.describe PromptBuilder::Serializers::Converse do
 
       h = described_class.request_payload(session)
       expect(h["system"].length).to eq(3)
-      expect(h["system"][0]["text"]).to eq("Base instruction")
-      expect(h["system"][1]["text"]).to eq("Extra system context")
-      expect(h["system"][2]["text"]).to eq("Developer note")
+      expect(h["system"][0]["text"]).to eq("Extra system context")
+      expect(h["system"][1]["text"]).to eq("Developer note")
+      expect(h["system"][2]["text"]).to eq("Base instruction")
       expect(h["messages"].length).to eq(1)
     end
 

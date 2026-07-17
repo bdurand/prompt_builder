@@ -50,9 +50,9 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
       h = described_class.request_payload(session)
       expect(h["systemInstruction"]["parts"].length).to eq(3)
-      expect(h["systemInstruction"]["parts"][0]["text"]).to eq("Base instruction")
-      expect(h["systemInstruction"]["parts"][1]["text"]).to eq("Extra system context")
-      expect(h["systemInstruction"]["parts"][2]["text"]).to eq("Developer note")
+      expect(h["systemInstruction"]["parts"][0]["text"]).to eq("Extra system context")
+      expect(h["systemInstruction"]["parts"][1]["text"]).to eq("Developer note")
+      expect(h["systemInstruction"]["parts"][2]["text"]).to eq("Base instruction")
       # System/developer messages should not appear in contents array
       expect(h["contents"].length).to eq(1)
     end
