@@ -532,6 +532,21 @@ session.user([
     cache_point: true
   )
 ])
+
+# Bedrock Converse: cache_point on tool definitions and tool results
+session.register_tool(
+  "search",
+  description: "Search the knowledge base.",
+  parameters: {"type" => "object", "properties" => {"query" => {"type" => "string"}}},
+  cache_point: true
+)
+session.add_item(
+  PromptBuilder::Items::FunctionCallOutput.new(
+    call_id: "call_1",
+    output: "Search results...",
+    cache_point: true
+  )
+)
 ```
 
 #### Tool Definition Extra
@@ -555,7 +570,7 @@ session.register_tool(
 | **Chat Completions** | `stop`, `seed`, `logit_bias`, `n`, `prediction`, `web_search_options`, `modalities`, `audio` | `file_id`, `media_type` | — |
 | **Messages** | `top_k`, `stop_sequences`, `cache_control` | `cache_control`, `citations`, `file_id`, `media_type` | `cache_control` |
 | **Gemini** | `safety_settings`, `cached_content`, `stop_sequences`, `top_k`, `seed`, `candidate_count`, `response_modalities`, `media_resolution` | `file_id`, `media_type`, `thought_signature` | — |
-| **Converse** | `stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables` | `media_type`, `cache_point` | — |
+| **Converse** | `stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables` | `media_type`, `cache_point` | `cache_point` |
 
 ### Serialization and Persistence
 
@@ -826,7 +841,7 @@ Content and message restrictions:
 - `FunctionCall.arguments` must parse to a JSON object; non-object JSON values raise (Bedrock's `toolUse.input` requires an object).
 - `FunctionCallOutput.output` content supports `InputText`/`OutputText`, `InputImage`, `InputFile`, and `InputVideo`, mapping to Converse `text`, `image`, `document`, and `video` tool result blocks. Converse also supports `json` and `searchResult` tool result blocks, but this gem has no canonical content types for them, so unsupported content is omitted. `FunctionCallOutput.status` is mapped: `completed` → `success`, `failed`/`incomplete` → `error`, anything else passes through or is dropped.
 - `tool_choice: "none"` and `tool_choice` without registered tools are both omitted.
-- Converse API request features with no canonical Open Responses field are available through `session.extra` (`stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables`) and content `extra` (`cache_point`). Features not exposed at all include `guardContent`, audio blocks, and `searchResult` blocks.
+- Converse API request features with no canonical Open Responses field are available through `session.extra` (`stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables`) and content `extra` (`cache_point`). `cache_point` is also recognized on tool definitions (the marker is appended to the `toolConfig.tools` array) and on `FunctionCallOutput` items (the marker is appended after the `toolResult` content block). Features not exposed at all include `guardContent`, audio blocks, and `searchResult` blocks.
 - The serialized payload includes `modelId` as a convenience; the Converse REST endpoint takes the model id in the URL path (`/model/{modelId}/converse`), and AWS REST-JSON services ignore unrecognized body members. Remove it from the body if you prefer a strictly minimal payload.
 
 Response-side limitations:
@@ -834,7 +849,7 @@ Response-side limitations:
 - Unknown content block keys (e.g. `citationsContent`, `guardContent`) are silently skipped.
 - `metrics.latencyMs`, `trace` (guardrail and prompt-router trace events), `additionalModelResponseFields`, `performanceConfig`, and the raw `serviceTier` object are exposed on `response.provider_data`. `response.service_tier` is also populated from `serviceTier.type`.
 - `stopReason` mappings: `end_turn` / `tool_use` / `stop_sequence` → `completed`, `max_tokens` / `model_context_window_exceeded` → `incomplete`, `guardrail_intervened` / `content_filtered` / `malformed_model_output` / `malformed_tool_use` → `failed`. Unlike the Messages serializer, the matched stop sequence text is not surfaced separately because Converse does not echo it back unless you request provider-specific fields through `additionalModelResponseFieldPaths` (available via the `additional_model_response_field_paths` session extra; the requested fields appear on `response.provider_data`).
-- `usage.cacheReadInputTokens` and `usage.cacheWriteInputTokens` populate `response.usage.input_tokens_details["cached_tokens"]` and `["cache_creation_input_tokens"]`. Cache writes require `cachePoint` markers in the request, which are emitted via the `cache_point` content extra.
+- `usage.cacheReadInputTokens` and `usage.cacheWriteInputTokens` populate `response.usage.input_tokens_details["cached_tokens"]` and `["cache_creation_input_tokens"]`. Cache writes require `cachePoint` markers in the request, which are emitted via the `cache_point` extra on content, tool definitions, and `FunctionCallOutput` items.
 
 ## Installation
 

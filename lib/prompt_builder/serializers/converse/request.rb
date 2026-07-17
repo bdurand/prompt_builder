@@ -72,8 +72,11 @@ module PromptBuilder
       # - Prompt management variables (+prompt_variables+)
       #
       # Prompt caching markers (+cachePoint+) are emitted via the +cache_point+
-      # content extra. Cross-region routing via inference profiles is selected
-      # through the model id and needs no request field.
+      # extra on system/message content, tool definitions (appended to the
+      # +toolConfig.tools+ array), and +FunctionCallOutput+ items (appended to
+      # the message content after the +toolResult+ block). Cross-region routing
+      # via inference profiles is selected through the model id and needs no
+      # request field.
       class Request < Base
         IMAGE_MEDIA_TYPE_FORMATS = {
           "image/jpeg" => "jpeg",
@@ -256,10 +259,14 @@ module PromptBuilder
                   }]
                 }
               when Items::FunctionCallOutput
-                raw_messages << {
-                  "role" => "user",
-                  "content" => [serialize_tool_result(item, ctx)]
-                }
+                # The Converse ToolResultContentBlock union has no cachePoint
+                # member; the marker must be a sibling content block after the
+                # toolResult block.
+                content = [serialize_tool_result(item, ctx)]
+                if item.extra && item.extra["cache_point"]
+                  content << {"cachePoint" => {"type" => "default"}}
+                end
+                raw_messages << {"role" => "user", "content" => content}
               when Items::Reasoning, Items::Compaction, Items::ItemReference
                 # Reasoning, Compaction, and ItemReference items are not supported
                 # in the request, so ignore them rather than raising an error.
@@ -617,13 +624,17 @@ module PromptBuilder
           end
 
           def build_tools(session)
-            session.tool_definitions.map do |definition|
+            session.tool_definitions.flat_map do |definition|
               tool_spec = {"name" => definition.name}
               tool_spec["description"] = definition.description if definition.description
               tool_spec["inputSchema"] = {
                 "json" => definition.parameters || {"type" => "object", "properties" => {}}
               }
-              {"toolSpec" => tool_spec}
+              tools = [{"toolSpec" => tool_spec}]
+              # The Converse Tool union type has a cachePoint member, so the
+              # marker is its own entry in the tools array.
+              tools << {"cachePoint" => {"type" => "default"}} if definition.extra["cache_point"]
+              tools
             end
           end
 

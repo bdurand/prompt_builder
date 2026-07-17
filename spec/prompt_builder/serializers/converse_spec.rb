@@ -240,6 +240,46 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       })
     end
 
+    it "appends a cachePoint entry after a tool definition with the cache_point extra" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.register_tool(
+        "search",
+        description: "Search the knowledge base",
+        parameters: {"type" => "object", "properties" => {"query" => {"type" => "string"}}},
+        cache_point: true
+      ) { |_| "ok" }
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      tools = h["toolConfig"]["tools"]
+      expect(tools.length).to eq(2)
+      expect(tools[0]["toolSpec"]["name"]).to eq("search")
+      expect(tools[1]).to eq({"cachePoint" => {"type" => "default"}})
+    end
+
+    it "positions the tool definition cachePoint entry after its toolSpec" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.register_tool("first", cache_point: true) { |_| "ok" }
+      session.register_tool("second") { |_| "ok" }
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      tools = h["toolConfig"]["tools"]
+      expect(tools.length).to eq(3)
+      expect(tools[0]["toolSpec"]["name"]).to eq("first")
+      expect(tools[1]).to eq({"cachePoint" => {"type" => "default"}})
+      expect(tools[2]["toolSpec"]["name"]).to eq("second")
+    end
+
+    it "does not emit cachePoint entries for tool definitions without the cache_point extra" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.register_tool("ping") { |_| "pong" }
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["toolConfig"]["tools"].none? { |t| t.key?("cachePoint") }).to be(true)
+    end
+
     it "converts FunctionCall items to toolUse content blocks" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.user("What's the weather?")
@@ -354,6 +394,67 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       h = described_class.request_payload(session)
       tool_result = h["messages"][2]["content"][0]["toolResult"]
       expect(tool_result["content"]).to eq([{"text" => ""}])
+    end
+
+    it "appends a cachePoint block after the toolResult for a FunctionCallOutput with the cache_point extra" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "search", call_id: "call_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "call_1", output: "Search results...", cache_point: true
+      ))
+
+      h = described_class.request_payload(session)
+      content = h["messages"][2]["content"]
+      expect(content.length).to eq(2)
+      expect(content[0]["toolResult"]["toolUseId"]).to eq("call_1")
+      expect(content[1]).to eq({"cachePoint" => {"type" => "default"}})
+    end
+
+    it "does not emit a cachePoint block for a FunctionCallOutput without the cache_point extra" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "search", call_id: "call_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(
+        call_id: "call_1", output: "Search results..."
+      ))
+
+      h = described_class.request_payload(session)
+      content = h["messages"][2]["content"]
+      expect(content.none? { |c| c.key?("cachePoint") }).to be(true)
+    end
+
+    it "emits a cachePoint block after system content with the cache_point extra" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.system([
+        PromptBuilder::Content::InputText.new(text: "Long system context", cache_point: true)
+      ])
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["system"]).to eq([
+        {"text" => "Long system context"},
+        {"cachePoint" => {"type" => "default"}}
+      ])
+    end
+
+    it "emits a cachePoint block after user message content with the cache_point extra" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user([
+        PromptBuilder::Content::InputText.new(text: "Long context to cache", cache_point: true),
+        PromptBuilder::Content::InputText.new(text: "Question?")
+      ])
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]["content"]).to eq([
+        {"text" => "Long context to cache"},
+        {"cachePoint" => {"type" => "default"}},
+        {"text" => "Question?"}
+      ])
     end
 
     it "converts InputImage with base64 data" do
