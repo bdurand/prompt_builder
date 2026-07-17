@@ -60,6 +60,17 @@ session = PromptBuilder::Session.new(
 
 Passing an option the constructor doesn't recognize raises an `ArgumentError`.
 
+#### `instructions` vs. system and developer messages
+
+Although both can be used to steer the model's behavior, `instructions` and system/developer messages are not interchangeable in the Open Responses API:
+
+- `instructions` is a top-level request parameter, not part of the conversation. It is sent with every request, and in the Open Responses API it applies only to the request it accompanies — it is *not* carried over when chaining responses with `previous_response_id`. That makes it safe to change `session.instructions` at any point in a conversation; the new value simply applies from the next request onward.
+- `session.system(...)` and `session.developer(...)` create messages inside the conversation history (the `input` array). They occupy a position in the transcript like any other message, and once the session is chained with `previous_response_id` they become part of the server-stored history and are not re-sent on subsequent requests.
+
+As a rule of thumb, use `instructions` for standing behavior you may want to adjust from request to request, and use system or developer messages when the directive should be a durable part of the conversation record.
+
+When serializing to the other formats this distinction collapses: `instructions` and any system/developer messages are merged together into the target format's single system field (see [Serializer Compatibility](#serializer-compatibility)).
+
 ### Conversation History
 
 Build up a multi-turn conversation by adding messages:
@@ -73,6 +84,12 @@ session.user("What's the weather like?")
 ```
 
 Messages support the roles `user`, `assistant`, `system`, and `developer`. A `Message` exposes `system?`, `user?`, and `assistant?` predicates for checking its role.
+
+Call `session.clear` to reset the conversation: it removes all items and the `instructions`, drops any `previous_response_id`, and returns the session to a fresh local-state start. Model configuration and registered tools are preserved, so the session can be reused for a new conversation.
+
+```ruby
+session.clear   # items and instructions removed; model/config/tools kept
+```
 
 ### Serializing Requests
 
@@ -305,6 +322,13 @@ session.use_tools(:weather, registry: my_registry)    # explicit registry
 ```
 
 Tool definitions are *copied* onto the session in all cases, so later registry changes don't affect the session and the tools survive `to_h`/`from_h` round-trips.
+
+Remove tools from a session with `remove_tool` (by name; accepts a string or symbol) or `clear_tools` (all at once). `remove_tool` returns the removed `Tools::Definition`, or `nil` if no tool by that name was registered; `clear_tools` returns the removed definitions.
+
+```ruby
+session.remove_tool("weather")   # => removed Tools::Definition, or nil
+session.clear_tools              # => [<removed definitions>]
+```
 
 ### Content Types
 

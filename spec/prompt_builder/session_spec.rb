@@ -233,6 +233,49 @@ RSpec.describe PromptBuilder::Session do
     end
   end
 
+  describe "#clear" do
+    it "clears all items and the instructions" do
+      session.system("Be concise.")
+      session.user("Hello")
+      session.clear
+      expect(session.items).to be_empty
+      expect(session.instructions).to be_nil
+      h = session.to_h
+      expect(h).not_to have_key("input")
+      expect(h).not_to have_key("instructions")
+    end
+
+    it "returns the session to fresh local-state mode" do
+      s = described_class.new(model: "gpt-5.2", previous_response_id: "resp_0")
+      s.user("First")
+      s.add_response(PromptBuilder::Response.new(id: "resp_1", status: "completed"))
+      expect(s).not_to be_local_state
+      expect(s.response_boundary_index).to eq(1)
+
+      s.clear
+      expect(s.previous_response_id).to be_nil
+      expect(s.response_boundary_index).to eq(0)
+      expect(s).to be_local_state
+    end
+
+    it "preserves model configuration and registered tools" do
+      session.register_tool("greet", description: "Say hello")
+      session.user("Hello")
+      session.clear
+      expect(session.model).to eq("gpt-5.2")
+      expect(session.temperature).to eq(0.7)
+      expect(session.tool_definitions.map(&:name)).to eq(["greet"])
+    end
+
+    it "returns self and clears items in place" do
+      original = session.items
+      session.user("Hello")
+      expect(session.clear).to be(session)
+      expect(session.items).to be(original)
+      expect(session.items).to be_empty
+    end
+  end
+
   describe "previous_response_id mode serialization" do
     it "to_h always includes full history" do
       s = described_class.new(previous_response_id: "resp_0")
@@ -339,6 +382,51 @@ RSpec.describe PromptBuilder::Session do
 
     it "raises ArgumentError when registry is not a ToolRegistry" do
       expect { session.use_tools("weather", registry: {}) }.to raise_error(ArgumentError)
+    end
+  end
+
+  describe "#remove_tool" do
+    it "removes the named tool and returns its definition, leaving others" do
+      session.register_tool("weather", description: "Get weather")
+      session.register_tool("traffic", description: "Get traffic")
+
+      removed = session.remove_tool("weather")
+      expect(removed).to be_a(PromptBuilder::Tools::Definition)
+      expect(removed.name).to eq("weather")
+      expect(session.tool_definitions.map(&:name)).to eq(["traffic"])
+    end
+
+    it "returns nil when the tool is not registered" do
+      expect(session.remove_tool("nope")).to be_nil
+    end
+
+    it "matches regardless of whether the tool was registered by string or symbol" do
+      session.register_tool(:weather, description: "Get weather")
+      removed = session.remove_tool("weather")
+      expect(removed).not_to be_nil
+      expect(session.tool_definitions).to be_empty
+    end
+
+    it "accepts a symbol name" do
+      session.register_tool("weather", description: "Get weather")
+      expect(session.remove_tool(:weather)).not_to be_nil
+      expect(session.tool_definitions).to be_empty
+    end
+  end
+
+  describe "#clear_tools" do
+    it "removes all registered tools and returns the removed definitions" do
+      session.register_tool("weather", description: "Get weather")
+      session.register_tool("traffic", description: "Get traffic")
+
+      removed = session.clear_tools
+      expect(removed.map(&:name)).to contain_exactly("weather", "traffic")
+      expect(session.tool_definitions).to be_empty
+      expect(session.to_h).not_to have_key("tools")
+    end
+
+    it "returns an empty array when there are no tools" do
+      expect(session.clear_tools).to eq([])
     end
   end
 

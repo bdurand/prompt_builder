@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Response parsers now recognize API error payloads (e.g. OpenAI/Gemini `error` envelopes, Anthropic `type: "error"` responses, Bedrock exception bodies and Coral service envelopes) and raise a `PromptBuilder::ErrorResponseError` containing the error message reported by the API instead of a generic missing-key `UnexpectedPayloadError`.
 - `PromptBuilder::ErrorResponseError` error class (a subclass of `UnexpectedPayloadError`).
 - `Items::Message#system?`, `#user?`, and `#assistant?` role predicates.
+- `Session#clear` removes all conversation items and the `instructions`, clears any `previous_response_id`, and returns the session to a fresh local-state start while preserving model configuration and registered tools.
+- `Session#remove_tool` removes a single registered tool by name (string or symbol), returning the removed `Tools::Definition` or `nil` when not found.
+- `Session#clear_tools` removes all registered tools from the session, returning the removed definitions.
 
 ## 0.2.0
 

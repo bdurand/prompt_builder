@@ -271,6 +271,19 @@ module PromptBuilder
       @response_boundary_index = @items.length
     end
 
+    # Clear all conversation items and the system instructions, returning the
+    # session to a fresh local-state start. Model configuration and registered
+    # tools are preserved.
+    #
+    # @return [self]
+    def clear
+      @items.clear
+      self.instructions = nil
+      self.previous_response_id = nil
+      @response_boundary_index = 0
+      self
+    end
+
     # Register a tool on this session.
     #
     # @param name [String] the tool name
@@ -347,6 +360,31 @@ module PromptBuilder
           **extra
         )
       end
+    end
+
+    # Remove a single registered tool by name. Accepts a string or symbol and
+    # matches regardless of how the tool's key was stored.
+    #
+    # @param name [String, Symbol] the tool name
+    # @return [Tools::Definition, nil] the removed definition, or nil if not found
+    def remove_tool(name)
+      key = name.to_s
+      removed = nil
+      @tool_definitions.delete_if do |k, defn|
+        match = k.to_s == key
+        removed = defn if match
+        match
+      end
+      removed
+    end
+
+    # Remove all registered tools from the session.
+    #
+    # @return [Array<Tools::Definition>] the removed tool definitions
+    def clear_tools
+      removed = @tool_definitions.values
+      @tool_definitions.clear
+      removed
     end
 
     # Configure JSON Schema structured output. Writes the canonical
