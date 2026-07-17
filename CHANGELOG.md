@@ -14,10 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Session#clear` removes all conversation items and the `instructions`, clears any `previous_response_id`, and returns the session to a fresh local-state start while preserving model configuration and registered tools.
 - `Session#remove_tool` removes a single registered tool by name (string or symbol), returning the removed `Tools::Definition` or `nil` when not found.
 - `Session#clear_tools` removes all registered tools from the session, returning the removed definitions.
+- Message content hashes with a `text` key no longer require a `type` key: the type defaults to `input_text` (or `output_text` on assistant messages), so `session.system(text: "...", cache_point: true)` works without specifying a type.
 
 ### Changed
 
 - When a session has both `instructions` and system/developer messages, `instructions` is now serialized *after* the system/developer messages instead of before them (Chat Completions: inserted as a system message after the last system/developer message; Messages/Converse/Gemini: appended last in the merged top-level system field). This matches the Open Responses semantics of `instructions` applying to the current request, so it should follow system prompts accumulated in the conversation history.
+
+### Fixed
+
+- The Messages, Chat Completions, Converse, and Gemini serializers silently dropped `Content::Text` content (produced by content hashes with `type: "text"`) from system messages, user/assistant messages, and tool results. It is now serialized as text everywhere `InputText`/`OutputText` are, including the `cache_control` (Messages) and `cachePoint` (Converse) markers from content extras.
 
 ## 0.2.0
 

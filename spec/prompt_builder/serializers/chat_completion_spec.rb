@@ -39,6 +39,23 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["messages"][3]["role"]).to eq("user")
     end
 
+    it "serializes a system message provided as a raw text hash with cache extras" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.system(type: "text", text: "You only speak German", cache_point: true, cache_control: {"type" => "ephemeral"})
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]).to eq({"role" => "system", "content" => [{"type" => "text", "text" => "You only speak German"}]})
+    end
+
+    it "serializes Text content in user messages" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user(type: "text", text: "Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
+    end
+
     it "raises when model is missing" do
       session = PromptBuilder::Session.new
       session.user("Hello")

@@ -442,6 +442,26 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       ])
     end
 
+    it "serializes a system message provided as a raw text hash with cache extras" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.system(type: "text", text: "You only speak German", cache_point: true, cache_control: {"type" => "ephemeral"})
+      session.user("say hello")
+
+      h = described_class.request_payload(session)
+      expect(h["system"]).to eq([
+        {"text" => "You only speak German"},
+        {"cachePoint" => {"type" => "default"}}
+      ])
+    end
+
+    it "serializes Text content in user messages" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user(type: "text", text: "Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]["content"]).to eq([{"text" => "Hello"}])
+    end
+
     it "emits a cachePoint block after user message content with the cache_point extra" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.user([

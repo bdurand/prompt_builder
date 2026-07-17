@@ -207,7 +207,7 @@ module PromptBuilder
 
           def serialize_content(role, content)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               serialize_text_content(content)
             when Content::InputImage
               # Image content is only supported in user messages; omit otherwise.
@@ -250,7 +250,7 @@ module PromptBuilder
             # are silently omitted.
             content = output.filter_map do |content|
               case content
-              when Content::InputText, Content::OutputText
+              when Content::InputText, Content::OutputText, Content::Text
                 serialize_text_content(content)
               end
             end

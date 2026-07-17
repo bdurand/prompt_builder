@@ -40,8 +40,8 @@ module PromptBuilder
       #   into the top-level +system+ parameter, with +instructions+ merged last
       #   (instructions apply to the current request, matching Open Responses
       #   semantics)
-      # - Only text content (+InputText+/+OutputText+) survives in system and
-      #   developer messages; other content is silently omitted
+      # - Only text content (+InputText+/+OutputText+/+Text+) survives in system
+      #   and developer messages; other content is silently omitted
       # - +InputVideo+ content is not supported and is omitted
       # - +RefusalContent+ is dropped silently (a parsed refusal can stay in
       #   session history without breaking subsequent request_payload calls)
@@ -290,7 +290,7 @@ module PromptBuilder
               next unless item.role == "system" || item.role == "developer"
 
               item.content.each do |content|
-                if content.is_a?(Content::InputText) || content.is_a?(Content::OutputText)
+                if content.is_a?(Content::InputText) || content.is_a?(Content::OutputText) || content.is_a?(Content::Text)
                   part = {"type" => "text", "text" => content.text}
                   if content.extra && content.extra["cache_control"]
                     part["cache_control"] = content.extra["cache_control"]
@@ -372,7 +372,7 @@ module PromptBuilder
 
           def serialize_content_block(content, role:)
             case content
-            when Content::InputText
+            when Content::InputText, Content::Text
               {"type" => "text", "text" => content.text}
             when Content::OutputText
               text = {"type" => "text", "text" => content.text}
@@ -501,7 +501,7 @@ module PromptBuilder
           # Document blocks are rejected by the API.
           def serialize_tool_result_content(content)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               {"type" => "text", "text" => content.text}
             when Content::InputImage
               serialize_content(content, role: "user")

@@ -31,8 +31,8 @@ module PromptBuilder
       #   into the top-level +systemInstruction+ field, with +instructions+ merged
       #   last (instructions apply to the current request, matching Open Responses
       #   semantics)
-      # - Only text content (+InputText+/+OutputText+) survives in system and
-      #   developer messages; other content is silently omitted
+      # - Only text content (+InputText+/+OutputText+/+Text+) survives in system
+      #   and developer messages; other content is silently omitted
       # - +InputImage+ content is only supported in user messages (assistant images are omitted)
       # - +InputImage+ with +image_url+ requires either base64 +data+ or a URL;
       #   content without +image_url+ or +file_id+ raises
@@ -173,7 +173,7 @@ module PromptBuilder
               next unless item.role == "system" || item.role == "developer"
 
               item.content.each do |content|
-                if content.is_a?(Content::InputText) || content.is_a?(Content::OutputText)
+                if content.is_a?(Content::InputText) || content.is_a?(Content::OutputText) || content.is_a?(Content::Text)
                   parts << {"text" => content.text}
                 end
               end
@@ -285,7 +285,7 @@ module PromptBuilder
               # types are silently omitted.
               text = output.filter_map do |content|
                 case content
-                when Content::InputText, Content::OutputText
+                when Content::InputText, Content::OutputText, Content::Text
                   content.text
                 end
               end.join("\n")
@@ -318,7 +318,7 @@ module PromptBuilder
 
           def serialize_content(content, role:)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               part = {"text" => content.text}
               if content.extra && content.extra["thought_signature"]
                 part["thoughtSignature"] = content.extra["thought_signature"]

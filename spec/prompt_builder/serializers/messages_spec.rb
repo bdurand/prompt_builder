@@ -113,6 +113,25 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["system"]).to eq([{"type" => "text", "text" => "From history"}])
     end
 
+    it "serializes a system message provided as a raw text hash with cache_control" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
+      session.system(type: "text", text: "You only speak German", cache_point: true, cache_control: {"type" => "ephemeral"})
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["system"]).to eq([
+        {"type" => "text", "text" => "You only speak German", "cache_control" => {"type" => "ephemeral"}}
+      ])
+    end
+
+    it "serializes Text content in user messages" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
+      session.user(type: "text", text: "Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
+    end
+
     it "converts tool definitions" do
       session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
       session.register_tool(

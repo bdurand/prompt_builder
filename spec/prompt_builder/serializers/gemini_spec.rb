@@ -57,6 +57,23 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h["contents"].length).to eq(1)
     end
 
+    it "serializes a system message provided as a raw text hash with cache extras" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.system(type: "text", text: "You only speak German", cache_point: true, cache_control: {"type" => "ephemeral"})
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["systemInstruction"]["parts"]).to eq([{"text" => "You only speak German"}])
+    end
+
+    it "serializes Text content in user messages" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.user(type: "text", text: "Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["contents"][0]["parts"]).to eq([{"text" => "Hello"}])
+    end
+
     it "serializes OutputText content in system messages into systemInstruction" do
       session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
       session.add_item(PromptBuilder::Items::Message.new(

@@ -96,6 +96,42 @@ RSpec.describe PromptBuilder::Items::Message do
         described_class.new(role: "user", content: 42)
       }.to raise_error(PromptBuilder::InvalidItemError)
     end
+
+    it "defaults the type to input_text for a user hash with only a text key" do
+      message = described_class.new(role: "user", content: {text: "Hello"})
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("Hello")
+    end
+
+    it "defaults the type to input_text for a system hash with only a text key" do
+      message = described_class.new(role: "system", content: {text: "Be helpful"})
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("Be helpful")
+    end
+
+    it "defaults the type to output_text for an assistant hash with only a text key" do
+      message = described_class.new(role: "assistant", content: {text: "Hello"})
+      expect(message.content[0]).to be_a(PromptBuilder::Content::OutputText)
+      expect(message.content[0].text).to eq("Hello")
+    end
+
+    it "captures extra keys when the type is defaulted" do
+      message = described_class.new(
+        role: "system",
+        content: {text: "Be helpful", cache_point: true, cache_control: {"type" => "ephemeral"}}
+      )
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].extra).to eq({
+        "cache_point" => true,
+        "cache_control" => {"type" => "ephemeral"}
+      })
+    end
+
+    it "raises on a hash with neither a type nor a text key" do
+      expect {
+        described_class.new(role: "user", content: {url: "http://example.com/image.png"})
+      }.to raise_error(PromptBuilder::InvalidItemError, /missing required "type" key/)
+    end
   end
 
   describe "message roles" do

@@ -123,6 +123,9 @@ module PromptBuilder
 
       def normalize_hash_content(hash)
         hash = hash.transform_keys(&:to_s)
+        if hash["type"].nil? && hash.key?("text")
+          hash = hash.merge("type" => (assistant? ? "output_text" : "input_text"))
+        end
         unless hash["type"]
           raise InvalidItemError,
             "Content hash is missing required \"type\" key: #{hash.inspect}"

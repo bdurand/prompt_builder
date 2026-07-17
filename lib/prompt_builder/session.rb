@@ -195,6 +195,7 @@ module PromptBuilder
     #  session.user("Hello, how are you?")
     #  session.user(Content::InputText.new(text: "Hello, how are you?"))
     #  session.user(type: "input_text", text: "Hello, how are you?")
+    #  session.user(text: "Hello, how are you?") # type defaults to "input_text"
     #  session.user([
     #    Content::InputText.new(text: "What is in this image?"),
     #    Content::InputImage.new(url: "http://example.com/image.png")
@@ -219,6 +220,10 @@ module PromptBuilder
     #
     # @param content [String, Content::Base, Hash, Array<Content::Base>, Array<Hash>] the message content
     # @return [Items::Message] the added message
+    # @example
+    #  session.system("You are a helpful assistant.")
+    #  session.system(text: "You are a helpful assistant.") # type defaults to "input_text"
+    #  session.system(text: "You are a helpful assistant.", cache_point: true, cache_control: {type: "ephemeral"})
     def system(content)
       add_item(Items::Message.new(role: "system", content: content))
     end

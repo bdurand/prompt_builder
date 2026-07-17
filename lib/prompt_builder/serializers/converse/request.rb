@@ -279,7 +279,7 @@ module PromptBuilder
 
           def serialize_system_content(content)
             case content
-            when Content::InputText
+            when Content::InputText, Content::Text
               {"text" => content.text}
             when Content::OutputText
               validate_output_text!(content)
@@ -307,7 +307,7 @@ module PromptBuilder
 
           def serialize_content(content, role:, ctx: nil)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               validate_output_text!(content) if content.is_a?(Content::OutputText)
               {"text" => content.text}
             when Content::InputImage
@@ -526,7 +526,7 @@ module PromptBuilder
 
           def serialize_tool_result_content(content, ctx)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               validate_output_text!(content) if content.is_a?(Content::OutputText)
               {"text" => content.text}
             when Content::InputImage
