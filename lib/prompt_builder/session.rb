@@ -120,6 +120,16 @@ module PromptBuilder
     # @return [Integer] the index in +items+ marking the boundary after the last response
     attr_reader :response_boundary_index
 
+    # Restore the response boundary, e.g. when deserializing a session. The
+    # value is clamped to the current item count. Normally the boundary is
+    # maintained by +add_response+; use this only to reconstruct state.
+    #
+    # @param index [Integer] the boundary index
+    # @return [Integer]
+    def response_boundary_index=(index)
+      @response_boundary_index = index.to_i.clamp(0, @items.length)
+    end
+
     # @return [Hash, nil] provider-specific extra data for serializers.
     #   Recognized keys vary by target format. Unrecognized keys are silently
     #   ignored by each serializer.
@@ -148,6 +158,8 @@ module PromptBuilder
           extra = defn.extra.transform_keys(&:to_sym)
           session.register_tool(defn.name, description: defn.description, parameters: defn.parameters, strict: defn.strict, **extra)
         end
+
+        session.response_boundary_index = hash["response_boundary_index"] if hash["response_boundary_index"]
 
         session
       end
@@ -305,7 +317,7 @@ module PromptBuilder
         strict: strict,
         **extra
       )
-      @tool_definitions[name] = definition
+      @tool_definitions[name.to_s] = definition
       definition
     end
 
@@ -511,6 +523,7 @@ module PromptBuilder
 
       h["input"] = @items.map(&:to_h) unless @items.empty?
       h["previous_response_id"] = @previous_response_id if @previous_response_id
+      h["response_boundary_index"] = @response_boundary_index if @response_boundary_index.positive?
 
       h["tools"] = tool_definitions.map(&:to_h) unless @tool_definitions.empty?
 

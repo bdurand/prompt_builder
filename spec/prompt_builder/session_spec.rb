@@ -303,6 +303,30 @@ RSpec.describe PromptBuilder::Session do
       expect(h["input"].length).to eq(1)
       expect(h["input"][0]["role"]).to eq("user")
     end
+
+    it "preserves the response boundary through a to_h/from_h round-trip" do
+      s = described_class.new(model: "gpt-5.2", previous_response_id: "resp_0")
+      s.user("First")
+
+      response = PromptBuilder::Response.new(id: "resp_1", status: "completed")
+      s.add_response(response)
+
+      s.user("Second")
+
+      restored = described_class.from_h(s.to_h)
+      expect(restored.response_boundary_index).to eq(s.response_boundary_index)
+
+      h = restored.request_payload(:open_responses)
+      expect(h["previous_response_id"]).to eq("resp_1")
+      expect(h["input"].length).to eq(1)
+      expect(h["input"][0]["role"]).to eq("user")
+      expect(h).not_to have_key("response_boundary_index")
+    end
+
+    it "clamps a restored response boundary to the item count" do
+      s = described_class.from_h({"model" => "gpt-5.2", "response_boundary_index" => 5})
+      expect(s.response_boundary_index).to eq(0)
+    end
   end
 
   describe "#register_tool" do
@@ -311,6 +335,14 @@ RSpec.describe PromptBuilder::Session do
       defn = session.tool_definitions.find { |d| d.name == "greet" }
       expect(defn).not_to be_nil
       expect(defn.description).to eq("Say hello")
+    end
+
+    it "keys tools by name regardless of String or Symbol registration" do
+      session.register_tool(:greet, description: "Say hello")
+      session.register_tool("greet", description: "Say hello politely")
+
+      expect(session.tool_definitions.length).to eq(1)
+      expect(session.tool_definitions.first.description).to eq("Say hello politely")
     end
   end
 
