@@ -450,6 +450,8 @@ session = PromptBuilder::Session.new(
 
 The `extra` attribute on sessions, content blocks, and tool definitions lets you pass provider-specific parameters that are not part of the Open Responses canonical format. Each serializer recognizes a defined set of `extra` keys and maps them to the appropriate location in the target format. Unrecognized keys are silently ignored.
 
+On a session, `extra` is a read/write attribute that can be set at any point in the session's life. On content blocks and tool definitions it is set with keyword arguments at construction time.
+
 #### Session Extra
 
 Pass provider-specific top-level request parameters via `session.extra`:
@@ -502,6 +504,26 @@ session = PromptBuilder::Session.new(
   }
 )
 ```
+
+The same data can be set after the session has been created by assigning to `session.extra`. Keys are normalized to strings, so symbol keys work too.
+
+```ruby
+session = PromptBuilder::Session.new(model: "anthropic.claude-v2")
+
+session.extra # => {}
+
+# Assign the whole hash.
+session.extra = {guardrail_config: {"guardrailIdentifier" => "my-guardrail", "guardrailVersion" => "1"}}
+
+# `extra` returns a copy, so read, modify, and assign it back to change one key.
+session.extra = session.extra.merge("stop_sequences" => ["\n\nHuman:"])
+session.extra = session.extra.except("stop_sequences")
+
+session.extra = nil # clears it
+```
+
+> [!IMPORTANT]
+> `session.extra` never returns `nil` and its keys are always strings. Because the reader returns a copy, mutating it in place has no effect on the session — `session.extra["seed"] = 42` is silently discarded. Assign the modified hash back as shown above.
 
 #### Content Extra
 
@@ -564,6 +586,8 @@ session.register_tool(
 ```
 
 #### Recognized Extra Keys by Serializer
+
+Session extra keys can be supplied to the constructor or assigned later with `session.extra=`.
 
 | Serializer | Session Extra Keys | Content Extra Keys | Tool Extra Keys |
 |:---|:---|:---|:---|

@@ -1036,6 +1036,79 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       h = described_class.request_payload(session)
       expect(h["contents"]).to eq([{"role" => "user", "parts" => [{"text" => "Hi"}]}])
     end
+
+    it "maps session extra keys onto the request payload" do
+      session = PromptBuilder::Session.new(
+        model: "gemini-2.0-flash",
+        extra: {
+          "safety_settings" => [{"category" => "HARM_CATEGORY_HATE_SPEECH", "threshold" => "BLOCK_ONLY_HIGH"}],
+          "cached_content" => "cachedContents/abc123",
+          "stop_sequences" => ["END"],
+          "top_k" => 40,
+          "seed" => 42,
+          "candidate_count" => 2,
+          "response_modalities" => ["TEXT"],
+          "media_resolution" => "MEDIA_RESOLUTION_LOW"
+        }
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["safetySettings"]).to eq([{"category" => "HARM_CATEGORY_HATE_SPEECH", "threshold" => "BLOCK_ONLY_HIGH"}])
+      expect(h["cachedContent"]).to eq("cachedContents/abc123")
+      expect(h["generationConfig"]).to eq({
+        "stopSequences" => ["END"],
+        "topK" => 40,
+        "seed" => 42,
+        "candidateCount" => 2,
+        "responseModalities" => ["TEXT"],
+        "mediaResolution" => "MEDIA_RESOLUTION_LOW"
+      })
+    end
+
+    it "merges generation config extras into an existing generationConfig" do
+      session = PromptBuilder::Session.new(
+        model: "gemini-2.0-flash",
+        temperature: 0.5,
+        extra: {"top_k" => 40}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]).to eq({"temperature" => 0.5, "topK" => 40})
+    end
+
+    it "omits generationConfig when only non-generation-config extras are set" do
+      session = PromptBuilder::Session.new(
+        model: "gemini-2.0-flash",
+        extra: {"cached_content" => "cachedContents/abc123"}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["cachedContent"]).to eq("cachedContents/abc123")
+      expect(h).not_to have_key("generationConfig")
+    end
+
+    it "ignores unrecognized session extra keys" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash", extra: {"bogus" => true})
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("bogus")
+      expect(h).not_to have_key("safetySettings")
+      expect(h).not_to have_key("cachedContent")
+      expect(h).not_to have_key("generationConfig")
+    end
+
+    it "applies session extra assigned after construction" do
+      session = PromptBuilder::Session.new(model: "gemini-2.0-flash")
+      session.user("Hi")
+      session.extra = {seed: 7}
+
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]).to eq({"seed" => 7})
+    end
   end
 
   describe ".parse_response" do

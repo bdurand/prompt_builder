@@ -749,6 +749,59 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["parallel_tool_calls"]).to be false
       expect(h).not_to have_key("tools")
     end
+
+    it "maps session extra keys onto the request payload" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-4o",
+        extra: {
+          "stop" => ["\n"],
+          "seed" => 42,
+          "logit_bias" => {"1234" => -100},
+          "n" => 2,
+          "prediction" => {"type" => "content", "content" => "draft"},
+          "web_search_options" => {"search_context_size" => "low"},
+          "modalities" => ["text", "audio"],
+          "audio" => {"voice" => "alloy", "format" => "mp3"}
+        }
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["stop"]).to eq(["\n"])
+      expect(h["seed"]).to eq(42)
+      expect(h["logit_bias"]).to eq({"1234" => -100})
+      expect(h["n"]).to eq(2)
+      expect(h["prediction"]).to eq({"type" => "content", "content" => "draft"})
+      expect(h["web_search_options"]).to eq({"search_context_size" => "low"})
+      expect(h["modalities"]).to eq(["text", "audio"])
+      expect(h["audio"]).to eq({"voice" => "alloy", "format" => "mp3"})
+    end
+
+    it "ignores unrecognized session extra keys" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", extra: {"bogus" => true})
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("bogus")
+      expect(h).not_to have_key("stop")
+      expect(h).not_to have_key("seed")
+      expect(h).not_to have_key("logit_bias")
+      expect(h).not_to have_key("n")
+      expect(h).not_to have_key("prediction")
+      expect(h).not_to have_key("web_search_options")
+      expect(h).not_to have_key("modalities")
+      expect(h).not_to have_key("audio")
+    end
+
+    it "applies session extra assigned after construction" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
+      session.extra = {seed: 42, n: 2}
+
+      h = described_class.request_payload(session)
+      expect(h["seed"]).to eq(42)
+      expect(h["n"]).to eq(2)
+    end
   end
 
   describe ".parse_response" do

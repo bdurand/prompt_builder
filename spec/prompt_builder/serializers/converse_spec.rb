@@ -963,6 +963,67 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       h = described_class.request_payload(session)
       expect(h["messages"]).to eq([{"role" => "user", "content" => [{"text" => "Hi"}]}])
     end
+
+    it "maps session extra keys onto the request payload" do
+      session = PromptBuilder::Session.new(
+        model: "amazon.nova-pro-v1:0",
+        max_output_tokens: 1024,
+        extra: {
+          "stop_sequences" => ["\n\nHuman:"],
+          "guardrail_config" => {"guardrailIdentifier" => "gr-1", "guardrailVersion" => "1"},
+          "additional_model_request_fields" => {"top_k" => 50},
+          "additional_model_response_field_paths" => ["/stop_sequence"],
+          "performance_config" => {"latency" => "optimized"},
+          "prompt_variables" => {"topic" => {"text" => "weather"}}
+        }
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["inferenceConfig"]).to eq({"maxTokens" => 1024, "stopSequences" => ["\n\nHuman:"]})
+      expect(h["guardrailConfig"]).to eq({"guardrailIdentifier" => "gr-1", "guardrailVersion" => "1"})
+      expect(h["additionalModelRequestFields"]).to eq({"top_k" => 50})
+      expect(h["additionalModelResponseFieldPaths"]).to eq(["/stop_sequence"])
+      expect(h["performanceConfig"]).to eq({"latency" => "optimized"})
+      expect(h["promptVariables"]).to eq({"topic" => {"text" => "weather"}})
+    end
+
+    it "creates inferenceConfig from the stop_sequences extra alone" do
+      session = PromptBuilder::Session.new(
+        model: "amazon.nova-pro-v1:0",
+        extra: {"stop_sequences" => ["END"]}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["inferenceConfig"]).to eq({"stopSequences" => ["END"]})
+    end
+
+    it "ignores unrecognized session extra keys" do
+      session = PromptBuilder::Session.new(
+        model: "amazon.nova-pro-v1:0",
+        extra: {"bogus" => true}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("bogus")
+      expect(h).not_to have_key("guardrailConfig")
+      expect(h).not_to have_key("additionalModelRequestFields")
+      expect(h).not_to have_key("additionalModelResponseFieldPaths")
+      expect(h).not_to have_key("performanceConfig")
+      expect(h).not_to have_key("promptVariables")
+      expect(h).not_to have_key("inferenceConfig")
+    end
+
+    it "applies session extra assigned after construction" do
+      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
+      session.user("Hi")
+      session.extra = {guardrail_config: {"guardrailIdentifier" => "gr-1"}}
+
+      h = described_class.request_payload(session)
+      expect(h["guardrailConfig"]).to eq({"guardrailIdentifier" => "gr-1"})
+    end
   end
 
   describe ".parse_response" do

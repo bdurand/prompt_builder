@@ -324,6 +324,19 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(format["name"]).to eq("response")
       expect(format["schema"]).to eq({"type" => "object", "properties" => {"answer" => {"type" => "string"}}, "required" => ["answer"]})
     end
+
+    it "strips session extra from the request payload" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-5.4",
+        extra: {"seed" => 42, "top_k" => 40}
+      )
+      session.user("Hello")
+
+      payload = described_class.request_payload(session)
+      expect(payload).not_to have_key("extra")
+      expect(payload).not_to have_key("seed")
+      expect(payload).not_to have_key("top_k")
+    end
   end
 
   describe ".parse_response" do

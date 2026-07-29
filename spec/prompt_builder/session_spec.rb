@@ -18,6 +18,67 @@ RSpec.describe PromptBuilder::Session do
     it "raises an ArgumentError when an unsupported option is passed" do
       expect { described_class.new(bogus: "value") }.to raise_error(ArgumentError, /bogus/)
     end
+
+    it "defaults extra to an empty hash" do
+      expect(described_class.new.extra).to eq({})
+    end
+
+    it "stringifies extra keys and symbol values" do
+      s = described_class.new(extra: {seed: 42, prediction: {type: :content}})
+      expect(s.extra).to eq({"seed" => 42, "prediction" => {"type" => "content"}})
+    end
+
+    it "raises an ArgumentError when extra is not a Hash" do
+      expect { described_class.new(extra: "nope") }.to raise_error(ArgumentError, /extra/)
+    end
+  end
+
+  describe "#extra" do
+    it "returns a copy so mutating it does not change the session" do
+      s = described_class.new(extra: {"guardrail_config" => {"guardrailVersion" => "1"}})
+      s.extra["seed"] = 42
+      s.extra["guardrail_config"]["guardrailVersion"] = "2"
+      expect(s.extra).to eq({"guardrail_config" => {"guardrailVersion" => "1"}})
+    end
+
+    it "returns an equal but distinct hash on each call" do
+      s = described_class.new(extra: {"seed" => 42})
+      expect(s.extra).to eq(s.extra)
+      expect(s.extra).not_to equal(s.extra)
+    end
+  end
+
+  describe "#extra=" do
+    it "replaces the extra data and stringifies keys" do
+      s = described_class.new(extra: {"seed" => 42})
+      s.extra = {top_k: 40, prediction: {type: :content}}
+      expect(s.extra).to eq({"top_k" => 40, "prediction" => {"type" => "content"}})
+    end
+
+    it "adds a key when a modified copy is assigned back" do
+      s = described_class.new(extra: {"seed" => 42})
+      s.extra = s.extra.merge(top_k: 40)
+      expect(s.extra).to eq({"seed" => 42, "top_k" => 40})
+    end
+
+    it "clears the extra data when assigned nil" do
+      s = described_class.new(extra: {"seed" => 42})
+      s.extra = nil
+      expect(s.extra).to eq({})
+      expect(s.to_h).not_to have_key("extra")
+    end
+
+    it "does not share the assigned hash with the caller" do
+      s = described_class.new
+      assigned = {"guardrail_config" => {"guardrailVersion" => "1"}}
+      s.extra = assigned
+      assigned["guardrail_config"]["guardrailVersion"] = "2"
+      expect(s.extra).to eq({"guardrail_config" => {"guardrailVersion" => "1"}})
+    end
+
+    it "raises an ArgumentError when the value is not a Hash" do
+      expect { described_class.new.extra = "nope" }.to raise_error(ArgumentError, /extra/)
+    end
   end
 
   describe "#user" do
@@ -181,6 +242,23 @@ RSpec.describe PromptBuilder::Session do
       expect(h["service_tier"]).to eq("default")
       expect(h["top_logprobs"]).to eq(5)
     end
+
+    it "includes extra when it is set" do
+      s = described_class.new(model: "test", extra: {seed: 42, prediction: {type: :content}})
+      expect(s.to_h["extra"]).to eq({"seed" => 42, "prediction" => {"type" => "content"}})
+    end
+
+    it "omits extra when it is empty" do
+      s = described_class.new(model: "test", extra: {})
+      expect(s.to_h).not_to have_key("extra")
+    end
+
+    it "does not alias the session extra data" do
+      s = described_class.new(model: "test", extra: {"guardrail_config" => {"guardrailVersion" => "1"}})
+      h = s.to_h
+      h["extra"]["guardrail_config"]["guardrailVersion"] = "2"
+      expect(s.extra).to eq({"guardrail_config" => {"guardrailVersion" => "1"}})
+    end
   end
 
   describe "#add_response (local state mode)" do
@@ -273,6 +351,13 @@ RSpec.describe PromptBuilder::Session do
       expect(session.clear).to be(session)
       expect(session.items).to be(original)
       expect(session.items).to be_empty
+    end
+
+    it "preserves the extra data" do
+      s = described_class.new(model: "gpt-5.2", extra: {"seed" => 42})
+      s.user("Hello")
+      s.clear
+      expect(s.extra).to eq({"seed" => 42})
     end
   end
 
@@ -557,6 +642,19 @@ RSpec.describe PromptBuilder::Session do
       cloned.user("New message")
       expect(session.items).to be_empty
     end
+
+    it "copies the extra data" do
+      s = described_class.new(model: "gpt-5.2", extra: {"seed" => 42, "prediction" => {"type" => "content"}})
+      expect(s.clone_config.extra).to eq({"seed" => 42, "prediction" => {"type" => "content"}})
+    end
+
+    it "produces an independent extra hash" do
+      s = described_class.new(model: "gpt-5.2", extra: {"prediction" => {"type" => "content"}})
+      cloned = s.clone_config
+      cloned.extra = cloned.extra.merge("seed" => 42)
+      cloned.extra["prediction"]["type"] = "other"
+      expect(s.extra).to eq({"prediction" => {"type" => "content"}})
+    end
   end
 
   describe "#local_state?" do
@@ -674,6 +772,22 @@ RSpec.describe PromptBuilder::Session do
       s = described_class.from_h({"model" => "gpt-5.2"})
       expect(s.items).to be_empty
       expect(s.tool_definitions).to be_empty
+    end
+
+    it "restores the extra data" do
+      s = described_class.from_h({"model" => "gpt-5.2", "extra" => {"seed" => 42}})
+      expect(s.extra).to eq({"seed" => 42})
+    end
+
+    it "defaults extra to an empty hash when the key is absent" do
+      expect(described_class.from_h({"model" => "gpt-5.2"}).extra).to eq({})
+    end
+
+    it "round-trips extra through to_h and from_h" do
+      s = described_class.new(model: "gpt-5.2", extra: {"guardrail_config" => {"guardrailIdentifier" => "gr-1"}})
+      s.user("Hello")
+      h = s.to_h
+      expect(described_class.from_h(h).to_h).to eq(h)
     end
 
     it "round-trips a session through to_h and from_h" do

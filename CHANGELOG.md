@@ -15,8 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Session#remove_tool` removes a single registered tool by name (string or symbol), returning the removed `Tools::Definition` or `nil` when not found.
 - `Session#clear_tools` removes all registered tools from the session, returning the removed definitions.
 - Message content hashes with a `text` key no longer require a `type` key: the type defaults to `input_text` (or `output_text` on assistant messages), so `session.system(text: "...", cache_point: true)` works without specifying a type.
+- `Session#extra=` sets or clears provider-specific extra data after the session has been constructed, so options like the Converse `guardrail_config` no longer have to be passed to the constructor. Keys are normalized to strings on assignment, and assigning `nil` clears the data.
 
 ### Changed
+
+- `Session#extra` now always returns a Hash, empty when nothing is set, instead of `nil`. The returned Hash is a copy, so mutating it does not affect the session; assign a modified copy back through `Session#extra=` instead.
+- `Session#to_h` omits `extra` when it is empty. Previously `Session.new(extra: {})` emitted `"extra" => {}`.
 
 - When a session has both `instructions` and system/developer messages, `instructions` is now serialized *after* the system/developer messages instead of before them (Chat Completions: inserted as a system message after the last system/developer message; Messages/Converse/Gemini: appended last in the merged top-level system field). This matches the Open Responses semantics of `instructions` applying to the current request, so it should follow system prompts accumulated in the conversation history.
 

@@ -142,7 +142,8 @@ module PromptBuilder
             h["toolConfig"] = tool_config if tool_config
 
             # Session extra: recognized keys for Gemini API
-            apply_session_extra!(h, session.extra) if session.extra
+            extra = session.extra
+            apply_session_extra!(h, extra) unless extra.empty?
 
             # Gemini selects streaming via endpoint (:streamGenerateContent)
             # rather than a request body field, so session.stream is a no-op

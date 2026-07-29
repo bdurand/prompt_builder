@@ -121,7 +121,8 @@ module PromptBuilder
             h["stream"] = session.stream unless session.stream.nil?
 
             # Session extra: recognized keys for Messages API
-            apply_session_extra!(h, session.extra) if session.extra
+            extra = session.extra
+            apply_session_extra!(h, extra) unless extra.empty?
 
             output_config = build_output_config(session)
             h["output_config"] = output_config unless output_config.empty?

@@ -123,7 +123,8 @@ module PromptBuilder
             end
 
             # Session extra: recognized keys for Chat Completions API
-            apply_session_extra!(h, session.extra) if session.extra
+            extra = session.extra
+            apply_session_extra!(h, extra) unless extra.empty?
 
             h
           end

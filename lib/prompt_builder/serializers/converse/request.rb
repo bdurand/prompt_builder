@@ -171,7 +171,8 @@ module PromptBuilder
             h["toolConfig"] = tool_config if tool_config
 
             # Session extra: recognized keys for Converse API
-            apply_session_extra!(h, session.extra) if session.extra
+            extra = session.extra
+            apply_session_extra!(h, extra) unless extra.empty?
 
             h
           end

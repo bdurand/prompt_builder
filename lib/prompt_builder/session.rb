@@ -130,10 +130,34 @@ module PromptBuilder
       @response_boundary_index = index.to_i.clamp(0, @items.length)
     end
 
-    # @return [Hash, nil] provider-specific extra data for serializers.
-    #   Recognized keys vary by target format. Unrecognized keys are silently
-    #   ignored by each serializer.
-    attr_reader :extra
+    # Provider-specific extra data for serializers. Always returns a Hash, empty
+    # when nothing is set. Keys are always Strings.
+    #
+    # The returned Hash is a copy, so mutating it does not change the session.
+    # To add or remove a key, modify a copy and assign it back:
+    #
+    #   session.extra = session.extra.merge("guardrail_config" => {"guardrailIdentifier" => "gr-1"})
+    #
+    # Recognized keys vary by target format. Unrecognized keys are silently
+    # ignored by each serializer.
+    #
+    # @return [Hash] a copy of the provider-specific extra data
+    def extra
+      PromptBuilder.jsonify(@extra)
+    end
+
+    # Replace the provider-specific extra data. Keys are deep-stringified with
+    # +PromptBuilder.jsonify+ and the value is copied, so the assigned Hash is
+    # not shared with the session. Pass +nil+ to clear.
+    #
+    # @param value [Hash, nil] the extra data, or nil to clear it
+    # @return [Hash] the stored extra data
+    # @raise [ArgumentError] if the value is neither a Hash nor nil
+    def extra=(value)
+      raise ArgumentError, "extra must be a Hash" unless value.nil? || value.is_a?(Hash)
+
+      @extra = PromptBuilder.jsonify(value || {})
+    end
 
     class << self
       # Deserialize a Session from a Hash produced by +to_h+ or parsed JSON.
@@ -146,7 +170,7 @@ module PromptBuilder
       def from_h(hash)
         attrs = (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS)
           .each_with_object({}) { |f, acc| acc[f] = hash[f.to_s] }
-        attrs[:extra] = hash["extra"] if hash["extra"]
+        attrs[:extra] = hash["extra"]
         session = new(**attrs)
 
         Array(hash["input"]).each do |item_hash|
@@ -177,7 +201,8 @@ module PromptBuilder
     # @option attributes [String, nil] :input optional string shorthand; a user
     #   message is automatically added with this text
     # @option attributes [Hash, nil] :extra provider-specific extra data for
-    #   serializers; recognized keys vary by target format
+    #   serializers; recognized keys vary by target format. Keys are stringified.
+    #   Defaults to an empty Hash and can be replaced later with +extra=+.
     # @raise [ArgumentError] if an unsupported option is passed
     def initialize(**attributes)
       unsupported = attributes.keys - INITIALIZE_OPTIONS
@@ -189,7 +214,7 @@ module PromptBuilder
         send(:"#{f}=", attributes[f])
       end
 
-      @extra = PromptBuilder.jsonify(attributes[:extra]) if attributes[:extra]
+      self.extra = attributes[:extra]
 
       @items = []
       system(attributes[:system]) if attributes[:system]
@@ -547,7 +572,7 @@ module PromptBuilder
         val = send(f)
         h[f.to_s] = val if val
       }
-      h["extra"] = @extra if @extra
+      h["extra"] = extra unless @extra.empty?
 
       h
     end
@@ -568,7 +593,7 @@ module PromptBuilder
     def config_hash
       h = (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS - %i[previous_response_id])
         .each_with_object({}) { |f, acc| acc[f] = send(f) }
-      h[:extra] = @extra if @extra
+      h[:extra] = @extra
       h
     end
   end
