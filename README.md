@@ -48,16 +48,28 @@ session = PromptBuilder::Session.new(
 session.user("What is the capital of France?")
 ```
 
-You can also pass an `input` shorthand to create a user message in one step:
+You can also pass `system` and `input` shorthands to create a system message and a user message in one step (equivalent to calling `session.system(...)` and `session.user(...)`):
 
 ```ruby
 session = PromptBuilder::Session.new(
   model: "gpt-5.4",
+  system: "You are a helpful assistant.",
   input: "What is the capital of France?"
 )
 ```
 
-Passing an option the constructor doesn't recognize (or both halves of an alias pair) raises an `ArgumentError`.
+Passing an option the constructor doesn't recognize raises an `ArgumentError`. The full list of supported constructor options is available as `PromptBuilder::Session::INITIALIZE_OPTIONS`.
+
+#### `instructions` vs. system and developer messages
+
+Although both can be used to steer the model's behavior, `instructions` and system/developer messages are not interchangeable in the Open Responses API:
+
+- `instructions` is a top-level request parameter, not part of the conversation. It is sent with every request, and in the Open Responses API it applies only to the request it accompanies — it is *not* carried over when chaining responses with `previous_response_id`. That makes it safe to change `session.instructions` at any point in a conversation; the new value simply applies from the next request onward.
+- `session.system(...)` and `session.developer(...)` create messages inside the conversation history (the `input` array). They occupy a position in the transcript like any other message, and once the session is chained with `previous_response_id` they become part of the server-stored history and are not re-sent on subsequent requests.
+
+As a rule of thumb, use `instructions` for standing behavior you may want to adjust from request to request, and use system or developer messages when the directive should be a durable part of the conversation record.
+
+When serializing to the other formats this distinction collapses: `instructions` and any system/developer messages are merged together into the target format's single system field (see [Serializer Compatibility](#serializer-compatibility)).
 
 ### Conversation History
 
@@ -71,7 +83,13 @@ session.assistant("Hi there! How can I help you today?")
 session.user("What's the weather like?")
 ```
 
-Messages support the roles `user`, `assistant`, `system`, and `developer`.
+Messages support the roles `user`, `assistant`, `system`, and `developer`. A `Message` exposes `system?`, `user?`, and `assistant?` predicates for checking its role.
+
+Call `session.clear` to reset the conversation: it removes all items and the `instructions`, drops any `previous_response_id`, and returns the session to a fresh local-state start. Model configuration and registered tools are preserved, so the session can be reused for a new conversation.
+
+```ruby
+session.clear   # items and instructions removed; model/config/tools kept
+```
 
 ### Serializing Requests
 
@@ -160,6 +178,13 @@ response.text            # => "The capital of France is Paris."
 response.completed?      # => true
 response.has_tool_calls? # => false
 response.usage           # => #<PromptBuilder::Usage input_tokens=25 output_tokens=12 ...>
+```
+
+If the payload is an error returned by the API rather than a completion (e.g. an authentication failure, a validation error, or an AWS Coral service envelope), `Response.parse` raises a `PromptBuilder::ErrorResponseError` whose message contains the error reported by the API. Payloads that are neither a completion nor a recognizable error envelope raise a `PromptBuilder::UnexpectedPayloadError` (which `ErrorResponseError` subclasses) including the offending body.
+
+```ruby
+PromptBuilder::Response.parse({"error" => {"type" => "invalid_request_error", "message" => "Incorrect API key provided"}}, :chat_completion)
+# => raises PromptBuilder::ErrorResponseError: the API returned an error: invalid_request_error: Incorrect API key provided
 ```
 
 You can also synthesize a plain-text response without calling an API — useful for canned answers (e.g. halting an agent loop), cached responses, and tests:
@@ -298,6 +323,13 @@ session.use_tools(:weather, registry: my_registry)    # explicit registry
 
 Tool definitions are *copied* onto the session in all cases, so later registry changes don't affect the session and the tools survive `to_h`/`from_h` round-trips.
 
+Remove tools from a session with `remove_tool` (by name; accepts a string or symbol) or `clear_tools` (all at once). `remove_tool` returns the removed `Tools::Definition`, or `nil` if no tool by that name was registered; `clear_tools` returns the removed definitions.
+
+```ruby
+session.remove_tool("weather")   # => removed Tools::Definition, or nil
+session.clear_tools              # => [<removed definitions>]
+```
+
 ### Content Types
 
 Message content can be a plain string or an array of structured content objects for multi-modal input. Content can be provided as raw Hashes or as `PromptBuilder::Content` objects.
@@ -418,6 +450,8 @@ session = PromptBuilder::Session.new(
 
 The `extra` attribute on sessions, content blocks, and tool definitions lets you pass provider-specific parameters that are not part of the Open Responses canonical format. Each serializer recognizes a defined set of `extra` keys and maps them to the appropriate location in the target format. Unrecognized keys are silently ignored.
 
+On a session, `extra` is a read/write attribute that can be set at any point in the session's life. On content blocks and tool definitions it is set with keyword arguments at construction time.
+
 #### Session Extra
 
 Pass provider-specific top-level request parameters via `session.extra`:
@@ -471,6 +505,26 @@ session = PromptBuilder::Session.new(
 )
 ```
 
+The same data can be set after the session has been created by assigning to `session.extra`. Keys are normalized to strings, so symbol keys work too.
+
+```ruby
+session = PromptBuilder::Session.new(model: "anthropic.claude-v2")
+
+session.extra # => {}
+
+# Assign the whole hash.
+session.extra = {guardrail_config: {"guardrailIdentifier" => "my-guardrail", "guardrailVersion" => "1"}}
+
+# `extra` returns a copy, so read, modify, and assign it back to change one key.
+session.extra = session.extra.merge("stop_sequences" => ["\n\nHuman:"])
+session.extra = session.extra.except("stop_sequences")
+
+session.extra = nil # clears it
+```
+
+> [!IMPORTANT]
+> `session.extra` never returns `nil` and its keys are always strings. Because the reader returns a copy, mutating it in place has no effect on the session — `session.extra["seed"] = 42` is silently discarded. Assign the modified hash back as shown above.
+
 #### Content Extra
 
 Content blocks support provider-specific attributes via keyword arguments that are captured in the `extra` hash:
@@ -500,6 +554,21 @@ session.user([
     cache_point: true
   )
 ])
+
+# Bedrock Converse: cache_point on tool definitions and tool results
+session.register_tool(
+  "search",
+  description: "Search the knowledge base.",
+  parameters: {"type" => "object", "properties" => {"query" => {"type" => "string"}}},
+  cache_point: true
+)
+session.add_item(
+  PromptBuilder::Items::FunctionCallOutput.new(
+    call_id: "call_1",
+    output: "Search results...",
+    cache_point: true
+  )
+)
 ```
 
 #### Tool Definition Extra
@@ -518,12 +587,14 @@ session.register_tool(
 
 #### Recognized Extra Keys by Serializer
 
+Session extra keys can be supplied to the constructor or assigned later with `session.extra=`.
+
 | Serializer | Session Extra Keys | Content Extra Keys | Tool Extra Keys |
 |:---|:---|:---|:---|
 | **Chat Completions** | `stop`, `seed`, `logit_bias`, `n`, `prediction`, `web_search_options`, `modalities`, `audio` | `file_id`, `media_type` | — |
 | **Messages** | `top_k`, `stop_sequences`, `cache_control` | `cache_control`, `citations`, `file_id`, `media_type` | `cache_control` |
 | **Gemini** | `safety_settings`, `cached_content`, `stop_sequences`, `top_k`, `seed`, `candidate_count`, `response_modalities`, `media_resolution` | `file_id`, `media_type`, `thought_signature` | — |
-| **Converse** | `stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables` | `media_type`, `cache_point` | — |
+| **Converse** | `stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables` | `media_type`, `cache_point` | `cache_point` |
 
 ### Serialization and Persistence
 
@@ -794,7 +865,7 @@ Content and message restrictions:
 - `FunctionCall.arguments` must parse to a JSON object; non-object JSON values raise (Bedrock's `toolUse.input` requires an object).
 - `FunctionCallOutput.output` content supports `InputText`/`OutputText`, `InputImage`, `InputFile`, and `InputVideo`, mapping to Converse `text`, `image`, `document`, and `video` tool result blocks. Converse also supports `json` and `searchResult` tool result blocks, but this gem has no canonical content types for them, so unsupported content is omitted. `FunctionCallOutput.status` is mapped: `completed` → `success`, `failed`/`incomplete` → `error`, anything else passes through or is dropped.
 - `tool_choice: "none"` and `tool_choice` without registered tools are both omitted.
-- Converse API request features with no canonical Open Responses field are available through `session.extra` (`stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables`) and content `extra` (`cache_point`). Features not exposed at all include `guardContent`, audio blocks, and `searchResult` blocks.
+- Converse API request features with no canonical Open Responses field are available through `session.extra` (`stop_sequences`, `guardrail_config`, `additional_model_request_fields`, `additional_model_response_field_paths`, `performance_config`, `prompt_variables`) and content `extra` (`cache_point`). `cache_point` is also recognized on tool definitions (the marker is appended to the `toolConfig.tools` array) and on `FunctionCallOutput` items (the marker is appended after the `toolResult` content block). Features not exposed at all include `guardContent`, audio blocks, and `searchResult` blocks.
 - The serialized payload includes `modelId` as a convenience; the Converse REST endpoint takes the model id in the URL path (`/model/{modelId}/converse`), and AWS REST-JSON services ignore unrecognized body members. Remove it from the body if you prefer a strictly minimal payload.
 
 Response-side limitations:
@@ -802,7 +873,7 @@ Response-side limitations:
 - Unknown content block keys (e.g. `citationsContent`, `guardContent`) are silently skipped.
 - `metrics.latencyMs`, `trace` (guardrail and prompt-router trace events), `additionalModelResponseFields`, `performanceConfig`, and the raw `serviceTier` object are exposed on `response.provider_data`. `response.service_tier` is also populated from `serviceTier.type`.
 - `stopReason` mappings: `end_turn` / `tool_use` / `stop_sequence` → `completed`, `max_tokens` / `model_context_window_exceeded` → `incomplete`, `guardrail_intervened` / `content_filtered` / `malformed_model_output` / `malformed_tool_use` → `failed`. Unlike the Messages serializer, the matched stop sequence text is not surfaced separately because Converse does not echo it back unless you request provider-specific fields through `additionalModelResponseFieldPaths` (available via the `additional_model_response_field_paths` session extra; the requested fields appear on `response.provider_data`).
-- `usage.cacheReadInputTokens` and `usage.cacheWriteInputTokens` populate `response.usage.input_tokens_details["cached_tokens"]` and `["cache_creation_input_tokens"]`. Cache writes require `cachePoint` markers in the request, which are emitted via the `cache_point` content extra.
+- `usage.cacheReadInputTokens` and `usage.cacheWriteInputTokens` populate `response.usage.input_tokens_details["cached_tokens"]` and `["cache_creation_input_tokens"]`. Cache writes require `cachePoint` markers in the request, which are emitted via the `cache_point` extra on content, tool definitions, and `FunctionCallOutput` items.
 
 ## Installation
 

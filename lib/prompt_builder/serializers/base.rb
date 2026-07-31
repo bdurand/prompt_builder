@@ -18,7 +18,9 @@ module PromptBuilder
         #
         # @param hash [Hash] the response hash in the target format
         # @return [Response] the parsed response
+        # @raise [ErrorResponseError] if the payload is an API error envelope
         def parse_response(hash)
+          check_error_response!(hash)
           deserialize_response(hash)
         end
 
@@ -30,6 +32,32 @@ module PromptBuilder
 
         def deserialize_response(_hash)
           raise NotImplementedError
+        end
+
+        # Detect API error envelopes before parsing so errors surface with the
+        # message reported by the API instead of the generic missing-key error
+        # from require_response_key!. Serializer response classes override
+        # error_response_message to recognize their format's error envelope.
+        #
+        # @param hash [Object] the raw response payload
+        # @return [void]
+        # @raise [ErrorResponseError] if the payload is an API error envelope
+        def check_error_response!(hash)
+          return unless hash.is_a?(Hash)
+
+          message = error_response_message(hash)
+          return if message.nil? || message.empty?
+
+          raise ErrorResponseError, "the API returned an error: #{message}"
+        end
+
+        # Extract a human-readable message from an API error envelope.
+        #
+        # @param _hash [Hash] the raw response payload
+        # @return [String, nil] nil when the payload is not recognized as an
+        #   error envelope
+        def error_response_message(_hash)
+          nil
         end
 
         # Ensure a response payload is a Hash containing the key that identifies

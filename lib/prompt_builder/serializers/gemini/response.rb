@@ -63,6 +63,15 @@ module PromptBuilder
         class << self
           private
 
+          # Gemini errors arrive as
+          # {"error" => {"code" => 400, "message" => ..., "status" => ...}}.
+          def error_response_message(hash)
+            error = hash["error"]
+            return nil unless error.is_a?(Hash) && !hash.key?("candidates")
+
+            [error["status"] || error["code"], error["message"]].compact.join(": ")
+          end
+
           def deserialize_response(hash)
             require_response_key!(hash, "candidates")
             require_response_key!(hash, "modelVersion")

@@ -25,6 +25,37 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["messages"][1]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
     end
 
+    it "inserts instructions after the last system or developer message" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", instructions: "Base instruction")
+      session.system("Extra system context")
+      session.developer("Developer note")
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["messages"].length).to eq(4)
+      expect(h["messages"][0]).to eq({"role" => "system", "content" => [{"type" => "text", "text" => "Extra system context"}]})
+      expect(h["messages"][1]["role"]).to eq("developer")
+      expect(h["messages"][2]).to eq({"role" => "system", "content" => "Base instruction"})
+      expect(h["messages"][3]["role"]).to eq("user")
+    end
+
+    it "serializes a system message provided as a raw text hash with cache extras" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.system(type: "text", text: "You only speak German", cache_point: true, cache_control: {"type" => "ephemeral"})
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]).to eq({"role" => "system", "content" => [{"type" => "text", "text" => "You only speak German"}]})
+    end
+
+    it "serializes Text content in user messages" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user(type: "text", text: "Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
+    end
+
     it "raises when model is missing" do
       session = PromptBuilder::Session.new
       session.user("Hello")
@@ -718,6 +749,59 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h["parallel_tool_calls"]).to be false
       expect(h).not_to have_key("tools")
     end
+
+    it "maps session extra keys onto the request payload" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-4o",
+        extra: {
+          "stop" => ["\n"],
+          "seed" => 42,
+          "logit_bias" => {"1234" => -100},
+          "n" => 2,
+          "prediction" => {"type" => "content", "content" => "draft"},
+          "web_search_options" => {"search_context_size" => "low"},
+          "modalities" => ["text", "audio"],
+          "audio" => {"voice" => "alloy", "format" => "mp3"}
+        }
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["stop"]).to eq(["\n"])
+      expect(h["seed"]).to eq(42)
+      expect(h["logit_bias"]).to eq({"1234" => -100})
+      expect(h["n"]).to eq(2)
+      expect(h["prediction"]).to eq({"type" => "content", "content" => "draft"})
+      expect(h["web_search_options"]).to eq({"search_context_size" => "low"})
+      expect(h["modalities"]).to eq(["text", "audio"])
+      expect(h["audio"]).to eq({"voice" => "alloy", "format" => "mp3"})
+    end
+
+    it "ignores unrecognized session extra keys" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", extra: {"bogus" => true})
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("bogus")
+      expect(h).not_to have_key("stop")
+      expect(h).not_to have_key("seed")
+      expect(h).not_to have_key("logit_bias")
+      expect(h).not_to have_key("n")
+      expect(h).not_to have_key("prediction")
+      expect(h).not_to have_key("web_search_options")
+      expect(h).not_to have_key("modalities")
+      expect(h).not_to have_key("audio")
+    end
+
+    it "applies session extra assigned after construction" do
+      session = PromptBuilder::Session.new(model: "gpt-4o")
+      session.user("Hi")
+      session.extra = {seed: 42, n: 2}
+
+      h = described_class.request_payload(session)
+      expect(h["seed"]).to eq(42)
+      expect(h["n"]).to eq(2)
+    end
   end
 
   describe ".parse_response" do
@@ -741,6 +825,30 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
           "total_tokens" => 18
         }
       }
+    end
+
+    it "raises an ErrorResponseError for an OpenAI error envelope" do
+      expect {
+        described_class.parse_response({
+          "error" => {
+            "message" => "Incorrect API key provided",
+            "type" => "invalid_request_error",
+            "code" => "invalid_api_key"
+          }
+        })
+      }.to raise_error(PromptBuilder::ErrorResponseError, "the API returned an error: invalid_api_key: Incorrect API key provided")
+    end
+
+    it "raises an ErrorResponseError for a string error payload" do
+      expect {
+        described_class.parse_response({"error" => "model overloaded"})
+      }.to raise_error(PromptBuilder::ErrorResponseError, /model overloaded/)
+    end
+
+    it "raises an UnexpectedPayloadError for unrecognized payloads" do
+      expect {
+        described_class.parse_response({"foo" => "bar"})
+      }.to raise_error(PromptBuilder::UnexpectedPayloadError, /missing "choices"/)
     end
 
     it "parses a basic OpenAI response" do

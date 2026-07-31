@@ -36,6 +36,12 @@ module PromptBuilder
       #   is enabled
       #
       # Input content restrictions:
+      # - System and developer messages are hoisted out of conversational order
+      #   into the top-level +system+ parameter, with +instructions+ merged last
+      #   (instructions apply to the current request, matching Open Responses
+      #   semantics)
+      # - Only text content (+InputText+/+OutputText+/+Text+) survives in system
+      #   and developer messages; other content is silently omitted
       # - +InputVideo+ content is not supported and is omitted
       # - +RefusalContent+ is dropped silently (a parsed refusal can stay in
       #   session history without breaking subsequent request_payload calls)
@@ -115,7 +121,8 @@ module PromptBuilder
             h["stream"] = session.stream unless session.stream.nil?
 
             # Session extra: recognized keys for Messages API
-            apply_session_extra!(h, session.extra) if session.extra
+            extra = session.extra
+            apply_session_extra!(h, extra) unless extra.empty?
 
             output_config = build_output_config(session)
             h["output_config"] = output_config unless output_config.empty?
@@ -279,16 +286,12 @@ module PromptBuilder
           def build_system(session)
             parts = []
 
-            if session.instructions
-              parts << {"type" => "text", "text" => session.instructions}
-            end
-
             session.items.each do |item|
               next unless item.is_a?(Items::Message)
               next unless item.role == "system" || item.role == "developer"
 
               item.content.each do |content|
-                if content.is_a?(Content::InputText)
+                if content.is_a?(Content::InputText) || content.is_a?(Content::OutputText) || content.is_a?(Content::Text)
                   part = {"type" => "text", "text" => content.text}
                   if content.extra && content.extra["cache_control"]
                     part["cache_control"] = content.extra["cache_control"]
@@ -296,6 +299,13 @@ module PromptBuilder
                   parts << part
                 end
               end
+            end
+
+            # Instructions come last: in the Open Responses API they apply to
+            # the current request, so they must follow any system messages
+            # accumulated in the conversation history.
+            if session.instructions
+              parts << {"type" => "text", "text" => session.instructions}
             end
 
             parts
@@ -363,7 +373,7 @@ module PromptBuilder
 
           def serialize_content_block(content, role:)
             case content
-            when Content::InputText
+            when Content::InputText, Content::Text
               {"type" => "text", "text" => content.text}
             when Content::OutputText
               text = {"type" => "text", "text" => content.text}
@@ -492,7 +502,7 @@ module PromptBuilder
           # Document blocks are rejected by the API.
           def serialize_tool_result_content(content)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               {"type" => "text", "text" => content.text}
             when Content::InputImage
               serialize_content(content, role: "user")

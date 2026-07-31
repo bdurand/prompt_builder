@@ -94,11 +94,42 @@ RSpec.describe PromptBuilder::Serializers::Messages do
 
       h = described_class.request_payload(session)
       expect(h["system"].length).to eq(3)
-      expect(h["system"][0]["text"]).to eq("Base instruction")
-      expect(h["system"][1]["text"]).to eq("Extra system context")
-      expect(h["system"][2]["text"]).to eq("Developer note")
+      expect(h["system"][0]["text"]).to eq("Extra system context")
+      expect(h["system"][1]["text"]).to eq("Developer note")
+      expect(h["system"][2]["text"]).to eq("Base instruction")
       # System/developer messages should not appear in messages array
       expect(h["messages"].length).to eq(1)
+    end
+
+    it "serializes OutputText content in system messages into top-level system" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
+      session.add_item(PromptBuilder::Items::Message.new(
+        role: "system",
+        content: [PromptBuilder::Content::OutputText.new(text: "From history")]
+      ))
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["system"]).to eq([{"type" => "text", "text" => "From history"}])
+    end
+
+    it "serializes a system message provided as a raw text hash with cache_control" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
+      session.system(type: "text", text: "You only speak German", cache_point: true, cache_control: {"type" => "ephemeral"})
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["system"]).to eq([
+        {"type" => "text", "text" => "You only speak German", "cache_control" => {"type" => "ephemeral"}}
+      ])
+    end
+
+    it "serializes Text content in user messages" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
+      session.user(type: "text", text: "Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][0]["content"]).to eq([{"type" => "text", "text" => "Hello"}])
     end
 
     it "converts tool definitions" do
@@ -823,6 +854,48 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       # are merged into a single user turn.
       expect(h["messages"].map { |m| m["role"] }).to eq(["user"])
     end
+
+    it "maps session extra keys onto the request payload" do
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        max_output_tokens: 1024,
+        extra: {
+          "top_k" => 40,
+          "stop_sequences" => ["\n\nHuman:"],
+          "cache_control" => {"type" => "ephemeral"}
+        }
+      )
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h["top_k"]).to eq(40)
+      expect(h["stop_sequences"]).to eq(["\n\nHuman:"])
+      expect(h["cache_control"]).to eq({"type" => "ephemeral"})
+    end
+
+    it "ignores unrecognized session extra keys" do
+      session = PromptBuilder::Session.new(
+        model: "claude-sonnet-4-20250514",
+        max_output_tokens: 1024,
+        extra: {"bogus" => true}
+      )
+      session.user("Hello")
+
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("bogus")
+      expect(h).not_to have_key("top_k")
+      expect(h).not_to have_key("stop_sequences")
+      expect(h).not_to have_key("cache_control")
+    end
+
+    it "applies session extra assigned after construction" do
+      session = PromptBuilder::Session.new(model: "claude-sonnet-4-20250514", max_output_tokens: 1024)
+      session.user("Hello")
+      session.extra = {top_k: 40}
+
+      h = described_class.request_payload(session)
+      expect(h["top_k"]).to eq(40)
+    end
   end
 
   describe ".parse_response" do
@@ -840,6 +913,21 @@ RSpec.describe PromptBuilder::Serializers::Messages do
           "output_tokens" => 8
         }
       }
+    end
+
+    it "raises an ErrorResponseError for an Anthropic error envelope" do
+      expect {
+        described_class.parse_response({
+          "type" => "error",
+          "error" => {"type" => "authentication_error", "message" => "invalid x-api-key"}
+        })
+      }.to raise_error(PromptBuilder::ErrorResponseError, "the API returned an error: authentication_error: invalid x-api-key")
+    end
+
+    it "raises an UnexpectedPayloadError for unrecognized payloads" do
+      expect {
+        described_class.parse_response({"foo" => "bar"})
+      }.to raise_error(PromptBuilder::UnexpectedPayloadError, /missing "content"/)
     end
 
     it "parses a basic Anthropic response" do

@@ -14,9 +14,84 @@ RSpec.describe PromptBuilder::Session do
     )
   end
 
+  describe "INITIALIZE_OPTIONS" do
+    it "is publicly accessible so integrating gems can validate session options" do
+      options = PromptBuilder::Session::INITIALIZE_OPTIONS
+      expect(options).to be_frozen
+      expect(options).to all(be_a(Symbol))
+      expect(options).to include(:model, :instructions, :input, :system, :extra)
+    end
+
+    it "lists exactly the options the constructor accepts" do
+      accepted = PromptBuilder::Session::INITIALIZE_OPTIONS.to_h { |option| [option, nil] }
+      expect { described_class.new(**accepted) }.not_to raise_error
+    end
+  end
+
   describe "#initialize" do
     it "raises an ArgumentError when an unsupported option is passed" do
       expect { described_class.new(bogus: "value") }.to raise_error(ArgumentError, /bogus/)
+    end
+
+    it "defaults extra to an empty hash" do
+      expect(described_class.new.extra).to eq({})
+    end
+
+    it "stringifies extra keys and symbol values" do
+      s = described_class.new(extra: {seed: 42, prediction: {type: :content}})
+      expect(s.extra).to eq({"seed" => 42, "prediction" => {"type" => "content"}})
+    end
+
+    it "raises an ArgumentError when extra is not a Hash" do
+      expect { described_class.new(extra: "nope") }.to raise_error(ArgumentError, /extra/)
+    end
+  end
+
+  describe "#extra" do
+    it "returns a copy so mutating it does not change the session" do
+      s = described_class.new(extra: {"guardrail_config" => {"guardrailVersion" => "1"}})
+      s.extra["seed"] = 42
+      s.extra["guardrail_config"]["guardrailVersion"] = "2"
+      expect(s.extra).to eq({"guardrail_config" => {"guardrailVersion" => "1"}})
+    end
+
+    it "returns an equal but distinct hash on each call" do
+      s = described_class.new(extra: {"seed" => 42})
+      expect(s.extra).to eq(s.extra)
+      expect(s.extra).not_to equal(s.extra)
+    end
+  end
+
+  describe "#extra=" do
+    it "replaces the extra data and stringifies keys" do
+      s = described_class.new(extra: {"seed" => 42})
+      s.extra = {top_k: 40, prediction: {type: :content}}
+      expect(s.extra).to eq({"top_k" => 40, "prediction" => {"type" => "content"}})
+    end
+
+    it "adds a key when a modified copy is assigned back" do
+      s = described_class.new(extra: {"seed" => 42})
+      s.extra = s.extra.merge(top_k: 40)
+      expect(s.extra).to eq({"seed" => 42, "top_k" => 40})
+    end
+
+    it "clears the extra data when assigned nil" do
+      s = described_class.new(extra: {"seed" => 42})
+      s.extra = nil
+      expect(s.extra).to eq({})
+      expect(s.to_h).not_to have_key("extra")
+    end
+
+    it "does not share the assigned hash with the caller" do
+      s = described_class.new
+      assigned = {"guardrail_config" => {"guardrailVersion" => "1"}}
+      s.extra = assigned
+      assigned["guardrail_config"]["guardrailVersion"] = "2"
+      expect(s.extra).to eq({"guardrail_config" => {"guardrailVersion" => "1"}})
+    end
+
+    it "raises an ArgumentError when the value is not a Hash" do
+      expect { described_class.new.extra = "nope" }.to raise_error(ArgumentError, /extra/)
     end
   end
 
@@ -181,6 +256,23 @@ RSpec.describe PromptBuilder::Session do
       expect(h["service_tier"]).to eq("default")
       expect(h["top_logprobs"]).to eq(5)
     end
+
+    it "includes extra when it is set" do
+      s = described_class.new(model: "test", extra: {seed: 42, prediction: {type: :content}})
+      expect(s.to_h["extra"]).to eq({"seed" => 42, "prediction" => {"type" => "content"}})
+    end
+
+    it "omits extra when it is empty" do
+      s = described_class.new(model: "test", extra: {})
+      expect(s.to_h).not_to have_key("extra")
+    end
+
+    it "does not alias the session extra data" do
+      s = described_class.new(model: "test", extra: {"guardrail_config" => {"guardrailVersion" => "1"}})
+      h = s.to_h
+      h["extra"]["guardrail_config"]["guardrailVersion"] = "2"
+      expect(s.extra).to eq({"guardrail_config" => {"guardrailVersion" => "1"}})
+    end
   end
 
   describe "#add_response (local state mode)" do
@@ -233,6 +325,56 @@ RSpec.describe PromptBuilder::Session do
     end
   end
 
+  describe "#clear" do
+    it "clears all items and the instructions" do
+      session.system("Be concise.")
+      session.user("Hello")
+      session.clear
+      expect(session.items).to be_empty
+      expect(session.instructions).to be_nil
+      h = session.to_h
+      expect(h).not_to have_key("input")
+      expect(h).not_to have_key("instructions")
+    end
+
+    it "returns the session to fresh local-state mode" do
+      s = described_class.new(model: "gpt-5.2", previous_response_id: "resp_0")
+      s.user("First")
+      s.add_response(PromptBuilder::Response.new(id: "resp_1", status: "completed"))
+      expect(s).not_to be_local_state
+      expect(s.response_boundary_index).to eq(1)
+
+      s.clear
+      expect(s.previous_response_id).to be_nil
+      expect(s.response_boundary_index).to eq(0)
+      expect(s).to be_local_state
+    end
+
+    it "preserves model configuration and registered tools" do
+      session.register_tool("greet", description: "Say hello")
+      session.user("Hello")
+      session.clear
+      expect(session.model).to eq("gpt-5.2")
+      expect(session.temperature).to eq(0.7)
+      expect(session.tool_definitions.map(&:name)).to eq(["greet"])
+    end
+
+    it "returns self and clears items in place" do
+      original = session.items
+      session.user("Hello")
+      expect(session.clear).to be(session)
+      expect(session.items).to be(original)
+      expect(session.items).to be_empty
+    end
+
+    it "preserves the extra data" do
+      s = described_class.new(model: "gpt-5.2", extra: {"seed" => 42})
+      s.user("Hello")
+      s.clear
+      expect(s.extra).to eq({"seed" => 42})
+    end
+  end
+
   describe "previous_response_id mode serialization" do
     it "to_h always includes full history" do
       s = described_class.new(previous_response_id: "resp_0")
@@ -260,6 +402,30 @@ RSpec.describe PromptBuilder::Session do
       expect(h["input"].length).to eq(1)
       expect(h["input"][0]["role"]).to eq("user")
     end
+
+    it "preserves the response boundary through a to_h/from_h round-trip" do
+      s = described_class.new(model: "gpt-5.2", previous_response_id: "resp_0")
+      s.user("First")
+
+      response = PromptBuilder::Response.new(id: "resp_1", status: "completed")
+      s.add_response(response)
+
+      s.user("Second")
+
+      restored = described_class.from_h(s.to_h)
+      expect(restored.response_boundary_index).to eq(s.response_boundary_index)
+
+      h = restored.request_payload(:open_responses)
+      expect(h["previous_response_id"]).to eq("resp_1")
+      expect(h["input"].length).to eq(1)
+      expect(h["input"][0]["role"]).to eq("user")
+      expect(h).not_to have_key("response_boundary_index")
+    end
+
+    it "clamps a restored response boundary to the item count" do
+      s = described_class.from_h({"model" => "gpt-5.2", "response_boundary_index" => 5})
+      expect(s.response_boundary_index).to eq(0)
+    end
   end
 
   describe "#register_tool" do
@@ -268,6 +434,14 @@ RSpec.describe PromptBuilder::Session do
       defn = session.tool_definitions.find { |d| d.name == "greet" }
       expect(defn).not_to be_nil
       expect(defn.description).to eq("Say hello")
+    end
+
+    it "keys tools by name regardless of String or Symbol registration" do
+      session.register_tool(:greet, description: "Say hello")
+      session.register_tool("greet", description: "Say hello politely")
+
+      expect(session.tool_definitions.length).to eq(1)
+      expect(session.tool_definitions.first.description).to eq("Say hello politely")
     end
   end
 
@@ -339,6 +513,51 @@ RSpec.describe PromptBuilder::Session do
 
     it "raises ArgumentError when registry is not a ToolRegistry" do
       expect { session.use_tools("weather", registry: {}) }.to raise_error(ArgumentError)
+    end
+  end
+
+  describe "#remove_tool" do
+    it "removes the named tool and returns its definition, leaving others" do
+      session.register_tool("weather", description: "Get weather")
+      session.register_tool("traffic", description: "Get traffic")
+
+      removed = session.remove_tool("weather")
+      expect(removed).to be_a(PromptBuilder::Tools::Definition)
+      expect(removed.name).to eq("weather")
+      expect(session.tool_definitions.map(&:name)).to eq(["traffic"])
+    end
+
+    it "returns nil when the tool is not registered" do
+      expect(session.remove_tool("nope")).to be_nil
+    end
+
+    it "matches regardless of whether the tool was registered by string or symbol" do
+      session.register_tool(:weather, description: "Get weather")
+      removed = session.remove_tool("weather")
+      expect(removed).not_to be_nil
+      expect(session.tool_definitions).to be_empty
+    end
+
+    it "accepts a symbol name" do
+      session.register_tool("weather", description: "Get weather")
+      expect(session.remove_tool(:weather)).not_to be_nil
+      expect(session.tool_definitions).to be_empty
+    end
+  end
+
+  describe "#clear_tools" do
+    it "removes all registered tools and returns the removed definitions" do
+      session.register_tool("weather", description: "Get weather")
+      session.register_tool("traffic", description: "Get traffic")
+
+      removed = session.clear_tools
+      expect(removed.map(&:name)).to contain_exactly("weather", "traffic")
+      expect(session.tool_definitions).to be_empty
+      expect(session.to_h).not_to have_key("tools")
+    end
+
+    it "returns an empty array when there are no tools" do
+      expect(session.clear_tools).to eq([])
     end
   end
 
@@ -436,6 +655,19 @@ RSpec.describe PromptBuilder::Session do
       cloned = session.clone_config
       cloned.user("New message")
       expect(session.items).to be_empty
+    end
+
+    it "copies the extra data" do
+      s = described_class.new(model: "gpt-5.2", extra: {"seed" => 42, "prediction" => {"type" => "content"}})
+      expect(s.clone_config.extra).to eq({"seed" => 42, "prediction" => {"type" => "content"}})
+    end
+
+    it "produces an independent extra hash" do
+      s = described_class.new(model: "gpt-5.2", extra: {"prediction" => {"type" => "content"}})
+      cloned = s.clone_config
+      cloned.extra = cloned.extra.merge("seed" => 42)
+      cloned.extra["prediction"]["type"] = "other"
+      expect(s.extra).to eq({"prediction" => {"type" => "content"}})
     end
   end
 
@@ -554,6 +786,22 @@ RSpec.describe PromptBuilder::Session do
       s = described_class.from_h({"model" => "gpt-5.2"})
       expect(s.items).to be_empty
       expect(s.tool_definitions).to be_empty
+    end
+
+    it "restores the extra data" do
+      s = described_class.from_h({"model" => "gpt-5.2", "extra" => {"seed" => 42}})
+      expect(s.extra).to eq({"seed" => 42})
+    end
+
+    it "defaults extra to an empty hash when the key is absent" do
+      expect(described_class.from_h({"model" => "gpt-5.2"}).extra).to eq({})
+    end
+
+    it "round-trips extra through to_h and from_h" do
+      s = described_class.new(model: "gpt-5.2", extra: {"guardrail_config" => {"guardrailIdentifier" => "gr-1"}})
+      s.user("Hello")
+      h = s.to_h
+      expect(described_class.from_h(h).to_h).to eq(h)
     end
 
     it "round-trips a session through to_h and from_h" do

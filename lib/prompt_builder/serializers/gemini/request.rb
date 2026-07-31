@@ -27,6 +27,12 @@ module PromptBuilder
       # - +truncation+ — server-side context truncation is not supported
       #
       # Input content restrictions:
+      # - System and developer messages are hoisted out of conversational order
+      #   into the top-level +systemInstruction+ field, with +instructions+ merged
+      #   last (instructions apply to the current request, matching Open Responses
+      #   semantics)
+      # - Only text content (+InputText+/+OutputText+/+Text+) survives in system
+      #   and developer messages; other content is silently omitted
       # - +InputImage+ content is only supported in user messages (assistant images are omitted)
       # - +InputImage+ with +image_url+ requires either base64 +data+ or a URL;
       #   content without +image_url+ or +file_id+ raises
@@ -136,7 +142,8 @@ module PromptBuilder
             h["toolConfig"] = tool_config if tool_config
 
             # Session extra: recognized keys for Gemini API
-            apply_session_extra!(h, session.extra) if session.extra
+            extra = session.extra
+            apply_session_extra!(h, extra) unless extra.empty?
 
             # Gemini selects streaming via endpoint (:streamGenerateContent)
             # rather than a request body field, so session.stream is a no-op
@@ -162,17 +169,22 @@ module PromptBuilder
           def build_system_instruction(session)
             parts = []
 
-            if session.instructions
-              parts << {"text" => session.instructions}
-            end
-
             session.items.each do |item|
               next unless item.is_a?(Items::Message)
               next unless item.role == "system" || item.role == "developer"
 
               item.content.each do |content|
-                parts << {"text" => content.text} if content.is_a?(Content::InputText)
+                if content.is_a?(Content::InputText) || content.is_a?(Content::OutputText) || content.is_a?(Content::Text)
+                  parts << {"text" => content.text}
+                end
               end
+            end
+
+            # Instructions come last: in the Open Responses API they apply to
+            # the current request, so they must follow any system messages
+            # accumulated in the conversation history.
+            if session.instructions
+              parts << {"text" => session.instructions}
             end
 
             return nil if parts.empty?
@@ -274,7 +286,7 @@ module PromptBuilder
               # types are silently omitted.
               text = output.filter_map do |content|
                 case content
-                when Content::InputText, Content::OutputText
+                when Content::InputText, Content::OutputText, Content::Text
                   content.text
                 end
               end.join("\n")
@@ -307,7 +319,7 @@ module PromptBuilder
 
           def serialize_content(content, role:)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               part = {"text" => content.text}
               if content.extra && content.extra["thought_signature"]
                 part["thoughtSignature"] = content.extra["thought_signature"]

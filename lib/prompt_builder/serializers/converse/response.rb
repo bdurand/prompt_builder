@@ -10,6 +10,21 @@ module PromptBuilder
         class << self
           private
 
+          # Bedrock exception bodies carry a top-level "message" (the exception
+          # class travels in the x-amzn-ErrorType header) or a top-level
+          # "__type", while misrouted requests get a Coral service envelope
+          # like {"Output" => {"__type" => "..."}, "Version" => "1.0"}.
+          def error_response_message(hash)
+            return nil if hash.key?("output")
+
+            coral_output = hash["Output"].is_a?(Hash) ? hash["Output"] : {}
+            error_type = hash["__type"] || coral_output["__type"]
+            message = hash["message"] || hash["Message"] || coral_output["message"] || coral_output["Message"]
+            return nil unless error_type || message
+
+            [error_type, message].compact.join(": ")
+          end
+
           def deserialize_response(hash)
             require_response_key!(hash, "output")
             require_response_key!(hash, "stopReason")

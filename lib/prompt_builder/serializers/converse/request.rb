@@ -39,6 +39,10 @@ module PromptBuilder
       # - +tool_choice: "none"+ has no Converse representation and is omitted
       #
       # Input content restrictions:
+      # - System and developer messages are hoisted out of conversational order
+      #   into the top-level +system+ parameter, with +instructions+ merged last
+      #   (instructions apply to the current request, matching Open Responses
+      #   semantics)
       # - +Reasoning+ items are silently skipped
       # - +RefusalContent+ is dropped silently (a parsed response refusal can
       #   stay in session history without breaking subsequent request_payload calls)
@@ -68,8 +72,11 @@ module PromptBuilder
       # - Prompt management variables (+prompt_variables+)
       #
       # Prompt caching markers (+cachePoint+) are emitted via the +cache_point+
-      # content extra. Cross-region routing via inference profiles is selected
-      # through the model id and needs no request field.
+      # extra on system/message content, tool definitions (appended to the
+      # +toolConfig.tools+ array), and +FunctionCallOutput+ items (appended to
+      # the message content after the +toolResult+ block). Cross-region routing
+      # via inference profiles is selected through the model id and needs no
+      # request field.
       class Request < Base
         IMAGE_MEDIA_TYPE_FORMATS = {
           "image/jpeg" => "jpeg",
@@ -164,7 +171,8 @@ module PromptBuilder
             h["toolConfig"] = tool_config if tool_config
 
             # Session extra: recognized keys for Converse API
-            apply_session_extra!(h, session.extra) if session.extra
+            extra = session.extra
+            apply_session_extra!(h, extra) unless extra.empty?
 
             h
           end
@@ -194,8 +202,6 @@ module PromptBuilder
           def build_system(session)
             parts = []
 
-            parts << {"text" => session.instructions} if session.instructions
-
             session.items.each do |item|
               next unless item.is_a?(Items::Message)
               next unless item.role == "system" || item.role == "developer"
@@ -210,6 +216,11 @@ module PromptBuilder
                 end
               end
             end
+
+            # Instructions come last: in the Open Responses API they apply to
+            # the current request, so they must follow any system messages
+            # accumulated in the conversation history.
+            parts << {"text" => session.instructions} if session.instructions
 
             parts
           end
@@ -249,10 +260,14 @@ module PromptBuilder
                   }]
                 }
               when Items::FunctionCallOutput
-                raw_messages << {
-                  "role" => "user",
-                  "content" => [serialize_tool_result(item, ctx)]
-                }
+                # The Converse ToolResultContentBlock union has no cachePoint
+                # member; the marker must be a sibling content block after the
+                # toolResult block.
+                content = [serialize_tool_result(item, ctx)]
+                if item.extra && item.extra["cache_point"]
+                  content << {"cachePoint" => {"type" => "default"}}
+                end
+                raw_messages << {"role" => "user", "content" => content}
               when Items::Reasoning, Items::Compaction, Items::ItemReference
                 # Reasoning, Compaction, and ItemReference items are not supported
                 # in the request, so ignore them rather than raising an error.
@@ -265,7 +280,7 @@ module PromptBuilder
 
           def serialize_system_content(content)
             case content
-            when Content::InputText
+            when Content::InputText, Content::Text
               {"text" => content.text}
             when Content::OutputText
               validate_output_text!(content)
@@ -293,7 +308,7 @@ module PromptBuilder
 
           def serialize_content(content, role:, ctx: nil)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               validate_output_text!(content) if content.is_a?(Content::OutputText)
               {"text" => content.text}
             when Content::InputImage
@@ -512,7 +527,7 @@ module PromptBuilder
 
           def serialize_tool_result_content(content, ctx)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               validate_output_text!(content) if content.is_a?(Content::OutputText)
               {"text" => content.text}
             when Content::InputImage
@@ -610,13 +625,17 @@ module PromptBuilder
           end
 
           def build_tools(session)
-            session.tool_definitions.map do |definition|
+            session.tool_definitions.flat_map do |definition|
               tool_spec = {"name" => definition.name}
               tool_spec["description"] = definition.description if definition.description
               tool_spec["inputSchema"] = {
                 "json" => definition.parameters || {"type" => "object", "properties" => {}}
               }
-              {"toolSpec" => tool_spec}
+              tools = [{"toolSpec" => tool_spec}]
+              # The Converse Tool union type has a cachePoint member, so the
+              # marker is its own entry in the tools array.
+              tools << {"cachePoint" => {"type" => "default"}} if definition.extra["cache_point"]
+              tools
             end
           end
 

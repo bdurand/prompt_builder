@@ -27,6 +27,10 @@ module PromptBuilder
       #   supported, and only when +stream+ is set (otherwise it is omitted)
       #
       # Input content restrictions:
+      # - +instructions+ is serialized as a system message inserted after the
+      #   last system/developer message, or first when there are none
+      #   (instructions apply to the current request, matching Open Responses
+      #   semantics)
       # - +InputVideo+ content is not supported in any message (omitted)
       # - +Reasoning+ items are not supported (skipped)
       # - +RefusalContent+ is dropped silently (a parsed Chat Completions
@@ -119,7 +123,8 @@ module PromptBuilder
             end
 
             # Session extra: recognized keys for Chat Completions API
-            apply_session_extra!(h, session.extra) if session.extra
+            extra = session.extra
+            apply_session_extra!(h, extra) unless extra.empty?
 
             h
           end
@@ -137,10 +142,6 @@ module PromptBuilder
 
           def build_messages(session)
             messages = []
-
-            if session.instructions
-              messages << {"role" => "system", "content" => session.instructions}
-            end
 
             pending_tool_calls = []
             last_assistant_msg = nil
@@ -171,7 +172,16 @@ module PromptBuilder
             end
 
             flush_tool_calls!(messages, pending_tool_calls, last_assistant_msg)
+            insert_instructions!(messages, session.instructions) if session.instructions
             messages
+          end
+
+          # Instructions apply to the current request (matching Open Responses
+          # semantics), so they are inserted after the last system/developer
+          # message rather than before any of them.
+          def insert_instructions!(messages, instructions)
+            index = messages.rindex { |msg| msg["role"] == "system" || msg["role"] == "developer" }
+            messages.insert(index ? index + 1 : 0, {"role" => "system", "content" => instructions})
           end
 
           def serialize_message(item)
@@ -198,7 +208,7 @@ module PromptBuilder
 
           def serialize_content(role, content)
             case content
-            when Content::InputText, Content::OutputText
+            when Content::InputText, Content::OutputText, Content::Text
               serialize_text_content(content)
             when Content::InputImage
               # Image content is only supported in user messages; omit otherwise.
@@ -241,7 +251,7 @@ module PromptBuilder
             # are silently omitted.
             content = output.filter_map do |content|
               case content
-              when Content::InputText, Content::OutputText
+              when Content::InputText, Content::OutputText, Content::Text
                 serialize_text_content(content)
               end
             end

@@ -96,6 +96,42 @@ RSpec.describe PromptBuilder::Items::Message do
         described_class.new(role: "user", content: 42)
       }.to raise_error(PromptBuilder::InvalidItemError)
     end
+
+    it "defaults the type to input_text for a user hash with only a text key" do
+      message = described_class.new(role: "user", content: {text: "Hello"})
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("Hello")
+    end
+
+    it "defaults the type to input_text for a system hash with only a text key" do
+      message = described_class.new(role: "system", content: {text: "Be helpful"})
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].text).to eq("Be helpful")
+    end
+
+    it "defaults the type to output_text for an assistant hash with only a text key" do
+      message = described_class.new(role: "assistant", content: {text: "Hello"})
+      expect(message.content[0]).to be_a(PromptBuilder::Content::OutputText)
+      expect(message.content[0].text).to eq("Hello")
+    end
+
+    it "captures extra keys when the type is defaulted" do
+      message = described_class.new(
+        role: "system",
+        content: {text: "Be helpful", cache_point: true, cache_control: {"type" => "ephemeral"}}
+      )
+      expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
+      expect(message.content[0].extra).to eq({
+        "cache_point" => true,
+        "cache_control" => {"type" => "ephemeral"}
+      })
+    end
+
+    it "raises on a hash with neither a type nor a text key" do
+      expect {
+        described_class.new(role: "user", content: {url: "http://example.com/image.png"})
+      }.to raise_error(PromptBuilder::InvalidItemError, /missing required "type" key/)
+    end
   end
 
   describe "message roles" do
@@ -153,6 +189,30 @@ RSpec.describe PromptBuilder::Items::Message do
       expect(message.role).to eq("developer")
       expect(message.content[0]).to be_a(PromptBuilder::Content::InputText)
       expect(message.content[0].text).to eq("developer hash")
+    end
+  end
+
+  describe "role predicates" do
+    it "#system? is true only for a system message" do
+      expect(described_class.new(role: "system", content: "x").system?).to be(true)
+      expect(described_class.new(role: "user", content: "x").system?).to be(false)
+    end
+
+    it "#user? is true only for a user message" do
+      expect(described_class.new(role: "user", content: "x").user?).to be(true)
+      expect(described_class.new(role: "assistant", content: "x").user?).to be(false)
+    end
+
+    it "#assistant? is true only for an assistant message" do
+      expect(described_class.new(role: "assistant", content: "x").assistant?).to be(true)
+      expect(described_class.new(role: "user", content: "x").assistant?).to be(false)
+    end
+
+    it "returns false for all three predicates on a developer message" do
+      message = described_class.new(role: "developer", content: "x")
+      expect(message.system?).to be(false)
+      expect(message.user?).to be(false)
+      expect(message.assistant?).to be(false)
     end
   end
 

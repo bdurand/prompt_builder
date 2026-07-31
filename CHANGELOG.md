@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+### Added
+
+- Response parsers now recognize API error payloads (OpenAI/Gemini `error` envelopes, Anthropic `type: "error"` responses, Bedrock exception bodies) and raise a `PromptBuilder::ErrorResponseError` (a subclass of `UnexpectedPayloadError`) containing the error message reported by the API.
+- `Session.new` accepts a `system:` shorthand that adds a system message, mirroring the existing `input:` shorthand.
+- `Session#clear` resets the conversation — items, `instructions`, and `previous_response_id` — while preserving model configuration and registered tools.
+- `Session#remove_tool` removes a registered tool by name (string or symbol); `Session#clear_tools` removes them all. Both return the removed definitions.
+- `Session#extra=` sets or clears provider-specific extra data after the session has been constructed. Keys are normalized to strings; assigning `nil` clears the data.
+- Message content hashes with a `text` key no longer require a `type` key; the type defaults to `input_text` (or `output_text` on assistant messages).
+- `Items::Message#system?`, `#user?`, and `#assistant?` role predicates.
+- The Converse serializer emits `cachePoint` markers from the `cache_point` extra on tool definitions and `FunctionCallOutput` items, in addition to content blocks.
+- `Session#to_h`/`Session.from_h` now round-trip the response boundary (`response_boundary_index`), and a `response_boundary_index=` setter is available for reconstructing session state.
+- `Session::INITIALIZE_OPTIONS` is now public API: the frozen Array of all keyword options accepted by the constructor, for code that needs to validate or partition an options hash before creating a session.
+
+### Changed
+
+- `Session#extra` always returns a Hash (previously `nil` when unset). The returned Hash is a copy; assign a modified copy back through `Session#extra=` to change it.
+- `Session#to_h` omits `extra` when it is empty.
+- `instructions` is now serialized after system/developer messages instead of before them, matching the Open Responses semantics of `instructions` applying to the current request.
+
+### Fixed
+
+- Serializers silently dropped `Content::Text` content (hashes with `type: "text"`) from messages, system prompts, and tool results; it is now serialized as text everywhere `InputText`/`OutputText` are, including cache markers from content extras. The Messages and Gemini serializers also dropped `OutputText` content from system messages.
+- Tool names are normalized to strings on registration, so registering the same tool by symbol and by string no longer creates duplicate definitions.
+
 ## 0.2.0
 
 ### Added

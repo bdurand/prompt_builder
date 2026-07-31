@@ -34,11 +34,17 @@ module PromptBuilder
     private_constant :THINK_EFFORT_LEVELS
 
     # All keyword options accepted by +initialize+.
+    #
+    # This constant is public API — unlike the private field-group constants
+    # above, it must not be marked with +private_constant+. Integrating gems
+    # use it to validate or partition option hashes before constructing a
+    # Session, e.g. +options.slice(*PromptBuilder::Session::INITIALIZE_OPTIONS)+.
+    #
+    # @api public
+    # @return [Array<Symbol>] the supported keyword option names
     INITIALIZE_OPTIONS = (
-      STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS +
-        %i[input extra]
+      STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS + %i[input extra system]
     ).freeze
-    private_constant :INITIALIZE_OPTIONS
 
     # @!attribute [rw] model
     #   @return [String, nil] the model identifier
@@ -122,10 +128,44 @@ module PromptBuilder
     # @return [Integer] the index in +items+ marking the boundary after the last response
     attr_reader :response_boundary_index
 
-    # @return [Hash, nil] provider-specific extra data for serializers.
-    #   Recognized keys vary by target format. Unrecognized keys are silently
-    #   ignored by each serializer.
-    attr_reader :extra
+    # Restore the response boundary, e.g. when deserializing a session. The
+    # value is clamped to the current item count. Normally the boundary is
+    # maintained by +add_response+; use this only to reconstruct state.
+    #
+    # @param index [Integer] the boundary index
+    # @return [Integer]
+    def response_boundary_index=(index)
+      @response_boundary_index = index.to_i.clamp(0, @items.length)
+    end
+
+    # Provider-specific extra data for serializers. Always returns a Hash, empty
+    # when nothing is set. Keys are always Strings.
+    #
+    # The returned Hash is a copy, so mutating it does not change the session.
+    # To add or remove a key, modify a copy and assign it back:
+    #
+    #   session.extra = session.extra.merge("guardrail_config" => {"guardrailIdentifier" => "gr-1"})
+    #
+    # Recognized keys vary by target format. Unrecognized keys are silently
+    # ignored by each serializer.
+    #
+    # @return [Hash] a copy of the provider-specific extra data
+    def extra
+      PromptBuilder.jsonify(@extra)
+    end
+
+    # Replace the provider-specific extra data. Keys are deep-stringified with
+    # +PromptBuilder.jsonify+ and the value is copied, so the assigned Hash is
+    # not shared with the session. Pass +nil+ to clear.
+    #
+    # @param value [Hash, nil] the extra data, or nil to clear it
+    # @return [Hash] the stored extra data
+    # @raise [ArgumentError] if the value is neither a Hash nor nil
+    def extra=(value)
+      raise ArgumentError, "extra must be a Hash" unless value.nil? || value.is_a?(Hash)
+
+      @extra = PromptBuilder.jsonify(value || {})
+    end
 
     class << self
       # Deserialize a Session from a Hash produced by +to_h+ or parsed JSON.
@@ -138,7 +178,7 @@ module PromptBuilder
       def from_h(hash)
         attrs = (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS)
           .each_with_object({}) { |f, acc| acc[f] = hash[f.to_s] }
-        attrs[:extra] = hash["extra"] if hash["extra"]
+        attrs[:extra] = hash["extra"]
         session = new(**attrs)
 
         Array(hash["input"]).each do |item_hash|
@@ -151,6 +191,8 @@ module PromptBuilder
           session.register_tool(defn.name, description: defn.description, parameters: defn.parameters, strict: defn.strict, **extra)
         end
 
+        session.response_boundary_index = hash["response_boundary_index"] if hash["response_boundary_index"]
+
         session
       end
     end
@@ -158,16 +200,18 @@ module PromptBuilder
     # Create a new Session with the given options.
     # Accepts keyword arguments for all typed field groups (STRING_FIELDS,
     # FLOAT_FIELDS, INTEGER_FIELDS, BOOLEAN_FIELDS, JSONIFY_FIELDS); all default
-    # to +nil+. The +input+ (or +user+) shorthand auto-creates a user message
-    # if provided. Unsupported keyword options raise an ArgumentError.
+    # to +nil+. The +system+ and +input+ shorthands auto-create a system and
+    # user message if provided. Unsupported keyword options raise an ArgumentError.
     #
     # @param attributes [Hash] keyword options; see attribute declarations above
+    # @option attributes [String, nil] :system optional string shorthand; a system
+    #   message is automatically added with this text
     # @option attributes [String, nil] :input optional string shorthand; a user
     #   message is automatically added with this text
     # @option attributes [Hash, nil] :extra provider-specific extra data for
-    #   serializers; recognized keys vary by target format
-    # @raise [ArgumentError] if an unsupported option is passed or aliased
-    #   options are passed together
+    #   serializers; recognized keys vary by target format. Keys are stringified.
+    #   Defaults to an empty Hash and can be replaced later with +extra=+.
+    # @raise [ArgumentError] if an unsupported option is passed
     def initialize(**attributes)
       unsupported = attributes.keys - INITIALIZE_OPTIONS
       unless unsupported.empty?
@@ -177,8 +221,12 @@ module PromptBuilder
       (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS).each do |f|
         send(:"#{f}=", attributes[f])
       end
-      @extra = PromptBuilder.jsonify(attributes[:extra]) if attributes[:extra]
+
+      self.extra = attributes[:extra]
+
       @items = []
+      system(attributes[:system]) if attributes[:system]
+
       @tool_definitions = {}
       @response_boundary_index = 0
       user(attributes[:input]) if attributes[:input]
@@ -192,6 +240,7 @@ module PromptBuilder
     #  session.user("Hello, how are you?")
     #  session.user(Content::InputText.new(text: "Hello, how are you?"))
     #  session.user(type: "input_text", text: "Hello, how are you?")
+    #  session.user(text: "Hello, how are you?") # type defaults to "input_text"
     #  session.user([
     #    Content::InputText.new(text: "What is in this image?"),
     #    Content::InputImage.new(url: "http://example.com/image.png")
@@ -216,6 +265,10 @@ module PromptBuilder
     #
     # @param content [String, Content::Base, Hash, Array<Content::Base>, Array<Hash>] the message content
     # @return [Items::Message] the added message
+    # @example
+    #  session.system("You are a helpful assistant.")
+    #  session.system(text: "You are a helpful assistant.") # type defaults to "input_text"
+    #  session.system(text: "You are a helpful assistant.", cache_point: true, cache_control: {type: "ephemeral"})
     def system(content)
       add_item(Items::Message.new(role: "system", content: content))
     end
@@ -268,6 +321,19 @@ module PromptBuilder
       @response_boundary_index = @items.length
     end
 
+    # Clear all conversation items and the system instructions, returning the
+    # session to a fresh local-state start. Model configuration and registered
+    # tools are preserved.
+    #
+    # @return [self]
+    def clear
+      @items.clear
+      self.instructions = nil
+      self.previous_response_id = nil
+      @response_boundary_index = 0
+      self
+    end
+
     # Register a tool on this session.
     #
     # @param name [String] the tool name
@@ -284,7 +350,7 @@ module PromptBuilder
         strict: strict,
         **extra
       )
-      @tool_definitions[name] = definition
+      @tool_definitions[name.to_s] = definition
       definition
     end
 
@@ -344,6 +410,31 @@ module PromptBuilder
           **extra
         )
       end
+    end
+
+    # Remove a single registered tool by name. Accepts a string or symbol and
+    # matches regardless of how the tool's key was stored.
+    #
+    # @param name [String, Symbol] the tool name
+    # @return [Tools::Definition, nil] the removed definition, or nil if not found
+    def remove_tool(name)
+      key = name.to_s
+      removed = nil
+      @tool_definitions.delete_if do |k, defn|
+        match = k.to_s == key
+        removed = defn if match
+        match
+      end
+      removed
+    end
+
+    # Remove all registered tools from the session.
+    #
+    # @return [Array<Tools::Definition>] the removed tool definitions
+    def clear_tools
+      removed = @tool_definitions.values
+      @tool_definitions.clear
+      removed
     end
 
     # Configure JSON Schema structured output. Writes the canonical
@@ -465,6 +556,7 @@ module PromptBuilder
 
       h["input"] = @items.map(&:to_h) unless @items.empty?
       h["previous_response_id"] = @previous_response_id if @previous_response_id
+      h["response_boundary_index"] = @response_boundary_index if @response_boundary_index.positive?
 
       h["tools"] = tool_definitions.map(&:to_h) unless @tool_definitions.empty?
 
@@ -488,7 +580,7 @@ module PromptBuilder
         val = send(f)
         h[f.to_s] = val if val
       }
-      h["extra"] = @extra if @extra
+      h["extra"] = extra unless @extra.empty?
 
       h
     end
@@ -509,7 +601,7 @@ module PromptBuilder
     def config_hash
       h = (STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS - %i[previous_response_id])
         .each_with_object({}) { |f, acc| acc[f] = send(f) }
-      h[:extra] = @extra if @extra
+      h[:extra] = @extra
       h
     end
   end

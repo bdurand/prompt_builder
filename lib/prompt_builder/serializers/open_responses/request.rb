@@ -28,6 +28,7 @@ module PromptBuilder
             payload = session.to_h
             items = apply_server_state!(payload, session)
             payload.delete("extra")
+            payload.delete("response_boundary_index")
             strip_extra(payload, items, session.tool_definitions)
             normalize_content_urls!(payload)
             strip_non_replayable_reasoning!(payload)
