@@ -34,6 +34,14 @@ module PromptBuilder
     private_constant :THINK_EFFORT_LEVELS
 
     # All keyword options accepted by +initialize+.
+    #
+    # This constant is public API — unlike the private field-group constants
+    # above, it must not be marked with +private_constant+. Integrating gems
+    # use it to validate or partition option hashes before constructing a
+    # Session, e.g. +options.slice(*PromptBuilder::Session::INITIALIZE_OPTIONS)+.
+    #
+    # @api public
+    # @return [Array<Symbol>] the supported keyword option names
     INITIALIZE_OPTIONS = (
       STRING_FIELDS + FLOAT_FIELDS + INTEGER_FIELDS + BOOLEAN_FIELDS + JSONIFY_FIELDS + %i[input extra system]
     ).freeze

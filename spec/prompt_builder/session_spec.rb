@@ -14,6 +14,20 @@ RSpec.describe PromptBuilder::Session do
     )
   end
 
+  describe "INITIALIZE_OPTIONS" do
+    it "is publicly accessible so integrating gems can validate session options" do
+      options = PromptBuilder::Session::INITIALIZE_OPTIONS
+      expect(options).to be_frozen
+      expect(options).to all(be_a(Symbol))
+      expect(options).to include(:model, :instructions, :input, :system, :extra)
+    end
+
+    it "lists exactly the options the constructor accepts" do
+      accepted = PromptBuilder::Session::INITIALIZE_OPTIONS.to_h { |option| [option, nil] }
+      expect { described_class.new(**accepted) }.not_to raise_error
+    end
+  end
+
   describe "#initialize" do
     it "raises an ArgumentError when an unsupported option is passed" do
       expect { described_class.new(bogus: "value") }.to raise_error(ArgumentError, /bogus/)

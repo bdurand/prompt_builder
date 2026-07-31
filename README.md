@@ -58,7 +58,7 @@ session = PromptBuilder::Session.new(
 )
 ```
 
-Passing an option the constructor doesn't recognize raises an `ArgumentError`.
+Passing an option the constructor doesn't recognize raises an `ArgumentError`. The full list of supported constructor options is available as `PromptBuilder::Session::INITIALIZE_OPTIONS`.
 
 #### `instructions` vs. system and developer messages
 
