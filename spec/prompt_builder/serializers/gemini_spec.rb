@@ -1142,6 +1142,18 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(response.id).to eq("resp_xyz")
     end
 
+    it "accepts HTTP headers and ignores them" do
+      response_hash = {
+        "responseId" => "resp_xyz",
+        "modelVersion" => "gemini-2.0-flash",
+        "candidates" => [
+          {"content" => {"parts" => [{"text" => "ok"}]}, "finishReason" => "STOP"}
+        ]
+      }
+      response = described_class.parse_response(response_hash, headers: {"x-request-id" => "req-123"})
+      expect(response.id).to eq("resp_xyz")
+    end
+
     it "marks safety-blocked prompts as failed even when candidates is empty" do
       response_hash = {
         "modelVersion" => "gemini-2.0-flash",

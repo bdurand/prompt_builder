@@ -1092,6 +1092,11 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(response.id).to eq("req-123")
     end
 
+    it "reads the response id from an array-valued header" do
+      response = described_class.parse_response(converse_response, headers: {"x-amzn-requestid" => ["req-123"]})
+      expect(response.id).to eq("req-123")
+    end
+
     it "leaves the response id nil when no headers are given" do
       response = described_class.parse_response(converse_response)
       expect(response.id).to be_nil

@@ -19,7 +19,7 @@ module PromptBuilder
             [error["type"], error["message"]].compact.join(": ")
           end
 
-          def deserialize_response(hash, _headers = nil)
+          def deserialize_response(hash)
             require_response_key!(hash, "content")
             require_response_key!(hash, "stop_reason")
 

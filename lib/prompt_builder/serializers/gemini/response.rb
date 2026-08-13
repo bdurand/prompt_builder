@@ -72,7 +72,7 @@ module PromptBuilder
             [error["status"] || error["code"], error["message"]].compact.join(": ")
           end
 
-          def deserialize_response(hash, _headers = nil)
+          def deserialize_response(hash)
             require_response_key!(hash, "candidates")
             require_response_key!(hash, "modelVersion")
 

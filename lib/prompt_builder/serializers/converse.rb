@@ -16,17 +16,6 @@ module PromptBuilder
         def request_payload(session)
           Request.request_payload(session)
         end
-
-        # Parse a Converse response into a PromptBuilder::Response.
-        #
-        # @param hash [Hash] the response hash in Converse format
-        # @param headers [Hash, #each, nil] the HTTP response headers; the
-        #   Converse API returns the response id in the request metadata
-        #   headers rather than in the body
-        # @return [PromptBuilder::Response] the parsed response
-        def parse_response(hash, headers: nil)
-          Response.parse_response(hash, headers: headers)
-        end
       end
     end
   end

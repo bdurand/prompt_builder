@@ -164,7 +164,12 @@ module PromptBuilder
       # @return [Response]
       # @raise [ArgumentError] if a symbol is given that does not map to a known serializer
       def parse(hash, serializer_class, headers: nil)
-        Serializers.resolve(serializer_class).parse_response(hash, headers: headers)
+        serializer = Serializers.resolve(serializer_class)
+        # Send the keyword only when headers are given, so serializer classes
+        # whose parse_response does not accept it keep working.
+        return serializer.parse_response(hash) if headers.nil?
+
+        serializer.parse_response(hash, headers: headers)
       end
 
       # Deserialize a Response from a Hash.

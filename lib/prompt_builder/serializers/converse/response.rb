@@ -11,6 +11,20 @@ module PromptBuilder
         RESPONSE_ID_HEADER = "x-amzn-requestid"
 
         class << self
+          # Parse a Converse response into a PromptBuilder::Response. The
+          # Converse API does not include a response id in the body; Bedrock
+          # returns it in the request metadata headers, so the id is read
+          # from +headers+ when they are given.
+          #
+          # @param hash [Hash] the response hash in Converse format
+          # @param headers [Hash, #each, nil] the HTTP response headers
+          # @return [PromptBuilder::Response] the parsed response
+          # @raise [ErrorResponseError] if the payload is an API error envelope
+          def parse_response(hash, headers: nil)
+            check_error_response!(hash)
+            deserialize_response(hash, headers)
+          end
+
           private
 
           # Bedrock exception bodies carry a top-level "message" (the exception
@@ -64,14 +78,18 @@ module PromptBuilder
             )
           end
 
-          # The Converse API does not include a response id in the body;
-          # Bedrock returns it in the request metadata headers. The lookup is
-          # case-insensitive because header hashes come with mixed casing.
+          # Find the response id header with a case-insensitive name match.
+          # Header values may be scalars or arrays of values, depending on
+          # the HTTP client the headers come from.
           def response_id_from_headers(headers)
             return nil unless headers.respond_to?(:each)
 
             headers.each do |name, value|
-              return value.to_s if name.to_s.casecmp?(RESPONSE_ID_HEADER) && value && !value.to_s.empty?
+              next unless name.to_s.casecmp?(RESPONSE_ID_HEADER)
+
+              value = value.first if value.is_a?(Array)
+              value = value.to_s.strip
+              return value unless value.empty?
             end
             nil
           end

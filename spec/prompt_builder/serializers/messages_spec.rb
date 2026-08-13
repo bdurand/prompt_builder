@@ -930,6 +930,11 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       }.to raise_error(PromptBuilder::UnexpectedPayloadError, /missing "content"/)
     end
 
+    it "accepts HTTP headers and ignores them" do
+      response = described_class.parse_response(anthropic_response, headers: {"request-id" => "req-123"})
+      expect(response.id).to eq("msg_123")
+    end
+
     it "parses a basic Anthropic response" do
       response = described_class.parse_response(anthropic_response)
       expect(response.id).to eq("msg_123")
