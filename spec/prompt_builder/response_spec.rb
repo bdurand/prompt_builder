@@ -66,6 +66,17 @@ RSpec.describe PromptBuilder::Response do
       expect { described_class.parse({}, :unknown_format) }
         .to raise_error(ArgumentError, /Unknown serializer/)
     end
+
+    it "forwards HTTP headers to the serializer" do
+      converse_hash = {
+        "output" => {
+          "message" => {"role" => "assistant", "content" => [{"text" => "Hello!"}]}
+        },
+        "stopReason" => "end_turn"
+      }
+      response = described_class.parse(converse_hash, :converse, headers: {"x-amzn-requestid" => "req-123"})
+      expect(response.id).to eq("req-123")
+    end
   end
 
   describe ".from_h" do

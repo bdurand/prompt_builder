@@ -16,14 +16,6 @@ module PromptBuilder
         def request_payload(session)
           Request.request_payload(session)
         end
-
-        # Parse a Messages response into an PromptBuilder::Response.
-        #
-        # @param hash [Hash] the response hash in Messages format
-        # @return [PromptBuilder::Response] the parsed response
-        def parse_response(hash)
-          Response.parse_response(hash)
-        end
       end
     end
   end

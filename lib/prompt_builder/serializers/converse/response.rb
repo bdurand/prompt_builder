@@ -7,7 +7,24 @@ module PromptBuilder
     class Converse < Base
       # Response parser for the Amazon Bedrock Converse API format.
       class Response < Base
+        # The response id header set by Bedrock (the AWS request metadata id).
+        RESPONSE_ID_HEADER = "x-amzn-requestid"
+
         class << self
+          # Parse a Converse response into a PromptBuilder::Response. The
+          # Converse API does not include a response id in the body; Bedrock
+          # returns it in the request metadata headers, so the id is read
+          # from +headers+ when they are given.
+          #
+          # @param hash [Hash] the response hash in Converse format
+          # @param headers [Hash, #each, nil] the HTTP response headers
+          # @return [PromptBuilder::Response] the parsed response
+          # @raise [ErrorResponseError] if the payload is an API error envelope
+          def parse_response(hash, headers: nil)
+            check_error_response!(hash)
+            deserialize_response(hash, headers)
+          end
+
           private
 
           # Bedrock exception bodies carry a top-level "message" (the exception
@@ -25,7 +42,7 @@ module PromptBuilder
             [error_type, message].compact.join(": ")
           end
 
-          def deserialize_response(hash)
+          def deserialize_response(hash, headers = nil)
             require_response_key!(hash, "output")
             require_response_key!(hash, "stopReason")
 
@@ -50,7 +67,7 @@ module PromptBuilder
             content_blocks = message["content"] || []
 
             PromptBuilder::Response.new(
-              id: nil,
+              id: response_id_from_headers(headers),
               object: nil,
               model: nil,
               output: build_output_items(content_blocks),
@@ -59,6 +76,22 @@ module PromptBuilder
               service_tier: hash.dig("serviceTier", "type"),
               extra: provider_data(hash)
             )
+          end
+
+          # Find the response id header with a case-insensitive name match.
+          # Header values may be scalars or arrays of values, depending on
+          # the HTTP client the headers come from.
+          def response_id_from_headers(headers)
+            return nil unless headers.respond_to?(:each)
+
+            headers.each do |name, value|
+              next unless name.to_s.casecmp?(RESPONSE_ID_HEADER)
+
+              value = value.first if value.is_a?(Array)
+              value = value.to_s.strip
+              return value unless value.empty?
+            end
+            nil
           end
 
           def map_stop_reason(reason)

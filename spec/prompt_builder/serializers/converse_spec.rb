@@ -1082,6 +1082,31 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(response.usage.total_tokens).to eq(18)
     end
 
+    it "reads the response id from the request metadata header" do
+      response = described_class.parse_response(converse_response, headers: {"x-amzn-requestid" => "req-123"})
+      expect(response.id).to eq("req-123")
+    end
+
+    it "matches the response id header without case sensitivity" do
+      response = described_class.parse_response(converse_response, headers: {"X-Amzn-RequestId" => "req-123"})
+      expect(response.id).to eq("req-123")
+    end
+
+    it "reads the response id from an array-valued header" do
+      response = described_class.parse_response(converse_response, headers: {"x-amzn-requestid" => ["req-123"]})
+      expect(response.id).to eq("req-123")
+    end
+
+    it "leaves the response id nil when no headers are given" do
+      response = described_class.parse_response(converse_response)
+      expect(response.id).to be_nil
+    end
+
+    it "leaves the response id nil when the header is missing or empty" do
+      response = described_class.parse_response(converse_response, headers: {"content-type" => "application/json", "x-amzn-requestid" => ""})
+      expect(response.id).to be_nil
+    end
+
     it "parses a response with tool use" do
       response = described_class.parse_response({
         "output" => {

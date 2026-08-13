@@ -15,11 +15,19 @@ module PromptBuilder
         end
 
         # Parse a response from the target format into an PromptBuilder::Response.
+        # Format classes that define a nested Response parser delegate to it.
         #
         # @param hash [Hash] the response hash in the target format
+        # @param headers [Hash, #each, nil] the HTTP response headers, for
+        #   formats that return response metadata in headers rather than in
+        #   the body
         # @return [Response] the parsed response
         # @raise [ErrorResponseError] if the payload is an API error envelope
-        def parse_response(hash)
+        def parse_response(hash, headers: nil)
+          if const_defined?(:Response, false)
+            return const_get(:Response, false).parse_response(hash, headers: headers)
+          end
+
           check_error_response!(hash)
           deserialize_response(hash)
         end

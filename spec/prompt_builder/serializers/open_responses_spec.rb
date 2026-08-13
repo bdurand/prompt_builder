@@ -371,6 +371,17 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(response.status).to eq("failed")
     end
 
+    it "accepts HTTP headers and ignores them" do
+      hash = {
+        "id" => "resp_123",
+        "object" => "response",
+        "status" => "completed",
+        "output" => []
+      }
+      response = described_class.parse_response(hash, headers: {"x-request-id" => "req-123"})
+      expect(response.id).to eq("resp_123")
+    end
+
     it "parses an Open Responses hash into PromptBuilder::Response" do
       hash = {
         "id" => "resp_123",

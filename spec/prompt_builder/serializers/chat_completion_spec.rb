@@ -851,6 +851,11 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       }.to raise_error(PromptBuilder::UnexpectedPayloadError, /missing "choices"/)
     end
 
+    it "accepts HTTP headers and ignores them" do
+      response = described_class.parse_response(openai_response, headers: {"x-request-id" => "req-123"})
+      expect(response.id).to eq("chatcmpl-123")
+    end
+
     it "parses a basic OpenAI response" do
       response = described_class.parse_response(openai_response)
       expect(response.id).to eq("chatcmpl-123")
