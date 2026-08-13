@@ -158,10 +158,13 @@ module PromptBuilder
       # @param serializer_class [Class, Symbol] a serializer class (e.g. Serializers::ChatCompletion)
       #   or a symbol shorthand (+:open_responses+, +:chat_completion+, +:messages+,
       #   +:gemini+, +:converse+)
+      # @param headers [Hash, #each, nil] the HTTP response headers, for formats
+      #   that return response metadata in headers rather than in the body
+      #   (e.g. the Converse response id)
       # @return [Response]
       # @raise [ArgumentError] if a symbol is given that does not map to a known serializer
-      def parse(hash, serializer_class)
-        Serializers.resolve(serializer_class).parse_response(hash)
+      def parse(hash, serializer_class, headers: nil)
+        Serializers.resolve(serializer_class).parse_response(hash, headers: headers)
       end
 
       # Deserialize a Response from a Hash.

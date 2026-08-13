@@ -7,6 +7,9 @@ module PromptBuilder
     class Converse < Base
       # Response parser for the Amazon Bedrock Converse API format.
       class Response < Base
+        # The response id header set by Bedrock (the AWS request metadata id).
+        RESPONSE_ID_HEADER = "x-amzn-requestid"
+
         class << self
           private
 
@@ -25,7 +28,7 @@ module PromptBuilder
             [error_type, message].compact.join(": ")
           end
 
-          def deserialize_response(hash)
+          def deserialize_response(hash, headers = nil)
             require_response_key!(hash, "output")
             require_response_key!(hash, "stopReason")
 
@@ -50,7 +53,7 @@ module PromptBuilder
             content_blocks = message["content"] || []
 
             PromptBuilder::Response.new(
-              id: nil,
+              id: response_id_from_headers(headers),
               object: nil,
               model: nil,
               output: build_output_items(content_blocks),
@@ -59,6 +62,18 @@ module PromptBuilder
               service_tier: hash.dig("serviceTier", "type"),
               extra: provider_data(hash)
             )
+          end
+
+          # The Converse API does not include a response id in the body;
+          # Bedrock returns it in the request metadata headers. The lookup is
+          # case-insensitive because header hashes come with mixed casing.
+          def response_id_from_headers(headers)
+            return nil unless headers.respond_to?(:each)
+
+            headers.each do |name, value|
+              return value.to_s if name.to_s.casecmp?(RESPONSE_ID_HEADER) && value && !value.to_s.empty?
+            end
+            nil
           end
 
           def map_stop_reason(reason)

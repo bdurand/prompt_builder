@@ -171,6 +171,13 @@ You can also pass a serializer class directly:
 response = PromptBuilder::Response.parse(JSON.parse(response_body), PromptBuilder::Serializers::ChatCompletion)
 ```
 
+`Response.parse` accepts an optional `headers:` keyword with the HTTP response headers, for formats that return response metadata in headers rather than in the body. The Converse API is one of them: Bedrock puts the response id in the `x-amzn-requestid` request metadata header, so pass the headers to populate `response.id` (the header name lookup is case-insensitive):
+
+```ruby
+response = PromptBuilder::Response.parse(JSON.parse(response_body), :converse, headers: http_response_headers)
+response.id # => "6e1d5a7b-..."
+```
+
 The `Response` object provides convenient accessors:
 
 ```ruby

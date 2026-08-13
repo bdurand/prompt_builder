@@ -20,9 +20,10 @@ module PromptBuilder
         # Parse a Messages response into an PromptBuilder::Response.
         #
         # @param hash [Hash] the response hash in Messages format
+        # @param headers [Hash, #each, nil] the HTTP response headers
         # @return [PromptBuilder::Response] the parsed response
-        def parse_response(hash)
-          Response.parse_response(hash)
+        def parse_response(hash, headers: nil)
+          Response.parse_response(hash, headers: headers)
         end
       end
     end

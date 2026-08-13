@@ -28,7 +28,7 @@ module PromptBuilder
             [error["code"] || error["type"], error["message"]].compact.join(": ")
           end
 
-          def deserialize_response(hash)
+          def deserialize_response(hash, _headers = nil)
             validate_response!(hash)
 
             output = []
