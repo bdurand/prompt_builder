@@ -618,8 +618,9 @@ RSpec.describe PromptBuilder::Session do
       expect(session.reasoning).to be_nil
     end
 
-    it "raises when neither effort nor budget_tokens is given" do
-      expect { session.think }.to raise_error(ArgumentError, /effort.*budget_tokens/)
+    it "stores an empty configuration when no depth control is given" do
+      session.think
+      expect(session.reasoning).to eq({})
     end
 
     it "raises when both effort and budget_tokens are given" do

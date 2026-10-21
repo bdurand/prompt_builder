@@ -30,10 +30,14 @@ module PromptBuilder
       #   also mapped into +metadata.user_id+ automatically
       # - +service_tier+ — only +auto+ and +standard_only+ are accepted
       # - +text+ — +format.type=json_schema+ is mapped to +output_config.format+
-      # - +reasoning+ — +budget_tokens+, +display+, +effort+, and +type+ are forwarded;
-      #   +temperature+ must be unset, +top_p+ must be >= 0.95, and
-      #   +max_output_tokens+ must be greater than +budget_tokens+ when reasoning
-      #   is enabled
+      # - +reasoning+ — +type+, +budget_tokens+, and +display+ are forwarded to
+      #   +thinking+ and +effort+ to +output_config.effort+. Any reasoning
+      #   configuration emits a +thinking+ parameter, since omitting it leaves
+      #   the thinking mode to the model instead of turning thinking off:
+      #   +thinking.type+ defaults to +adaptive+, or to +enabled+ when
+      #   +budget_tokens+ is set. The +minimal+ effort level has no equivalent
+      #   and is dropped with a warning; unrecognized levels are dropped
+      #   silently
       #
       # Input content restrictions:
       # - System and developer messages are hoisted out of conversational order
@@ -55,10 +59,29 @@ module PromptBuilder
       # - Thinking blocks without a +signature+ are dropped silently (cross-provider
       #   reasoning history doesn't round-trip into Anthropic)
       # - +Reasoning+ items with +summary+ blocks have the summary dropped
-      # - Forced tool choice (+any+/+tool+ type) is incompatible with thinking enabled (raises)
+      # - Forced tool choice (+any+/+tool+ type) is incompatible with a
+      #   +reasoning.budget_tokens+ thinking budget (raises)
       # - +Compaction+ and +ItemReference+ items are silently skipped
       # - +FunctionCallOutput.status+ values +incomplete+, +failed+, and +error+
       #   are mapped to +tool_result.is_error: true+
+      #
+      # === Model-dependent parameters
+      #
+      # Which values the API accepts for these depends on the model, and the
+      # serialized payload carries no model capability information, so they
+      # are forwarded without validation:
+      # - +temperature+ and +top_p+ — rejected outright by some models and
+      #   accepted only at their default values by others. They are validated
+      #   only alongside a +reasoning.budget_tokens+ thinking budget, where a
+      #   fixed contract applies: +temperature+ must be unset, +top_p+ must be
+      #   >= 0.95, and +max_output_tokens+ must be greater than the budget
+      # - +reasoning.type+ — +adaptive+ is accepted wherever adaptive thinking
+      #   exists and +enabled+ (with a budget) only by models predating it;
+      #   +disabled+ is rejected by some models and restricted to the lower
+      #   effort levels by others; +between_tools+ is only offered by some
+      #   models as their lowest thinking setting
+      # - Forced +tool_choice+ (+any+/+tool+ type) — rejected by some models
+      #   regardless of the thinking configuration
       #
       # === Features in the Messages API not available through Open Responses
       #
@@ -85,8 +108,17 @@ module PromptBuilder
       class Request < Base
         SUPPORTED_METADATA_KEYS = ["user_id"].freeze
         EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"].freeze
-        SUPPORTED_THINKING_TYPES = ["adaptive", "disabled", "enabled"].freeze
+        SUPPORTED_THINKING_TYPES = ["adaptive", "between_tools", "disabled", "enabled"].freeze
         SUPPORTED_TOOL_CHOICE_TYPES = ["any", "auto", "none", "tool"].freeze
+
+        # Portable effort levels with no Messages API equivalent. Dropping one
+        # changes the effective thinking depth rather than just omitting a
+        # hint, so the serializer warns instead of omitting it silently.
+        UNMAPPED_EFFORT_LEVELS = ["minimal"].freeze
+
+        # Effort levels the API rejects alongside thinking.type between_tools,
+        # which is only available as the lowest thinking setting.
+        BETWEEN_TOOLS_INCOMPATIBLE_EFFORT_LEVELS = ["xhigh", "max"].freeze
 
         # Citation types accepted by the Messages API on text blocks. Annotations
         # parsed from other providers (e.g. Chat Completions url_citation) have
@@ -100,6 +132,13 @@ module PromptBuilder
         ].freeze
 
         class << self
+          # Reset the once-per-process effort warning. Primarily used in tests.
+          #
+          # @return [void]
+          def reset_effort_warning!
+            @effort_warning_issued = false
+          end
+
           private
 
           def serialize_request(session)
@@ -128,7 +167,7 @@ module PromptBuilder
             h["output_config"] = output_config unless output_config.empty?
 
             thinking = serialize_thinking(session.reasoning)
-            validate_thinking_compatibility!(session, thinking) if thinking_active?(thinking)
+            validate_thinking_budget_compatibility!(session, thinking) if manual_thinking_budget?(thinking)
             h["thinking"] = thinking if thinking
 
             system_parts = build_system(session)
@@ -152,7 +191,7 @@ module PromptBuilder
               session.tool_choice,
               tools: tools,
               parallel_tool_calls: session.parallel_tool_calls,
-              thinking_enabled: thinking_active?(thinking)
+              manual_thinking_budget: manual_thinking_budget?(thinking)
             )
             h["tool_choice"] = tool_choice if tool_choice
 
@@ -194,48 +233,76 @@ module PromptBuilder
             service_tier if ["auto", "standard_only"].include?(service_tier)
           end
 
+          # Any reasoning configuration asks for thinking, so the +thinking+
+          # parameter is always emitted when one is present: omitting it leaves
+          # the mode to the model rather than turning thinking off. The type
+          # defaults to +adaptive+, the mode that lets the model decide how
+          # much to think, or to +enabled+ when an explicit token budget is
+          # set, since a fixed budget only exists in that mode.
           def serialize_thinking(reasoning)
             return nil unless reasoning
 
-            thinking = {}
+            type = reasoning["type"] || (reasoning.key?("budget_tokens") ? "enabled" : "adaptive")
+            unless SUPPORTED_THINKING_TYPES.include?(type)
+              raise UnsupportedFormatError,
+                "Messages format does not support reasoning.type #{type.inspect}; " \
+                "supported values are #{SUPPORTED_THINKING_TYPES.join(", ")}"
+            end
+
+            thinking = {"type" => type}
             thinking["budget_tokens"] = reasoning["budget_tokens"] if reasoning.key?("budget_tokens")
             thinking["display"] = reasoning["display"] if reasoning["display"]
-            return nil if thinking.empty? && !reasoning["type"]
 
-            thinking["type"] = reasoning["type"] || "enabled"
-
-            # Unsupported reasoning.type values are silently omitted.
-            return nil unless SUPPORTED_THINKING_TYPES.include?(thinking["type"])
-
-            if thinking["type"] == "enabled" && !thinking.key?("budget_tokens")
-              raise UnsupportedFormatError,
-                "Messages format requires reasoning.budget_tokens when thinking is enabled"
-            end
-
-            if thinking["type"] != "enabled" && thinking.key?("budget_tokens")
-              raise UnsupportedFormatError,
-                "Messages format only supports reasoning.budget_tokens when reasoning.type is enabled"
-            end
-
-            if thinking["type"] == "disabled" && thinking.key?("display")
-              raise UnsupportedFormatError,
-                "Messages format does not support reasoning.display when reasoning.type is disabled"
-            end
+            validate_thinking!(thinking, reasoning["effort"])
 
             thinking
           end
 
-          def thinking_active?(thinking)
-            thinking && thinking["type"] != "disabled"
+          # Validate the parts of the thinking contract that follow from the
+          # payload alone. Which types a model accepts is model-dependent and
+          # is not validated here.
+          def validate_thinking!(thinking, effort)
+            type = thinking["type"]
+
+            if type == "enabled" && !thinking.key?("budget_tokens")
+              raise UnsupportedFormatError,
+                "Messages format requires reasoning.budget_tokens when reasoning.type is enabled"
+            end
+
+            if type != "enabled" && thinking.key?("budget_tokens")
+              raise UnsupportedFormatError,
+                "Messages format only supports reasoning.budget_tokens when reasoning.type is enabled"
+            end
+
+            if ["between_tools", "disabled"].include?(type) && thinking.key?("display")
+              raise UnsupportedFormatError,
+                "Messages format does not support reasoning.display when reasoning.type is #{type}"
+            end
+
+            return unless type == "between_tools" && BETWEEN_TOOLS_INCOMPATIBLE_EFFORT_LEVELS.include?(effort)
+
+            raise UnsupportedFormatError,
+              "Messages format does not support reasoning.effort #{effort.inspect} with reasoning.type between_tools"
+          end
+
+          # Whether the request asks for thinking with an explicit token
+          # budget, the mode that constrains max_tokens, sampling parameters,
+          # and forced tool choice.
+          def manual_thinking_budget?(thinking)
+            thinking && thinking["type"] == "enabled"
           end
 
           def build_output_config(session)
             output_config = {}
 
-            if session.reasoning && session.reasoning["effort"]
-              effort = session.reasoning["effort"]
-              # Unsupported effort levels are silently omitted.
-              output_config["effort"] = effort if EFFORT_LEVELS.include?(effort)
+            effort = session.reasoning["effort"] if session.reasoning
+            if effort
+              if EFFORT_LEVELS.include?(effort)
+                output_config["effort"] = effort
+              elsif UNMAPPED_EFFORT_LEVELS.include?(effort)
+                warn_effort_unsupported!(effort)
+              end
+              # Unrecognized effort levels are silently omitted.
             end
 
             if session.text
@@ -263,9 +330,11 @@ module PromptBuilder
             {"type" => "json_schema", "schema" => schema}
           end
 
-          def validate_thinking_compatibility!(session, thinking)
-            return unless thinking
-
+          # Constraints that apply to thinking with an explicit token budget.
+          # Adaptive thinking places no such constraints on the payload; the
+          # sampling parameters a model accepts alongside it depend on the
+          # model and are forwarded unvalidated.
+          def validate_thinking_budget_compatibility!(session, thinking)
             budget = thinking["budget_tokens"]
             if budget && session.max_output_tokens && session.max_output_tokens <= budget
               raise UnsupportedFormatError,
@@ -274,13 +343,23 @@ module PromptBuilder
 
             if session.temperature
               raise UnsupportedFormatError,
-                "Messages format does not support temperature when thinking is enabled"
+                "Messages format does not support temperature with a reasoning.budget_tokens thinking budget"
             end
 
             return unless session.top_p && session.top_p < 0.95
 
             raise UnsupportedFormatError,
-              "Messages format requires top_p >= 0.95 when thinking is enabled"
+              "Messages format requires top_p >= 0.95 with a reasoning.budget_tokens thinking budget"
+          end
+
+          # The effort level is dropped from the payload, which leaves the
+          # request at the model's default thinking depth. Warn once per
+          # process instead of changing the depth silently.
+          def warn_effort_unsupported!(effort)
+            return if @effort_warning_issued
+
+            @effort_warning_issued = true
+            warn "PromptBuilder: reasoning.effort #{effort.inspect} has no equivalent in the Messages format and was omitted from the request payload"
           end
 
           def build_system(session)
@@ -569,7 +648,7 @@ module PromptBuilder
             end
           end
 
-          def serialize_tool_choice(choice, tools:, parallel_tool_calls:, thinking_enabled:)
+          def serialize_tool_choice(choice, tools:, parallel_tool_calls:, manual_thinking_budget:)
             if choice.nil?
               return nil if parallel_tool_calls.nil?
 
@@ -591,9 +670,9 @@ module PromptBuilder
             # tool_choice cannot be expressed without tools; omit it.
             return nil if tools.empty? && normalized_choice["type"] != "none"
 
-            if thinking_enabled && ["any", "tool"].include?(normalized_choice["type"])
+            if manual_thinking_budget && ["any", "tool"].include?(normalized_choice["type"])
               raise UnsupportedFormatError,
-                "Messages format does not support forced tool_choice when thinking is enabled"
+                "Messages format does not support forced tool_choice with a reasoning.budget_tokens thinking budget"
             end
 
             apply_parallel_tool_calls(normalized_choice, parallel_tool_calls)

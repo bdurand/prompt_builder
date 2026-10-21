@@ -229,16 +229,18 @@ data = response.parsed_json!   # raises PromptBuilder::ParseError (including the
 Use `think` to configure reasoning portably; each serializer maps it to its native parameter:
 
 ```ruby
+session.think                        # reasoning on, API default depth
 session.think(effort: :medium)       # portable across serializers
 session.think(budget_tokens: 8_000)  # explicit token budget where supported
 session.think(false)                 # clear the reasoning configuration
 ```
 
-- `effort:` (one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) maps to `output_config.effort` (Messages), `reasoning_effort` (Chat Completions), `thinkingConfig.thinkingLevel` (Gemini), and `reasoning.effort` (Open Responses). Levels a target API doesn't accept are omitted.
-- `budget_tokens:` maps to `thinking.budget_tokens` (Messages) and `thinkingConfig.thinkingBudget` (Gemini); effort-based APIs ignore it. The Messages serializer raises an `UnsupportedFormatError` at `request_payload` time when `max_output_tokens` is not greater than the budget, since the Anthropic API requires `max_tokens > budget_tokens`.
+- `effort:` (one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) maps to `output_config.effort` (Messages), `reasoning_effort` (Chat Completions), `thinkingConfig.thinkingLevel` (Gemini), and `reasoning.effort` (Open Responses). Levels a target API doesn't accept are omitted; the Messages serializer warns once per process when it drops `minimal`, which it has no equivalent for.
+- `budget_tokens:` maps to `thinking.budget_tokens` (Messages) and `thinkingConfig.thinkingBudget` (Gemini); effort-based APIs ignore it. A fixed thinking budget is only accepted by some Anthropic models — `effort:` is the portable control. The Messages serializer raises an `UnsupportedFormatError` at `request_payload` time when `max_output_tokens` is not greater than the budget, since the Anthropic API requires `max_tokens > budget_tokens`.
+- Calling `think` with no depth control asks for reasoning without specifying how much. The Messages serializer maps it to adaptive thinking (`thinking.type: "adaptive"`), which lets the model decide.
 - The Converse API has no reasoning parameter; the serializer warns once per process and omits the configuration.
 
-Direct `session.reasoning = {...}` assignment keeps working for provider-specific keys (e.g. Anthropic's `display`, Gemini's `summary`).
+Direct `session.reasoning = {...}` assignment keeps working for provider-specific keys (e.g. Anthropic's `type` and `display`, Gemini's `summary`).
 
 ### Agentic Tool Loops
 
@@ -639,7 +641,7 @@ The following table shows which session configuration fields are supported by ea
 | `presence_penalty` | ✅ | ❌ | ✅ → `generationConfig.presencePenalty` | ❌ |
 | `prompt_cache_key` | ✅ | ❌ | ❌ | ❌ |
 | `prompt_cache_retention` | ✅ | ❌ | ❌ | ❌ |
-| `reasoning` | `effort` key only | `budget_tokens`/`display`/`effort`/`type` only | `budget_tokens`/`effort`/`summary: "auto"` only | ❌ |
+| `reasoning` | `effort` key only | `budget_tokens`/`display`/`effort`/`type` only¹⁴ | `budget_tokens`/`effort`/`summary: "auto"` only | ❌ |
 | `safety_identifier` | ✅ | ✅ → `metadata.user_id` | ❌ | ❌ |
 | `service_tier` | ✅ | `auto`/`standard_only` only | `unspecified`/`standard`/`flex`/`priority` only | ✅ → `serviceTier.type` |
 | `store` | ✅ | ❌ | ✅ | ❌ |
@@ -676,6 +678,8 @@ The following table shows which session configuration fields are supported by ea
 ¹¹ `OutputText.annotations` (e.g. URL citations from `web_search_options`) are parsed onto the assistant message and round-trip through session history, but are dropped silently on Chat Completions and Converse request serialization since those formats have no request-side equivalent. `OutputText.logprobs` is likewise dropped.
 ¹² Messages text-block `citations` are parsed into `OutputText.annotations` and emitted back as `citations` when serializing Messages history. Annotations from other providers (e.g. a Chat Completions `url_citation`) are silently dropped since they are not valid Anthropic citation shapes. Document/tool-result citation opt-ins are still not modeled.
 ¹³ Converse `requestMetadata` only accepts string key/value pairs. This serializer stringifies scalar metadata values and silently omits nested arrays or objects.
+
+¹⁴ Any Messages `reasoning` configuration emits a `thinking` parameter, since omitting it leaves the thinking mode to the model rather than turning thinking off. An unrecognized `reasoning.type` raises rather than being dropped, for the same reason.
 
 ### Features Not Accessible Through Open Responses
 
@@ -774,6 +778,8 @@ Response-side behavior and limitations:
 
 The Messages API requires the `max_tokens` parameter, which is populated from `session.max_output_tokens`. Serializing a session without `max_output_tokens` set raises a `PromptBuilder::UnsupportedFormatError`.
 
+Which values the Messages API accepts for `temperature`, `top_p`, `reasoning.type`, and forced `tool_choice` depends on the model, and the serialized payload carries no model capability information, so these are forwarded without validation. The exception is a `reasoning.budget_tokens` thinking budget, which has a fixed contract: `temperature` must be unset, `top_p` must be `>= 0.95`, `max_output_tokens` must be greater than the budget, and forced `tool_choice` is rejected.
+
 A few features map between the canonical Open Responses format and the Messages API in non-obvious ways:
 
 | Canonical field / value | Messages mapping |
@@ -783,9 +789,10 @@ A few features map between the canonical Open Responses format and the Messages 
 | `FunctionCallOutput.status` ∈ `incomplete`, `failed`, `error` | `tool_result.is_error: true` |
 | `safety_identifier` | `metadata.user_id` |
 | `parallel_tool_calls: false` | `tool_choice.disable_parallel_tool_use: true` (forces `tool_choice.type` to `auto` if unset) |
+| `reasoning` set to anything | `thinking` (always emitted; `thinking.type` defaults to `adaptive`) |
 | `reasoning.budget_tokens` | `thinking.budget_tokens` (with `thinking.type` defaulted to `enabled`) |
 | `reasoning.effort` | `output_config.effort` (`low`, `medium`, `high`, `xhigh`, or `max`) |
-| `reasoning.type: "adaptive"` | `thinking.type: "adaptive"` |
+| `reasoning.type` | `thinking.type` (`adaptive`, `between_tools`, `disabled`, or `enabled`) |
 | `text.format.type: "json_schema"` | `output_config.format` (`type` and `schema` only; `name`, `description`, and `strict` are ignored) |
 | `Tools::Definition#strict` | tool definition `strict: true` |
 | `tool_choice: "required"` | `{"type": "any"}` |

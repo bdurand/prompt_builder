@@ -467,9 +467,13 @@ module PromptBuilder
     #   (+thinkingConfig.thinkingBudget+); ignored by effort-based APIs
     # - Converse supports neither and warns once at serialization time
     #
-    # Pass either +effort+ or +budget_tokens+, not both — providers reject
-    # requests that set both controls. Direct +session.reasoning = {...}+
-    # assignment keeps working for provider-specific keys.
+    # Called with no depth control, it requests reasoning without specifying
+    # how much, leaving the depth to the target API's default. Pass either
+    # +effort+ or +budget_tokens+, not both — providers reject requests that
+    # set both controls. An explicit token budget is only accepted by some
+    # models; +effort+ is the portable control. Direct
+    # +session.reasoning = {...}+ assignment keeps working for
+    # provider-specific keys.
     #
     # @param enabled [Boolean] pass +false+ to clear the reasoning configuration
     # @param effort [String, Symbol, nil] a portable effort level; one of
@@ -477,9 +481,10 @@ module PromptBuilder
     #   are omitted by serializers whose target API does not accept them)
     # @param budget_tokens [Integer, nil] an explicit thinking token budget
     # @return [Hash, nil] the resulting +reasoning+ configuration
-    # @raise [ArgumentError] if neither or both of +effort+ and +budget_tokens+
-    #   are given when enabling, or the values are invalid
+    # @raise [ArgumentError] if both +effort+ and +budget_tokens+ are given
+    #   when enabling, or the values are invalid
     # @example
+    #   session.think                        # reasoning on, API default depth
     #   session.think(effort: :medium)       # portable across serializers
     #   session.think(budget_tokens: 8_000)  # explicit where supported
     #   session.think(false)                 # disable
@@ -490,11 +495,7 @@ module PromptBuilder
         return self.reasoning = nil
       end
 
-      if effort && budget_tokens
-        raise ArgumentError, "pass either effort or budget_tokens, not both"
-      elsif effort.nil? && budget_tokens.nil?
-        raise ArgumentError, "think requires effort: or budget_tokens:"
-      end
+      raise ArgumentError, "pass either effort or budget_tokens, not both" if effort && budget_tokens
 
       if effort
         effort = effort.to_s
@@ -502,11 +503,13 @@ module PromptBuilder
           raise ArgumentError, "effort must be one of: #{THINK_EFFORT_LEVELS.join(", ")}"
         end
         self.reasoning = {"effort" => effort}
-      else
+      elsif budget_tokens
         budget_tokens = Integer(budget_tokens)
         raise ArgumentError, "budget_tokens must be positive" unless budget_tokens.positive?
 
         self.reasoning = {"budget_tokens" => budget_tokens}
+      else
+        self.reasoning = {}
       end
     end
 
