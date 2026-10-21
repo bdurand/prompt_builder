@@ -10,12 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Session#think` can be called with no depth control (`session.think`) to request reasoning without specifying how much, leaving the depth to the target API's default. Previously it raised an `ArgumentError`.
 - The Messages serializer supports `reasoning.type: "between_tools"`, the lowest thinking setting on models that offer it. It was previously dropped silently, which sent the request with thinking left to the model — the opposite of what the caller asked for. It cannot be combined with `budget_tokens`, `display`, or an `xhigh`/`max` effort level.
-- The Messages serializer warns once per process when it drops the `minimal` effort level, which has no Messages API equivalent, since dropping it changes the effective thinking depth. Unrecognized effort levels are still dropped silently.
 
 ### Changed
 
 - The Messages serializer now emits a `thinking` parameter whenever `session.reasoning` is set, where it previously only emitted one for `budget_tokens` or an explicit `reasoning.type`. Omitting `thinking` leaves the thinking mode to the model rather than turning thinking off, so a reasoning configuration that produced no `thinking` key was not expressing what the caller asked for. `thinking.type` defaults to `adaptive`, or to `enabled` when `budget_tokens` is set, so `think(budget_tokens:)` serializes as before while `think(effort:)` and bare `think` now also request adaptive thinking.
 - The Messages serializer raises on an unrecognized `reasoning.type` instead of omitting the `thinking` parameter, for the same reason.
+- The Messages serializer maps the `minimal` effort level, which has no direct Messages API equivalent, to `low` — the lowest level the API accepts — instead of dropping it. Unrecognized levels are still dropped.
 - The Messages serializer's `temperature`, `top_p`, and forced `tool_choice` restrictions now apply only alongside a `reasoning.budget_tokens` thinking budget, the mode whose contract fixes them. Whether a model accepts sampling parameters or forced tool choice otherwise is a property of the model, not of the payload, and is no longer guessed at from the thinking configuration.
 
 ## 0.4.0

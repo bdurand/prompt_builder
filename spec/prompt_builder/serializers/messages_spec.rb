@@ -1219,10 +1219,6 @@ RSpec.describe PromptBuilder::Serializers::Messages do
   end
 
   describe "thinking configuration" do
-    before { PromptBuilder::Serializers::Messages::Request.reset_effort_warning! }
-
-    after { PromptBuilder::Serializers::Messages::Request.reset_effort_warning! }
-
     def session_with(reasoning, **options)
       session = PromptBuilder::Session.new(
         model: "claude-sonnet-4-20250514",
@@ -1296,18 +1292,10 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support reasoning.type "interleaved"/)
     end
 
-    it "warns once and omits an effort level with no Messages equivalent" do
-      session = session_with({"effort" => "minimal"})
-
-      expect {
-        h = described_class.request_payload(session)
-        expect(h).not_to have_key("output_config")
-        expect(h["thinking"]).to eq({"type" => "adaptive"})
-      }.to output(/reasoning.effort "minimal" has no equivalent in the Messages format/).to_stderr
-
-      expect {
-        described_class.request_payload(session)
-      }.not_to output.to_stderr
+    it "maps the minimal effort level to the lowest level the API accepts" do
+      h = described_class.request_payload(session_with({"effort" => "minimal"}))
+      expect(h["output_config"]).to eq({"effort" => "low"})
+      expect(h["thinking"]).to eq({"type" => "adaptive"})
     end
 
     it "forwards sampling parameters alongside adaptive thinking" do

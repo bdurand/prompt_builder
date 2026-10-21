@@ -35,9 +35,9 @@ module PromptBuilder
       #   configuration emits a +thinking+ parameter, since omitting it leaves
       #   the thinking mode to the model instead of turning thinking off:
       #   +thinking.type+ defaults to +adaptive+, or to +enabled+ when
-      #   +budget_tokens+ is set. The +minimal+ effort level has no equivalent
-      #   and is dropped with a warning; unrecognized levels are dropped
-      #   silently
+      #   +budget_tokens+ is set. The +minimal+ effort level has no direct
+      #   equivalent and is mapped to +low+, the lowest level the API accepts;
+      #   unrecognized levels are dropped
       #
       # Input content restrictions:
       # - System and developer messages are hoisted out of conversational order
@@ -111,10 +111,9 @@ module PromptBuilder
         SUPPORTED_THINKING_TYPES = ["adaptive", "between_tools", "disabled", "enabled"].freeze
         SUPPORTED_TOOL_CHOICE_TYPES = ["any", "auto", "none", "tool"].freeze
 
-        # Portable effort levels with no Messages API equivalent. Dropping one
-        # changes the effective thinking depth rather than just omitting a
-        # hint, so the serializer warns instead of omitting it silently.
-        UNMAPPED_EFFORT_LEVELS = ["minimal"].freeze
+        # Portable effort levels with no direct Messages API equivalent, mapped
+        # to the nearest level the API accepts.
+        EFFORT_LEVEL_ALIASES = {"minimal" => "low"}.freeze
 
         # Effort levels the API rejects alongside thinking.type between_tools,
         # which is only available as the lowest thinking setting.
@@ -132,13 +131,6 @@ module PromptBuilder
         ].freeze
 
         class << self
-          # Reset the once-per-process effort warning. Primarily used in tests.
-          #
-          # @return [void]
-          def reset_effort_warning!
-            @effort_warning_issued = false
-          end
-
           private
 
           def serialize_request(session)
@@ -297,12 +289,9 @@ module PromptBuilder
 
             effort = session.reasoning["effort"] if session.reasoning
             if effort
-              if EFFORT_LEVELS.include?(effort)
-                output_config["effort"] = effort
-              elsif UNMAPPED_EFFORT_LEVELS.include?(effort)
-                warn_effort_unsupported!(effort)
-              end
-              # Unrecognized effort levels are silently omitted.
+              effort = EFFORT_LEVEL_ALIASES.fetch(effort, effort)
+              # Unsupported effort levels are silently omitted.
+              output_config["effort"] = effort if EFFORT_LEVELS.include?(effort)
             end
 
             if session.text
@@ -350,16 +339,6 @@ module PromptBuilder
 
             raise UnsupportedFormatError,
               "Messages format requires top_p >= 0.95 with a reasoning.budget_tokens thinking budget"
-          end
-
-          # The effort level is dropped from the payload, which leaves the
-          # request at the model's default thinking depth. Warn once per
-          # process instead of changing the depth silently.
-          def warn_effort_unsupported!(effort)
-            return if @effort_warning_issued
-
-            @effort_warning_issued = true
-            warn "PromptBuilder: reasoning.effort #{effort.inspect} has no equivalent in the Messages format and was omitted from the request payload"
           end
 
           def build_system(session)

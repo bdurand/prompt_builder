@@ -235,7 +235,7 @@ session.think(budget_tokens: 8_000)  # explicit token budget where supported
 session.think(false)                 # clear the reasoning configuration
 ```
 
-- `effort:` (one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) maps to `output_config.effort` (Messages), `reasoning_effort` (Chat Completions), `thinkingConfig.thinkingLevel` (Gemini), and `reasoning.effort` (Open Responses). Levels a target API doesn't accept are omitted; the Messages serializer warns once per process when it drops `minimal`, which it has no equivalent for.
+- `effort:` (one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) maps to `output_config.effort` (Messages), `reasoning_effort` (Chat Completions), `thinkingConfig.thinkingLevel` (Gemini), and `reasoning.effort` (Open Responses). Levels a target API doesn't accept are omitted, except that the Messages serializer maps `minimal` — which it has no direct equivalent for — to `low`, the lowest level it accepts.
 - `budget_tokens:` maps to `thinking.budget_tokens` (Messages) and `thinkingConfig.thinkingBudget` (Gemini); effort-based APIs ignore it. A fixed thinking budget is only accepted by some Anthropic models — `effort:` is the portable control. The Messages serializer raises an `UnsupportedFormatError` at `request_payload` time when `max_output_tokens` is not greater than the budget, since the Anthropic API requires `max_tokens > budget_tokens`.
 - Calling `think` with no depth control asks for reasoning without specifying how much. The Messages serializer maps it to adaptive thinking (`thinking.type: "adaptive"`), which lets the model decide.
 - The Converse API has no reasoning parameter; the serializer warns once per process and omits the configuration.
@@ -791,7 +791,7 @@ A few features map between the canonical Open Responses format and the Messages 
 | `parallel_tool_calls: false` | `tool_choice.disable_parallel_tool_use: true` (forces `tool_choice.type` to `auto` if unset) |
 | `reasoning` set to anything | `thinking` (always emitted; `thinking.type` defaults to `adaptive`) |
 | `reasoning.budget_tokens` | `thinking.budget_tokens` (with `thinking.type` defaulted to `enabled`) |
-| `reasoning.effort` | `output_config.effort` (`low`, `medium`, `high`, `xhigh`, or `max`) |
+| `reasoning.effort` | `output_config.effort` (`low`, `medium`, `high`, `xhigh`, or `max`; `minimal` maps to `low`) |
 | `reasoning.type` | `thinking.type` (`adaptive`, `between_tools`, `disabled`, or `enabled`) |
 | `text.format.type: "json_schema"` | `output_config.format` (`type` and `schema` only; `name`, `description`, and `strict` are ignored) |
 | `Tools::Definition#strict` | tool definition `strict: true` |
