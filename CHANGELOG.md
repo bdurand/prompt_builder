@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Converse serializer replays `Reasoning` items as `reasoningContent` blocks instead of dropping them, so tool loops with thinking enabled work on Anthropic models, which reject a `toolUse` turn without its signed reasoning. Signed `thinking` blocks are sent as `reasoningText` with their `signature` and `redacted_thinking` blocks as `redactedContent`; unsigned reasoning and summaries are still dropped.
 - The Open Responses serializer no longer forwards the `budget_tokens`, `type`, and `display` reasoning keys, which are not part of the Open Responses schema and are rejected by the API. `think(budget_tokens:)` previously produced a payload the API rejects.
 
 ## 0.4.0

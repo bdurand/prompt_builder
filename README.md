@@ -661,13 +661,13 @@ The following table shows which session configuration fields are supported by ea
 | `InputVideo` | ❌ | ❌ | URL required (Google-hosted URI only)⁶ | S3 URI only |
 | `OutputText` | ✅ (annotations dropped on request)¹¹ | ✅ (annotations ↔ citations)¹² | ✅ | ✅ |
 | `RefusalContent` | dropped⁹ | dropped⁹ | dropped⁹ | dropped⁹ |
-| `Reasoning` items | ❌ | ✅³ | ✅⁴ | ❌ |
+| `Reasoning` items | ❌ | ✅³ | ✅⁴ | signed only → `reasoningContent`³ |
 | `Compaction` items | ❌ | ❌ | ❌ | ❌ |
 | `ItemReference` items | ❌ | ❌ | ❌ | ❌ |
 
 ¹ Messages format uses the media type from the data URL for base64 sources; set `InputFile.media_type` to override. `file_id` is mapped to a `file` source for the Anthropic Files API beta — set the appropriate `anthropic-beta: files-api-2025-04-14` header in your HTTP client.
 ² Converse format infers the document type from the filename or URL extension.
-³ Messages format only emits `thinking` blocks that include a cryptographic `signature`; unsigned blocks are silently dropped.
+³ Messages and Converse formats only emit `thinking` blocks that include a cryptographic `signature` (Converse sends them as `reasoningContent.reasoningText`, and `redacted_thinking` as `reasoningContent.redactedContent`); unsigned blocks are silently dropped.
 ⁴ Gemini format passes `thoughtSignature` through transparently on reasoning, text, and function-call parts. `redacted_thinking` blocks are silently skipped.
 ⁵ Anthropic does not support a `detail` field on images; it is silently dropped. `file_id` is mapped to a `file` source (Anthropic Files API beta).
 ⁶ Gemini supports inline base64 data or any URL. For files, set `media_type` or use a recognized `filename`/URL extension.
@@ -880,7 +880,7 @@ Content and message restrictions:
 - `InputFile.file_id` is silently ignored because Converse does not accept provider file IDs for documents.
 - `InputVideo` requires an `s3://` URI; a non-S3 URL is omitted, and raw bytes (`source.bytes`) cannot be sent because the canonical `InputVideo` content type does not model byte data.
 - `InputImage`, `InputFile`, and `InputVideo` are only supported in user messages; the same content on an assistant message is omitted. `RefusalContent`, `OutputText.annotations`, and `OutputText.logprobs` are also dropped because Converse has no request-side representation for them.
-- `Reasoning` items are silently skipped on the request side, so multi-turn extended-thinking + tool-use loops are not supported through this serializer (the response parser does decode `reasoningContent` blocks back into `Reasoning` items, but they cannot be sent back).
+- `Reasoning` items are replayed as `reasoningContent` blocks on the assistant turn, so multi-turn extended-thinking + tool-use loops work: Anthropic models require the signed reasoning ahead of a `toolUse` block when thinking is on. Only signed `thinking` blocks and `redacted_thinking` blocks are sent, because Bedrock validates replayed reasoning against its signature; unsigned reasoning and summaries are dropped. Signatures are tied to the model that produced them, so switching a session to a model from another family can make the request fail on the replayed reasoning; start a fresh session or remove the `Reasoning` items when you switch.
 - `Compaction` and `ItemReference` items are silently skipped.
 - `FunctionCall.arguments` must parse to a JSON object; non-object JSON values raise (Bedrock's `toolUse.input` requires an object).
 - `FunctionCallOutput.output` content supports `InputText`/`OutputText`, `InputImage`, `InputFile`, and `InputVideo`, mapping to Converse `text`, `image`, `document`, and `video` tool result blocks. Converse also supports `json` and `searchResult` tool result blocks, but this gem has no canonical content types for them, so unsupported content is omitted. `FunctionCallOutput.status` is mapped: `completed` → `success`, `failed`/`incomplete` → `error`, anything else passes through or is dropped.

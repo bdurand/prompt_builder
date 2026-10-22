@@ -67,7 +67,13 @@ module PromptBuilder
       #   into the top-level +system+ parameter, with +instructions+ merged last
       #   (instructions apply to the current request, matching Open Responses
       #   semantics)
-      # - +Reasoning+ items are silently skipped
+      # - +Reasoning+ items are replayed as +reasoningContent+ blocks on the
+      #   assistant turn, which Anthropic models require ahead of a +toolUse+
+      #   block when thinking is on. Only signed +thinking+ blocks (as
+      #   +reasoningText+ with its +signature+) and +redacted_thinking+ blocks
+      #   (as +redactedContent+) are replayed; unsigned reasoning (e.g. parsed
+      #   from another provider's response) is dropped, since Bedrock rejects
+      #   reasoning without a valid signature. Summary blocks are dropped
       # - +RefusalContent+ is dropped silently (a parsed response refusal can
       #   stay in session history without breaking subsequent request_payload calls)
       # - +OutputText.annotations+ and +OutputText.logprobs+ are dropped silently
@@ -356,14 +362,47 @@ module PromptBuilder
                   content << {"cachePoint" => {"type" => "default"}}
                 end
                 raw_messages << {"role" => "user", "content" => content}
-              when Items::Reasoning, Items::Compaction, Items::ItemReference
-                # Reasoning, Compaction, and ItemReference items are not supported
-                # in the request, so ignore them rather than raising an error.
+              when Items::Reasoning
+                # Summary blocks come from the Responses API and have no
+                # Converse representation; they are silently skipped.
+                content = item.content.filter_map { |block| serialize_reasoning_block(block) }
+                raw_messages << {"role" => "assistant", "content" => content} unless content.empty?
+              when Items::Compaction, Items::ItemReference
+                # Compaction and ItemReference items are not supported in the
+                # request, so ignore them rather than raising an error.
                 next
               end
             end
 
             merge_consecutive_messages(raw_messages)
+          end
+
+          # Bedrock validates replayed reasoning against its signature, so only
+          # signed thinking and redacted thinking blocks can be sent back.
+          def serialize_reasoning_block(block)
+            case block["type"]
+            when "thinking"
+              # Unsigned thinking from cross-provider history is dropped
+              # rather than rejected.
+              return nil unless block["signature"]
+
+              {
+                "reasoningContent" => {
+                  "reasoningText" => {
+                    "text" => block.fetch("thinking", ""),
+                    "signature" => block["signature"]
+                  }
+                }
+              }
+            when "redacted_thinking"
+              unless block["data"]
+                raise UnsupportedFormatError,
+                  "Converse format requires reasoning.data for redacted_thinking blocks"
+              end
+
+              {"reasoningContent" => {"redactedContent" => block["data"]}}
+            end
+            # Unsupported reasoning block types are silently omitted.
           end
 
           def serialize_system_content(content)

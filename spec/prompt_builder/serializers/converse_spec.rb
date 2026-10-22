@@ -739,17 +739,82 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(h).not_to have_key("parallel_tool_calls")
     end
 
-    it "silently skips Reasoning items" do
+    it "drops unsigned reasoning and summary-only Reasoning items" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.user("Think hard")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         content: [{"type" => "thinking", "thinking" => "Let me think..."}]
+      ))
+      session.add_item(PromptBuilder::Items::Reasoning.new(
+        summary: [{"type" => "summary_text", "text" => "Summary"}]
       ))
 
       h = described_class.request_payload(session)
       messages = h["messages"]
       expect(messages.length).to eq(1)
       expect(messages[0]["role"]).to eq("user")
+    end
+
+    it "replays signed and redacted reasoning ahead of the tool call on the assistant turn" do
+      session = PromptBuilder::Session.new(model: "us.anthropic.claude-opus-5-5")
+      session.user("What's the weather?")
+      session.add_item(PromptBuilder::Items::Reasoning.new(
+        content: [
+          {"type" => "thinking", "thinking" => "Check the weather tool.", "signature" => "sig-1"},
+          {"type" => "redacted_thinking", "data" => "ZW5jcnlwdGVk"},
+          {"type" => "thinking", "thinking" => "unsigned"}
+        ]
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "get_weather", call_id: "call_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: "call_1", output: "Sunny"))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][1]).to eq({
+        "role" => "assistant",
+        "content" => [
+          {"reasoningContent" => {"reasoningText" => {"text" => "Check the weather tool.", "signature" => "sig-1"}}},
+          {"reasoningContent" => {"redactedContent" => "ZW5jcnlwdGVk"}},
+          {"toolUse" => {"toolUseId" => "call_1", "name" => "get_weather", "input" => {}}}
+        ]
+      })
+    end
+
+    it "round-trips reasoning parsed from a Converse response" do
+      session = PromptBuilder::Session.new(model: "anthropic.claude-opus-5-5")
+      session.user("What's the weather?")
+      response = described_class.parse_response({
+        "output" => {
+          "message" => {
+            "role" => "assistant",
+            "content" => [
+              {"reasoningContent" => {"reasoningText" => {"text" => "Use the tool.", "signature" => "sig-1"}}},
+              {"toolUse" => {"toolUseId" => "call_1", "name" => "get_weather", "input" => {"city" => "Paris"}}}
+            ]
+          }
+        },
+        "stopReason" => "tool_use",
+        "usage" => {"inputTokens" => 1, "outputTokens" => 1, "totalTokens" => 2}
+      })
+      session.add_response(response)
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: "call_1", output: "Sunny"))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][1]["content"]).to eq([
+        {"reasoningContent" => {"reasoningText" => {"text" => "Use the tool.", "signature" => "sig-1"}}},
+        {"toolUse" => {"toolUseId" => "call_1", "name" => "get_weather", "input" => {"city" => "Paris"}}}
+      ])
+    end
+
+    it "raises for redacted_thinking blocks without data" do
+      session = PromptBuilder::Session.new(model: "anthropic.claude-opus-5-5")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Reasoning.new(content: [{"type" => "redacted_thinking"}]))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /redacted_thinking/)
     end
 
     it "silently drops RefusalContent" do
