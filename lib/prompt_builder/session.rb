@@ -460,7 +460,9 @@ module PromptBuilder
     # - +budget_tokens+ — Messages (+thinking.budget_tokens+) and Gemini
     #   (+thinkingConfig.thinkingBudget+); ignored by effort-based APIs
     #   (Open Responses omits it from +reasoning+)
-    # - Converse supports neither and warns once at serialization time
+    # - Converse sends both in +additionalModelRequestFields+ in the model
+    #   family's native format (Messages for Anthropic models, +reasoning+
+    #   for OpenAI models) and raises for other models
     #
     # Called with no depth control, it stores an empty configuration that
     # leaves both whether and how much to reason to the target API's

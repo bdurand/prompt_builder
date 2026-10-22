@@ -22,8 +22,6 @@ module PromptBuilder
       # - +parallel_tool_calls+ — parallel tool call control is not supported
       # - +presence_penalty+ — not supported by the Converse API
       # - +prompt_cache_key+ / +prompt_cache_retention+ — explicit prompt cache keys are not supported
-      # - +reasoning+ — extended thinking is not supported on the Converse endpoint;
-      #   a warning is issued (once per process) when +session.reasoning+ is set
       # - +safety_identifier+ — no equivalent user-safety field on the Converse endpoint
       # - +store+ — server-side response storage is not supported
       # - +stream+ — SSE streaming is handled outside the Converse request payload
@@ -34,6 +32,32 @@ module PromptBuilder
       # Partially supported session fields (unsupported keys/values are omitted):
       # - +metadata+ — only scalar values are forwarded to +requestMetadata+; Hash/Array values are omitted
       # - +text+ — only +format.type == "json_schema"+ is supported
+      #
+      # === Reasoning
+      #
+      # The Converse API has no reasoning parameter of its own; each model
+      # family reads its native reasoning fields from
+      # +additionalModelRequestFields+. The family is detected from the model
+      # id (an optional cross-region prefix such as +us.+ or +global.+ and an
+      # ARN resource path are allowed):
+      # - Anthropic (+anthropic.*+) — the Messages API fields: +type+,
+      #   +budget_tokens+, and +display+ go to +thinking+ and +effort+ to
+      #   +output_config.effort+, with +thinking.type+ inferred as in the
+      #   Messages serializer (+enabled+ for +budget_tokens+; +adaptive+ for
+      #   +display+, a bare Session#think, or an +effort+ level unless
+      #   +temperature+, a +top_p+ below 0.95, or a forced +tool_choice+ is set)
+      # - OpenAI (+openai.*+) — the Responses API +reasoning+ object, without
+      #   the Anthropic-only +budget_tokens+, +type+, and +display+ keys. The
+      #   open-weight gpt-oss models read a flat +reasoning_effort+ field
+      #   instead; set it through the +additional_model_request_fields+ extra
+      # - Any other model raises an UnsupportedFormatError when
+      #   +session.reasoning+ is set; pass the model's native fields through
+      #   the +additional_model_request_fields+ extra instead
+      #
+      # Values are forwarded without validation; the API rejects values the
+      # model does not support. The reasoning fields are deep-merged into the
+      # +additional_model_request_fields+ extra, with the extra's values
+      # taking precedence on conflicts.
       #
       # Tool choice restrictions:
       # - +tool_choice: "none"+ has no Converse representation and is omitted
@@ -120,14 +144,10 @@ module PromptBuilder
           "3gp" => "three_gp"
         }.freeze
 
-        class << self
-          # Reset the once-per-process reasoning warning. Primarily used in tests.
-          #
-          # @return [void]
-          def reset_reasoning_warning!
-            @reasoning_warning_issued = false
-          end
+        # Model id provider segments whose reasoning fields can be mapped.
+        REASONING_PROVIDERS = ["anthropic", "openai"].freeze
 
+        class << self
           private
 
           def serialize_request(session)
@@ -137,8 +157,6 @@ module PromptBuilder
 
             h = {}
             raise UnsupportedFormatError, "Converse format requires session.model" unless session.model
-
-            warn_reasoning_unsupported! if session.reasoning
 
             h["modelId"] = session.model
 
@@ -174,17 +192,87 @@ module PromptBuilder
             extra = session.extra
             apply_session_extra!(h, extra) unless extra.empty?
 
+            reasoning_fields = build_reasoning_fields(session)
+            unless reasoning_fields.empty?
+              h["additionalModelRequestFields"] = deep_merge(reasoning_fields, h["additionalModelRequestFields"] || {})
+            end
+
             h
           end
 
-          # The Converse endpoint has no reasoning/extended thinking parameter,
-          # so the reasoning config is dropped. Warn once per process instead of
-          # dropping it silently.
-          def warn_reasoning_unsupported!
-            return if @reasoning_warning_issued
+          # Map session.reasoning to the native reasoning fields of the model's
+          # family, which Converse passes through additionalModelRequestFields.
+          def build_reasoning_fields(session)
+            reasoning = session.reasoning
+            return {} unless reasoning
 
-            @reasoning_warning_issued = true
-            warn "PromptBuilder: session.reasoning is not supported by the Converse format and was omitted from the request payload"
+            case reasoning_provider(session.model)
+            when "anthropic"
+              anthropic_reasoning_fields(session, reasoning)
+            when "openai"
+              openai_reasoning_fields(reasoning)
+            else
+              raise UnsupportedFormatError,
+                "Converse format does not support session.reasoning for model #{session.model}; " \
+                "set the model's native reasoning fields with the additional_model_request_fields extra instead"
+            end
+          end
+
+          # Bedrock model ids may carry a cross-region inference prefix
+          # (us.anthropic.claude-...) and may be given as an ARN whose resource
+          # path ends in the id. Application inference profile ARNs carry no
+          # provider and are not recognized.
+          def reasoning_provider(model)
+            segments = model.to_s.split("/").last.to_s.split(".")
+            segments.first(2).find { |segment| REASONING_PROVIDERS.include?(segment) }
+          end
+
+          # Mirrors the Messages serializer's thinking inference, without its
+          # validation: the API rejects configurations the model doesn't accept.
+          def anthropic_reasoning_fields(session, reasoning)
+            fields = {}
+
+            type = reasoning["type"]
+            type ||= "enabled" unless reasoning["budget_tokens"].nil?
+            type ||= "adaptive" if reasoning.empty? || reasoning["display"]
+            type ||= "adaptive" if reasoning["effort"] && !anthropic_thinking_conflicts?(session)
+            if type
+              thinking = {"type" => type}
+              thinking["budget_tokens"] = reasoning["budget_tokens"] unless reasoning["budget_tokens"].nil?
+              thinking["display"] = reasoning["display"] if reasoning["display"]
+              fields["thinking"] = thinking
+            end
+
+            fields["output_config"] = {"effort" => reasoning["effort"]} if reasoning["effort"]
+
+            fields
+          end
+
+          # Whether the payload sets anything Anthropic thinking is
+          # incompatible with, in which case effort is sent on its own.
+          def anthropic_thinking_conflicts?(session)
+            return true if session.temperature
+            return true if session.top_p && session.top_p < 0.95
+            return false unless session.tool_choice
+
+            tool_choice = serialize_tool_choice(session.tool_choice, session.tool_definitions.empty?)
+            tool_choice&.key?("any") || tool_choice&.key?("tool") || false
+          end
+
+          # The OpenAI reasoning object takes effort-based keys only.
+          def openai_reasoning_fields(reasoning)
+            fields = reasoning.except("budget_tokens", "display", "type")
+            fields.empty? ? {} : {"reasoning" => fields}
+          end
+
+          def deep_merge(base, override)
+            base.merge(override) do |_key, base_value, override_value|
+              if base_value.is_a?(Hash) && override_value.is_a?(Hash)
+                deep_merge(base_value, override_value)
+              else
+                override_value
+              end
+            end
           end
 
           def apply_session_extra!(h, extra)
