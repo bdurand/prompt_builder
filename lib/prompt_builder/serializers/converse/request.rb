@@ -52,13 +52,15 @@ module PromptBuilder
       #   +reasoning_effort+ field, the only reasoning field these
       #   open-weight models read
       # - Any other model raises an UnsupportedFormatError when
-      #   +session.reasoning+ is set; pass the model's native fields through
-      #   the +additional_model_request_fields+ extra instead
+      #   +session.reasoning+ is set to a non-empty configuration (a bare
+      #   Session#think sends nothing); pass the model's native fields
+      #   through the +additional_model_request_fields+ extra instead
       #
       # Values are forwarded without validation; the API rejects values the
       # model does not support. The reasoning fields are deep-merged into the
       # +additional_model_request_fields+ extra, with the extra's values
-      # taking precedence on conflicts.
+      # taking precedence on conflicts, except that a +thinking+ object in the
+      # extra replaces the inferred one as a whole.
       #
       # Tool choice restrictions:
       # - +tool_choice: "none"+ has no Converse representation and is omitted
@@ -201,7 +203,7 @@ module PromptBuilder
 
             reasoning_fields = build_reasoning_fields(session)
             unless reasoning_fields.empty?
-              h["additionalModelRequestFields"] = deep_merge(reasoning_fields, h["additionalModelRequestFields"] || {})
+              h["additionalModelRequestFields"] = merge_reasoning_fields(reasoning_fields, h["additionalModelRequestFields"] || {})
             end
 
             h
@@ -219,6 +221,10 @@ module PromptBuilder
             when "openai"
               gpt_oss_model?(session.model) ? gpt_oss_reasoning_fields(reasoning) : openai_reasoning_fields(reasoning)
             else
+              # A bare Session#think leaves reasoning to the model's defaults,
+              # which needs no request fields, so there is nothing to reject.
+              return {} if reasoning.empty?
+
               raise UnsupportedFormatError,
                 "Converse format does not support session.reasoning for model #{session.model}; " \
                 "set the model's native reasoning fields with the additional_model_request_fields extra instead"
@@ -282,6 +288,20 @@ module PromptBuilder
           def gpt_oss_reasoning_fields(reasoning)
             effort = reasoning["effort"]
             effort ? {"reasoning_effort" => effort} : {}
+          end
+
+          # The extra's values win. A thinking configuration in the extra
+          # replaces the inferred one as a whole, since which of its keys are
+          # valid depends on its type; other objects (output_config,
+          # reasoning) are deep-merged so the extra can add keys to them.
+          def merge_reasoning_fields(reasoning_fields, extra_fields)
+            reasoning_fields.merge(extra_fields) do |key, value, override|
+              if key != "thinking" && value.is_a?(Hash) && override.is_a?(Hash)
+                deep_merge(value, override)
+              else
+                override
+              end
+            end
           end
 
           def deep_merge(base, override)

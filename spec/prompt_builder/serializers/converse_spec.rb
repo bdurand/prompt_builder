@@ -1516,7 +1516,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
           s.extra = {
             "additional_model_request_fields" => {
               "top_k" => 10,
-              "thinking" => {"display" => "summarized"},
+              "thinking" => {"type" => "adaptive", "display" => "summarized"},
               "output_config" => {"effort" => "max"}
             }
           }
@@ -1529,6 +1529,27 @@ RSpec.describe PromptBuilder::Serializers::Converse do
         })
       end
 
+      it "replaces the inferred thinking configuration with the extra's thinking" do
+        h = payload_for("anthropic.claude-sonnet-4-5", max_output_tokens: 4096) do |s|
+          s.extra = {"additional_model_request_fields" => {"thinking" => {"type" => "adaptive"}}}
+          s.think(budget_tokens: 2000)
+        end
+        expect(h["additionalModelRequestFields"]).to eq({"thinking" => {"type" => "adaptive"}})
+      end
+
+      it "deep-merges the extra into the OpenAI reasoning object" do
+        h = payload_for("openai.gpt-6-sol") do |s|
+          s.extra = {"additional_model_request_fields" => {"reasoning" => {"summary" => "auto"}}}
+          s.think(effort: :low)
+        end
+        expect(h["additionalModelRequestFields"]).to eq({"reasoning" => {"effort" => "low", "summary" => "auto"}})
+      end
+
+      it "sends nothing for a bare think on models without a reasoning mapping" do
+        h = payload_for("amazon.nova-pro-v1:0", &:think)
+        expect(h).not_to have_key("additionalModelRequestFields")
+      end
+
       it "raises for models without a reasoning mapping" do
         expect {
           payload_for("amazon.nova-pro-v1:0") { |s| s.think(effort: :medium) }
@@ -1537,7 +1558,7 @@ RSpec.describe PromptBuilder::Serializers::Converse do
 
       it "raises for application inference profile ARNs" do
         expect {
-          payload_for("arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123", &:think)
+          payload_for("arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123") { |s| s.think(effort: :low) }
         }.to raise_error(PromptBuilder::UnsupportedFormatError)
       end
 
