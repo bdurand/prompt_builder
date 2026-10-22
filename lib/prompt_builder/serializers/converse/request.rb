@@ -47,9 +47,10 @@ module PromptBuilder
       #   +display+, a bare Session#think, or an +effort+ level unless
       #   +temperature+, a +top_p+ below 0.95, or a forced +tool_choice+ is set)
       # - OpenAI (+openai.*+) — the Responses API +reasoning+ object, without
-      #   the Anthropic-only +budget_tokens+, +type+, and +display+ keys. The
-      #   open-weight gpt-oss models read a flat +reasoning_effort+ field
-      #   instead; set it through the +additional_model_request_fields+ extra
+      #   the Anthropic-only +budget_tokens+, +type+, and +display+ keys
+      # - OpenAI gpt-oss (+openai.gpt-oss-*+) — +effort+ to the flat
+      #   +reasoning_effort+ field, the only reasoning field these
+      #   open-weight models read
       # - Any other model raises an UnsupportedFormatError when
       #   +session.reasoning+ is set; pass the model's native fields through
       #   the +additional_model_request_fields+ extra instead
@@ -216,7 +217,7 @@ module PromptBuilder
             when "anthropic"
               anthropic_reasoning_fields(session, reasoning)
             when "openai"
-              openai_reasoning_fields(reasoning)
+              gpt_oss_model?(session.model) ? gpt_oss_reasoning_fields(reasoning) : openai_reasoning_fields(reasoning)
             else
               raise UnsupportedFormatError,
                 "Converse format does not support session.reasoning for model #{session.model}; " \
@@ -269,6 +270,18 @@ module PromptBuilder
           def openai_reasoning_fields(reasoning)
             fields = reasoning.except("budget_tokens", "display", "type")
             fields.empty? ? {} : {"reasoning" => fields}
+          end
+
+          # The open-weight gpt-oss models take the Chat Completions request
+          # body and ignore the nested reasoning object.
+          def gpt_oss_model?(model)
+            model.to_s.split("/").last.to_s.include?("openai.gpt-oss")
+          end
+
+          # gpt-oss reads only a flat reasoning_effort field.
+          def gpt_oss_reasoning_fields(reasoning)
+            effort = reasoning["effort"]
+            effort ? {"reasoning_effort" => effort} : {}
           end
 
           def deep_merge(base, override)

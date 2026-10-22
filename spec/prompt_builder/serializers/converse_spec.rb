@@ -1492,6 +1492,19 @@ RSpec.describe PromptBuilder::Serializers::Converse do
           })
         end
 
+        it "maps effort to the flat reasoning_effort field for gpt-oss models" do
+          h = payload_for("openai.gpt-oss-120b-1:0", reasoning: {"effort" => "high", "summary" => "auto"})
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning_effort" => "high"})
+
+          h = payload_for("us.openai.gpt-oss-20b-1:0") { |s| s.think(effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning_effort" => "low"})
+        end
+
+        it "sends nothing for gpt-oss models without an effort" do
+          expect(payload_for("openai.gpt-oss-120b-1:0") { |s| s.think(budget_tokens: 2048) }).not_to have_key("additionalModelRequestFields")
+          expect(payload_for("openai.gpt-oss-120b-1:0", &:think)).not_to have_key("additionalModelRequestFields")
+        end
+
         it "sends nothing for budget_tokens or a bare think" do
           expect(payload_for("openai.gpt-6-sol") { |s| s.think(budget_tokens: 2048) }).not_to have_key("additionalModelRequestFields")
           expect(payload_for("openai.gpt-6-sol", &:think)).not_to have_key("additionalModelRequestFields")
