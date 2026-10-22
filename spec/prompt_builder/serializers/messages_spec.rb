@@ -1240,6 +1240,66 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h).not_to have_key("output_config")
     end
 
+    it "disables thinking for Session#think(false)" do
+      session = PromptBuilder::Session.new(model: "claude-haiku-5-5", max_output_tokens: 4096)
+      session.user("Hi")
+      session.think(false)
+
+      h = described_class.request_payload(session)
+      expect(h["thinking"]).to eq({"type" => "disabled"})
+      expect(h).not_to have_key("output_config")
+    end
+
+    it "sends an effort level alongside disabled thinking for Session#think(false, effort:)" do
+      session = PromptBuilder::Session.new(model: "claude-haiku-5-5", max_output_tokens: 4096)
+      session.user("Hi")
+      session.think(false, effort: :low)
+
+      h = described_class.request_payload(session)
+      expect(h["thinking"]).to eq({"type" => "disabled"})
+      expect(h["output_config"]).to eq({"effort" => "low"})
+    end
+
+    it "sends no thinking parameter when reasoning is nil" do
+      session = PromptBuilder::Session.new(model: "claude-haiku-5-5", max_output_tokens: 4096)
+      session.user("Hi")
+      session.think(effort: :low)
+      session.reasoning = nil
+
+      h = described_class.request_payload(session)
+      expect(h).not_to have_key("thinking")
+      expect(h).not_to have_key("output_config")
+    end
+
+    it "treats Session#think(false) as thinking off for sampling parameters and forced tool_choice" do
+      session = PromptBuilder::Session.new(model: "claude-haiku-5-5", max_output_tokens: 4096, temperature: 0.7, top_p: 0.5, tool_choice: "required")
+      session.user("Hi")
+      session.register_tool("get_weather") { |_| "sunny" }
+      session.think(false, effort: :low)
+
+      h = described_class.request_payload(session)
+      expect(h["thinking"]).to eq({"type" => "disabled"})
+      expect(h["temperature"]).to eq(0.7)
+      expect(h["tool_choice"]).to eq({"type" => "any"})
+    end
+
+    it "replays signed reasoning with Session#think(false) as it does without a reasoning configuration" do
+      session = PromptBuilder::Session.new(model: "claude-haiku-5-5", max_output_tokens: 4096)
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Reasoning.new(
+        content: [{"type" => "thinking", "thinking" => "Hmm", "signature" => "sig_1"}]
+      ))
+      session.assistant("Hello")
+      session.user("Again")
+
+      without_reasoning = described_class.request_payload(session)
+      session.think(false)
+      disabled = described_class.request_payload(session)
+
+      expect(disabled["messages"]).to eq(without_reasoning["messages"])
+      expect(disabled["messages"][1]["content"][0]).to include("type" => "thinking", "signature" => "sig_1")
+    end
+
     it "forwards an explicit adaptive configuration with display" do
       h = described_class.request_payload(session_with({"type" => "adaptive", "display" => "summarized"}))
       expect(h["thinking"]).to eq({"type" => "adaptive", "display" => "summarized"})

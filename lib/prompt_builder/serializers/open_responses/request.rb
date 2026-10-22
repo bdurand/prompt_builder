@@ -11,7 +11,10 @@ module PromptBuilder
       # Partially supported session fields:
       # - +reasoning+ — forwarded as is, except that the +budget_tokens+,
       #   +display+, and +type+ keys used by other serializers are omitted
-      #   since they are not part of the Open Responses schema
+      #   since they are not part of the Open Responses schema.
+      #   +type: "disabled"+ (Session#think(false)) is sent as
+      #   +effort: "none"+ in place of any effort, and models that cannot
+      #   turn reasoning off reject it
       class Request < Base
         # Content extra keys that are part of the Open Responses API schema and
         # must survive extra-stripping (the canonical content classes have no
@@ -266,7 +269,11 @@ module PromptBuilder
             reasoning = payload["reasoning"]
             return unless reasoning.is_a?(Hash)
 
-            payload["reasoning"] = reasoning.except(*NON_CANONICAL_REASONING_KEYS)
+            canonical = reasoning.except(*NON_CANONICAL_REASONING_KEYS)
+            # Effort is the only reasoning control, so turning reasoning off
+            # overrides any effort set alongside it.
+            canonical["effort"] = "none" if reasoning_disabled?(reasoning)
+            payload["reasoning"] = canonical
           end
 
           def normalize_optional_string(value)

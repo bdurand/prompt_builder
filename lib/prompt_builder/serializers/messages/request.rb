@@ -39,7 +39,9 @@ module PromptBuilder
       #   Session#think), or an +effort+ level. Adaptive thinking is not
       #   inferred from +effort+ alongside +temperature+, a +top_p+ below 0.95,
       #   or a forced +tool_choice+; the effort is sent on its own. Effort
-      #   levels are forwarded as is. When thinking is on, +temperature+ must
+      #   levels are forwarded as is. +type: "disabled"+ (Session#think(false))
+      #   is sent as +thinking.type: "disabled"+, alongside any effort, and
+      #   does not count as thinking. When thinking is on, +temperature+ must
       #   be unset, +top_p+ must be >= 0.95, and +max_output_tokens+ must be
       #   greater than +budget_tokens+
       #

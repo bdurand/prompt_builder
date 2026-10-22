@@ -1227,5 +1227,15 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       h = described_class.request_payload(session)
       expect(h).not_to have_key("reasoning_effort")
     end
+
+    it "serializes Session#think(false) to reasoning_effort none, overriding any effort" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hi")
+      session.think(false)
+      expect(described_class.request_payload(session)["reasoning_effort"]).to eq("none")
+
+      session.think(false, effort: :low)
+      expect(described_class.request_payload(session)["reasoning_effort"]).to eq("none")
+    end
   end
 end

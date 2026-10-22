@@ -1710,5 +1710,22 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       h = described_class.request_payload(session)
       expect(h["generationConfig"]["thinkingConfig"]).to eq({"thinkingBudget" => 8_000})
     end
+
+    it "serializes Session#think(false) to a zero thinkingBudget, ignoring any effort" do
+      session = PromptBuilder::Session.new(model: "gemini-2.5-flash")
+      session.user("Hi")
+      session.think(false, effort: :low)
+
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["thinkingConfig"]).to eq({"thinkingBudget" => 0})
+    end
+
+    it "sends no thinkingConfig when reasoning is nil" do
+      session = PromptBuilder::Session.new(model: "gemini-2.5-flash")
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h.fetch("generationConfig", {})).not_to have_key("thinkingConfig")
+    end
   end
 end

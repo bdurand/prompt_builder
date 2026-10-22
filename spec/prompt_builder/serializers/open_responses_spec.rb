@@ -651,5 +651,23 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       payload = described_class.request_payload(session)
       expect(payload["reasoning"]).to eq({"effort" => "medium"})
     end
+
+    it "serializes Session#think(false) to effort none, overriding any effort" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hi")
+      session.think(false)
+      expect(described_class.request_payload(session)["reasoning"]).to eq({"effort" => "none"})
+
+      session.think(false, effort: :low)
+      expect(described_class.request_payload(session)["reasoning"]).to eq({"effort" => "none"})
+      expect(session.reasoning).to eq({"type" => "disabled", "effort" => "low"})
+    end
+
+    it "omits reasoning when it is nil" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hi")
+
+      expect(described_class.request_payload(session)).not_to have_key("reasoning")
+    end
   end
 end

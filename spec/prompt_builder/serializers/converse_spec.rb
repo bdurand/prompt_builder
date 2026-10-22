@@ -1470,6 +1470,50 @@ RSpec.describe PromptBuilder::Serializers::Converse do
           expect(h["additionalModelRequestFields"]).to eq({"output_config" => {"effort" => "low"}})
         end
 
+        it "maps think(false) to disabled thinking" do
+          h = payload_for("anthropic.claude-haiku-5-5") { |s| s.think(false) }
+          expect(h["additionalModelRequestFields"]).to eq({"thinking" => {"type" => "disabled"}})
+        end
+
+        it "sends an effort alongside disabled thinking for think(false, effort:)" do
+          h = payload_for("anthropic.claude-haiku-5-5", temperature: 0.5) { |s| s.think(false, effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({
+            "thinking" => {"type" => "disabled"},
+            "output_config" => {"effort" => "low"}
+          })
+        end
+
+        it "deep-merges disabled thinking with the extra" do
+          h = payload_for("anthropic.claude-haiku-5-5") do |s|
+            s.extra = {"additional_model_request_fields" => {"top_k" => 10, "output_config" => {"effort" => "high"}}}
+            s.think(false, effort: :low)
+          end
+          expect(h["additionalModelRequestFields"]).to eq({
+            "top_k" => 10,
+            "thinking" => {"type" => "disabled"},
+            "output_config" => {"effort" => "high"}
+          })
+        end
+
+        it "replays signed reasoning with think(false) as it does without a reasoning configuration" do
+          session = PromptBuilder::Session.new(model: "anthropic.claude-haiku-5-5")
+          session.user("Hi")
+          session.add_item(PromptBuilder::Items::Reasoning.new(
+            content: [{"type" => "thinking", "thinking" => "Hmm", "signature" => "sig_1"}]
+          ))
+          session.assistant("Hello")
+          session.user("Again")
+
+          without_reasoning = described_class.request_payload(session)
+          session.think(false)
+          disabled = described_class.request_payload(session)
+
+          expect(disabled["messages"]).to eq(without_reasoning["messages"])
+          expect(disabled["messages"][1]["content"][0]).to eq({
+            "reasoningContent" => {"reasoningText" => {"text" => "Hmm", "signature" => "sig_1"}}
+          })
+        end
+
         it "does not validate budget_tokens against max_output_tokens" do
           h = payload_for("anthropic.claude-sonnet-4-5", max_output_tokens: 1024) { |s| s.think(budget_tokens: 2048) }
           expect(h["additionalModelRequestFields"]["thinking"]["budget_tokens"]).to eq(2048)
@@ -1503,6 +1547,19 @@ RSpec.describe PromptBuilder::Serializers::Converse do
         it "sends nothing for gpt-oss models without an effort" do
           expect(payload_for("openai.gpt-oss-120b-1:0") { |s| s.think(budget_tokens: 2048) }).not_to have_key("additionalModelRequestFields")
           expect(payload_for("openai.gpt-oss-120b-1:0", &:think)).not_to have_key("additionalModelRequestFields")
+        end
+
+        it "maps think(false) to effort none, overriding any effort" do
+          h = payload_for("openai.gpt-6-sol") { |s| s.think(false) }
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning" => {"effort" => "none"}})
+
+          h = payload_for("openai.gpt-6-sol") { |s| s.think(false, effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning" => {"effort" => "none"}})
+        end
+
+        it "maps think(false) to reasoning_effort none for gpt-oss models" do
+          h = payload_for("openai.gpt-oss-120b-1:0") { |s| s.think(false, effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning_effort" => "none"})
         end
 
         it "sends nothing for budget_tokens or a bare think" do
@@ -1548,6 +1605,11 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       it "sends nothing for a bare think on models without a reasoning mapping" do
         h = payload_for("amazon.nova-pro-v1:0", &:think)
         expect(h).not_to have_key("additionalModelRequestFields")
+      end
+
+      it "sends nothing for think(false) on models without a reasoning mapping" do
+        expect(payload_for("amazon.nova-pro-v1:0") { |s| s.think(false) }).not_to have_key("additionalModelRequestFields")
+        expect(payload_for("amazon.nova-pro-v1:0") { |s| s.think(false, effort: :low) }).not_to have_key("additionalModelRequestFields")
       end
 
       it "raises for models without a reasoning mapping" do

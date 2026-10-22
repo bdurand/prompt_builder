@@ -53,8 +53,15 @@ module PromptBuilder
       #   open-weight models read
       # - Any other model raises an UnsupportedFormatError when
       #   +session.reasoning+ is set to a non-empty configuration (a bare
-      #   Session#think sends nothing); pass the model's native fields
-      #   through the +additional_model_request_fields+ extra instead
+      #   Session#think and Session#think(false) send nothing); pass the
+      #   model's native fields through the +additional_model_request_fields+
+      #   extra instead
+      #
+      # +reasoning.type: "disabled"+ (Session#think(false)) turns reasoning
+      # off: Anthropic models get +thinking.type: "disabled"+ (with any
+      # +effort+ still sent as +output_config.effort+), and OpenAI models get
+      # effort +none+ in place of any effort, which models that cannot turn
+      # reasoning off reject.
       #
       # Values are forwarded without validation; the API rejects values the
       # model does not support. The reasoning fields are deep-merged into the
@@ -221,9 +228,10 @@ module PromptBuilder
             when "openai"
               gpt_oss_model?(session.model) ? gpt_oss_reasoning_fields(reasoning) : openai_reasoning_fields(reasoning)
             else
-              # A bare Session#think leaves reasoning to the model's defaults,
-              # which needs no request fields, so there is nothing to reject.
-              return {} if reasoning.empty?
+              # A bare Session#think leaves reasoning to the model's defaults
+              # and Session#think(false) asks for no reasoning, which a model
+              # without a mapped reasoning switch is assumed to do already.
+              return {} if reasoning.empty? || reasoning_disabled?(reasoning)
 
               raise UnsupportedFormatError,
                 "Converse format does not support session.reasoning for model #{session.model}; " \
@@ -272,9 +280,11 @@ module PromptBuilder
             tool_choice&.key?("any") || tool_choice&.key?("tool") || false
           end
 
-          # The OpenAI reasoning object takes effort-based keys only.
+          # The OpenAI reasoning object takes effort-based keys only. Effort is
+          # its only control, so turning reasoning off overrides any effort.
           def openai_reasoning_fields(reasoning)
             fields = reasoning.except("budget_tokens", "display", "type")
+            fields["effort"] = "none" if reasoning_disabled?(reasoning)
             fields.empty? ? {} : {"reasoning" => fields}
           end
 
@@ -286,7 +296,7 @@ module PromptBuilder
 
           # gpt-oss reads only a flat reasoning_effort field.
           def gpt_oss_reasoning_fields(reasoning)
-            effort = reasoning["effort"]
+            effort = reasoning_disabled?(reasoning) ? "none" : reasoning["effort"]
             effort ? {"reasoning_effort" => effort} : {}
           end
 

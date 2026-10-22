@@ -476,25 +476,42 @@ module PromptBuilder
     # +session.reasoning = {...}+ assignment keeps working for
     # provider-specific keys.
     #
-    # @param enabled [Boolean] pass +false+ to clear the reasoning configuration
+    # +think(false)+ turns reasoning off by storing
+    # <tt>{"type" => "disabled"}</tt>, which each serializer maps to its API's
+    # off switch: +thinking.type: "disabled"+ on Messages and Anthropic models
+    # on Converse, effort +none+ on Chat Completions, Open Responses, and
+    # OpenAI models on Converse, and +thinkingBudget: 0+ on Gemini. Models
+    # that cannot turn reasoning off reject these values. This differs from
+    # +session.reasoning = nil+, which sends no reasoning parameter and
+    # leaves the API's default in place; models that reason by default keep
+    # reasoning. An +effort+ can accompany +think(false)+ for the Messages
+    # API, where it limits overall token spend without thinking; APIs whose
+    # only reasoning control is effort ignore it so reasoning stays off.
+    #
+    # @param enabled [Boolean] pass +false+ to turn reasoning off
     # @param effort [String, Symbol, nil] an effort level such as +minimal+,
     #   +low+, +medium+, +high+, +xhigh+, or +max+. Any level is accepted, since
     #   providers add new levels with new models; serializers forward it as is
     #   and the target API rejects levels the model does not support
     # @param budget_tokens [Integer, nil] an explicit thinking token budget
-    # @return [Hash, nil] the resulting +reasoning+ configuration
+    # @return [Hash] the resulting +reasoning+ configuration
     # @raise [ArgumentError] if both +effort+ and +budget_tokens+ are given
-    #   when enabling, or +budget_tokens+ is not a positive integer
+    #   when enabling, +budget_tokens+ is given when disabling, or
+    #   +budget_tokens+ is not a positive integer
     # @example
     #   session.think                        # API defaults (adaptive thinking on Messages)
     #   session.think(effort: :medium)       # portable across serializers
     #   session.think(budget_tokens: 8_000)  # explicit where supported
-    #   session.think(false)                 # disable
+    #   session.think(false)                 # turn reasoning off
+    #   session.think(false, effort: :low)   # off, with a Messages effort level
+    #   session.reasoning = nil              # API defaults, no reasoning parameter
     def think(enabled = true, effort: nil, budget_tokens: nil)
       unless enabled
-        raise ArgumentError, "cannot combine think(false) with effort or budget_tokens" if effort || budget_tokens
+        raise ArgumentError, "cannot combine think(false) with budget_tokens" if budget_tokens
 
-        return self.reasoning = nil
+        disabled = {"type" => "disabled"}
+        disabled["effort"] = effort.to_s if effort
+        return self.reasoning = disabled
       end
 
       raise ArgumentError, "pass either effort or budget_tokens, not both" if effort && budget_tokens
