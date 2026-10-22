@@ -8,15 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `Session#think` can be called with no depth control (`session.think`) to request reasoning without specifying how much, leaving the depth to the target API's default. Previously it raised an `ArgumentError`.
-- The Messages serializer supports `reasoning.type: "between_tools"`, the lowest thinking setting on models that offer it. It was previously dropped silently, which sent the request with thinking left to the model — the opposite of what the caller asked for. It cannot be combined with `budget_tokens`, `display`, or an `xhigh`/`max` effort level.
+- `Session#think` can be called with no depth control (`session.think`), leaving whether and how much to reason to the target API's defaults. The Messages serializer maps it to adaptive thinking; other serializers send no depth control. Previously it raised an `ArgumentError`.
+- `Session#think` accepts any `effort` level instead of raising an `ArgumentError` for levels outside `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, since providers add new levels with new models (e.g. OpenAI's `none`). The level is forwarded to the API, which rejects levels the model doesn't support.
+- The Messages serializer supports `reasoning.type: "between_tools"`, the lowest thinking setting on models that offer it. It was previously dropped silently, which sent the request with thinking left to the model — the opposite of what the caller asked for. It cannot be combined with `budget_tokens` or `display`.
 
 ### Changed
 
-- The Messages serializer now emits a `thinking` parameter whenever `session.reasoning` is set, where it previously only emitted one for `budget_tokens` or an explicit `reasoning.type`. Omitting `thinking` leaves the thinking mode to the model rather than turning thinking off, so a reasoning configuration that produced no `thinking` key was not expressing what the caller asked for. `thinking.type` defaults to `adaptive`, or to `enabled` when `budget_tokens` is set, so `think(budget_tokens:)` serializes as before while `think(effort:)` and bare `think` now also request adaptive thinking.
-- The Messages serializer raises on an unrecognized `reasoning.type` instead of omitting the `thinking` parameter, for the same reason.
-- The Messages serializer maps the `minimal` effort level, which has no direct Messages API equivalent, to `low` — the lowest level the API accepts — instead of dropping it. Unrecognized levels are still dropped.
-- The Messages serializer's `temperature`, `top_p`, and forced `tool_choice` restrictions now apply only alongside a `reasoning.budget_tokens` thinking budget, the mode whose contract fixes them. Whether a model accepts sampling parameters or forced tool choice otherwise is a property of the model, not of the payload, and is no longer guessed at from the thinking configuration.
+- The Messages serializer now emits a `thinking` parameter for any reasoning configuration that asks for thinking, where it previously only emitted one for `budget_tokens` or an explicit `reasoning.type`. Omitting `thinking` leaves the thinking mode to the model rather than turning thinking on, so `think(effort:)` produced no thinking on models that don't think by default. `thinking.type` defaults to `enabled` when `budget_tokens` is set, so `think(budget_tokens:)` serializes as before, and to `adaptive` for an `effort` level, `display`, or bare `think`. Adaptive thinking is not inferred from `effort` alongside `temperature`, a `top_p` below 0.95, or a forced `tool_choice`, so those sessions still send the effort on its own. Configurations without thinking keys (e.g. only another provider's `summary`) still emit no `thinking`.
+- The Messages serializer forwards any `reasoning.type` to `thinking.type` instead of silently omitting the `thinking` parameter for types outside a fixed list, for the same reason. Which types a model accepts varies by model and changes often, so the API is left to reject types the model doesn't support.
+- The Messages and Gemini serializers forward every `reasoning.effort` level to the API as is (Gemini upcases it) instead of dropping levels outside a fixed list. Which levels a model accepts varies by model and changes often, so the API is left to reject levels the model doesn't support. Previously, levels such as `minimal` on Messages or `xhigh` and `max` on Gemini were dropped silently, leaving the depth at the model's default.
+- The Gemini serializer raises when `reasoning.budget_tokens` and `reasoning.effort` are both set, since the Gemini API rejects `thinkingBudget` and `thinkingLevel` in the same request.
+
+### Fixed
+
+- The Open Responses serializer no longer forwards the `budget_tokens`, `type`, and `display` reasoning keys, which are not part of the Open Responses schema and are rejected by the API. `think(budget_tokens:)` previously produced a payload the API rejects.
 
 ## 0.4.0
 

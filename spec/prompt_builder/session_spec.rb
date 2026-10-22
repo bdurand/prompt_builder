@@ -627,8 +627,12 @@ RSpec.describe PromptBuilder::Session do
       expect { session.think(effort: :low, budget_tokens: 1_000) }.to raise_error(ArgumentError, /not both/)
     end
 
-    it "raises on an unknown effort level" do
-      expect { session.think(effort: :extreme) }.to raise_error(ArgumentError, /effort must be one of/)
+    it "accepts effort levels outside the commonly supported set" do
+      session.think(effort: :none)
+      expect(session.reasoning).to eq({"effort" => "none"})
+
+      session.think(effort: "ultra")
+      expect(session.reasoning).to eq({"effort" => "ultra"})
     end
 
     it "raises on a non-positive budget" do

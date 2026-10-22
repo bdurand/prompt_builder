@@ -54,6 +54,8 @@ module PromptBuilder
       # canonical format:
       # - +thinkingConfig.thinkingBudget+ — use +reasoning.budget_tokens+ instead
       # - +thinkingConfig.thinkingLevel+ — use +reasoning.effort+ instead
+      #   (levels are upcased and forwarded as is; combining it with
+      #   +reasoning.budget_tokens+ raises, since the API rejects both together)
       # - +thinkingConfig.includeThoughts+ — use +reasoning.summary = "auto"+ instead
       # - +topK+ — top-K sampling parameter
       # - +seed+ — for reproducible outputs (model-dependent)
@@ -77,7 +79,6 @@ module PromptBuilder
       # - +cachedContent+ — referencing a CachedContent resource by name
       # - Top-level +labels+ (Vertex flavor only)
       class Request < Base
-        SUPPORTED_REASONING_EFFORTS = %w[minimal low medium high].freeze
         SUPPORTED_REASONING_SUMMARIES = %w[auto].freeze
         SUPPORTED_SERVICE_TIERS = %w[unspecified standard flex priority].freeze
 
@@ -498,9 +499,12 @@ module PromptBuilder
               end
 
               effort = session.reasoning["effort"]
-              # Unsupported effort levels are silently omitted.
-              if effort && SUPPORTED_REASONING_EFFORTS.include?(effort)
-                thinking_config["thinkingLevel"] = effort.upcase
+              # Effort levels are forwarded as is; the levels a model accepts vary.
+              thinking_config["thinkingLevel"] = effort.to_s.upcase if effort
+
+              if thinking_config.key?("thinkingBudget") && thinking_config.key?("thinkingLevel")
+                raise UnsupportedFormatError,
+                  "Gemini format does not support reasoning.budget_tokens together with reasoning.effort"
               end
 
               summary = session.reasoning["summary"]

@@ -229,15 +229,15 @@ data = response.parsed_json!   # raises PromptBuilder::ParseError (including the
 Use `think` to configure reasoning portably; each serializer maps it to its native parameter:
 
 ```ruby
-session.think                        # reasoning on, API default depth
+session.think                        # API defaults (adaptive thinking on Messages)
 session.think(effort: :medium)       # portable across serializers
 session.think(budget_tokens: 8_000)  # explicit token budget where supported
 session.think(false)                 # clear the reasoning configuration
 ```
 
-- `effort:` (one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) maps to `output_config.effort` (Messages), `reasoning_effort` (Chat Completions), `thinkingConfig.thinkingLevel` (Gemini), and `reasoning.effort` (Open Responses). Levels a target API doesn't accept are omitted, except that the Messages serializer maps `minimal` — which it has no direct equivalent for — to `low`, the lowest level it accepts.
-- `budget_tokens:` maps to `thinking.budget_tokens` (Messages) and `thinkingConfig.thinkingBudget` (Gemini); effort-based APIs ignore it. A fixed thinking budget is only accepted by some Anthropic models — `effort:` is the portable control. The Messages serializer raises an `UnsupportedFormatError` at `request_payload` time when `max_output_tokens` is not greater than the budget, since the Anthropic API requires `max_tokens > budget_tokens`.
-- Calling `think` with no depth control asks for reasoning without specifying how much. The Messages serializer maps it to adaptive thinking (`thinking.type: "adaptive"`), which lets the model decide.
+- `effort:` (any level, such as `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; `think` doesn't restrict it, since providers add new levels with new models) maps to `output_config.effort` (Messages), `reasoning_effort` (Chat Completions), `thinkingConfig.thinkingLevel` (Gemini), and `reasoning.effort` (Open Responses). Every serializer forwards the level as is (Gemini upcases it) without checking it against the model. Which levels a model accepts varies and changes often, so the target API is left to reject levels the model doesn't support.
+- `budget_tokens:` maps to `thinking.budget_tokens` (Messages) and `thinkingConfig.thinkingBudget` (Gemini); effort-based APIs ignore it (Open Responses omits it from `reasoning`, along with the Anthropic-only `type` and `display` keys). The Gemini serializer raises an `UnsupportedFormatError` when `budget_tokens` and `effort` would both be sent, since the Gemini API rejects `thinkingBudget` and `thinkingLevel` together. A fixed thinking budget is only accepted by some Anthropic models — `effort:` is the portable control. The Messages serializer raises an `UnsupportedFormatError` at `request_payload` time when `max_output_tokens` is not greater than the budget, since the Anthropic API requires `max_tokens > budget_tokens`.
+- Calling `think` with no depth control leaves both whether and how much to reason to the target API's defaults. Only the Messages serializer has a switch for it, which it maps to adaptive thinking (`thinking.type: "adaptive"`); Chat Completions and Gemini send no reasoning parameter and Open Responses sends an empty `reasoning` object, so models that don't reason by default won't reason.
 - The Converse API has no reasoning parameter; the serializer warns once per process and omits the configuration.
 
 Direct `session.reasoning = {...}` assignment keeps working for provider-specific keys (e.g. Anthropic's `type` and `display`, Gemini's `summary`).
@@ -679,7 +679,7 @@ The following table shows which session configuration fields are supported by ea
 ¹² Messages text-block `citations` are parsed into `OutputText.annotations` and emitted back as `citations` when serializing Messages history. Annotations from other providers (e.g. a Chat Completions `url_citation`) are silently dropped since they are not valid Anthropic citation shapes. Document/tool-result citation opt-ins are still not modeled.
 ¹³ Converse `requestMetadata` only accepts string key/value pairs. This serializer stringifies scalar metadata values and silently omits nested arrays or objects.
 
-¹⁴ Any Messages `reasoning` configuration emits a `thinking` parameter, since omitting it leaves the thinking mode to the model rather than turning thinking off. An unrecognized `reasoning.type` raises rather than being dropped, for the same reason.
+¹⁴ A Messages `reasoning` configuration that asks for thinking (`type`, `budget_tokens`, `display`, an `effort` level, or an empty configuration from a bare `think`) emits a `thinking` parameter, since omitting it leaves the thinking mode to the model rather than turning thinking on. Adaptive thinking is not inferred from `effort` alongside `temperature`, a `top_p` below 0.95, or a forced `tool_choice`; the effort is sent on its own. `reasoning.type` is forwarded as is, including types the serializer doesn't know, and the API rejects types the model doesn't support.
 
 ### Features Not Accessible Through Open Responses
 
@@ -778,7 +778,7 @@ Response-side behavior and limitations:
 
 The Messages API requires the `max_tokens` parameter, which is populated from `session.max_output_tokens`. Serializing a session without `max_output_tokens` set raises a `PromptBuilder::UnsupportedFormatError`.
 
-Which values the Messages API accepts for `temperature`, `top_p`, `reasoning.type`, and forced `tool_choice` depends on the model, and the serialized payload carries no model capability information, so these are forwarded without validation. The exception is a `reasoning.budget_tokens` thinking budget, which has a fixed contract: `temperature` must be unset, `top_p` must be `>= 0.95`, `max_output_tokens` must be greater than the budget, and forced `tool_choice` is rejected.
+When thinking is on (any `thinking.type` other than `disabled`), the serializer raises an `UnsupportedFormatError` if `temperature` is set, `top_p` is below `0.95`, `tool_choice` forces tool use, or `max_output_tokens` is not greater than `reasoning.budget_tokens`. Beyond that, which values the Messages API accepts for `temperature`, `top_p`, `reasoning.type`, and forced `tool_choice` depends on the model, and the serialized payload carries no model capability information, so these are forwarded without further validation.
 
 A few features map between the canonical Open Responses format and the Messages API in non-obvious ways:
 
@@ -789,10 +789,10 @@ A few features map between the canonical Open Responses format and the Messages 
 | `FunctionCallOutput.status` ∈ `incomplete`, `failed`, `error` | `tool_result.is_error: true` |
 | `safety_identifier` | `metadata.user_id` |
 | `parallel_tool_calls: false` | `tool_choice.disable_parallel_tool_use: true` (forces `tool_choice.type` to `auto` if unset) |
-| `reasoning` set to anything | `thinking` (always emitted; `thinking.type` defaults to `adaptive`) |
+| `reasoning` asking for thinking | `thinking` (`thinking.type` defaults to `adaptive`; see note ¹⁴) |
 | `reasoning.budget_tokens` | `thinking.budget_tokens` (with `thinking.type` defaulted to `enabled`) |
-| `reasoning.effort` | `output_config.effort` (`low`, `medium`, `high`, `xhigh`, or `max`; `minimal` maps to `low`) |
-| `reasoning.type` | `thinking.type` (`adaptive`, `between_tools`, `disabled`, or `enabled`) |
+| `reasoning.effort` | `output_config.effort` (forwarded as is) |
+| `reasoning.type` | `thinking.type` (forwarded as is, e.g. `adaptive`, `between_tools`, `disabled`, or `enabled`) |
 | `text.format.type: "json_schema"` | `output_config.format` (`type` and `schema` only; `name`, `description`, and `strict` are ignored) |
 | `Tools::Definition#strict` | tool definition `strict: true` |
 | `tool_choice: "required"` | `{"type": "any"}` |
@@ -818,7 +818,8 @@ Request-side mappings worth calling out:
 | `text.format == "text"` | `generationConfig.responseMimeType = "text/plain"` |
 | `text.format == "json_object"` | `generationConfig.responseMimeType = "application/json"` |
 | `text.format == "json_schema"` | `generationConfig.responseMimeType = "application/json"` + `responseSchema` (read from `format.json_schema.schema` or `format.schema`) |
-| `reasoning.budget_tokens` | `generationConfig.thinkingConfig.thinkingBudget` |
+| `reasoning.budget_tokens` | `generationConfig.thinkingConfig.thinkingBudget` (raises alongside a mapped `reasoning.effort`) |
+| `reasoning.effort` | `generationConfig.thinkingConfig.thinkingLevel` (upcased and forwarded as is) |
 | `tool_choice: "auto"` / `"none"` / `"required"` | `toolConfig.functionCallingConfig.mode = AUTO` / `NONE` / `ANY` |
 | `tool_choice: {"type": "function", "name": ...}` | `mode = ANY` + `allowedFunctionNames: [name]` |
 | Tool definitions | single `tools[0].functionDeclarations[]` entry |

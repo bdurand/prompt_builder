@@ -7,6 +7,11 @@ module PromptBuilder
       #
       # Required session fields (an UnsupportedFormatError is raised when missing):
       # - +model+
+      #
+      # Partially supported session fields:
+      # - +reasoning+ — forwarded as is, except that the +budget_tokens+,
+      #   +display+, and +type+ keys used by other serializers are omitted
+      #   since they are not part of the Open Responses schema
       class Request < Base
         # Content extra keys that are part of the Open Responses API schema and
         # must survive extra-stripping (the canonical content classes have no
@@ -16,6 +21,11 @@ module PromptBuilder
           "input_image" => ["file_id"].freeze
         }.freeze
         private_constant :CANONICAL_EXTRA_KEYS
+
+        # Reasoning keys that only other serializers understand. The Open
+        # Responses API rejects unknown reasoning parameters.
+        NON_CANONICAL_REASONING_KEYS = ["budget_tokens", "display", "type"].freeze
+        private_constant :NON_CANONICAL_REASONING_KEYS
 
         class << self
           # Export a session to Open Responses API request payload.
@@ -33,6 +43,7 @@ module PromptBuilder
             normalize_content_urls!(payload)
             strip_non_replayable_reasoning!(payload)
             strip_output_only_fields!(payload)
+            strip_non_canonical_reasoning_keys!(payload)
             normalize_and_validate_input_images!(payload)
             normalize_text_format!(payload)
             payload
@@ -249,6 +260,13 @@ module PromptBuilder
                 block.delete("logprobs")
               end
             end
+          end
+
+          def strip_non_canonical_reasoning_keys!(payload)
+            reasoning = payload["reasoning"]
+            return unless reasoning.is_a?(Hash)
+
+            payload["reasoning"] = reasoning.except(*NON_CANONICAL_REASONING_KEYS)
           end
 
           def normalize_optional_string(value)

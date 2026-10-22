@@ -27,12 +27,6 @@ module PromptBuilder
     JSONIFY_FIELDS = %i[include tool_choice metadata text stream_options reasoning].freeze
     private_constant :JSONIFY_FIELDS
 
-    # Effort levels accepted by +think+. This is the union of the levels
-    # recognized across serializers; each serializer omits levels its target
-    # API does not support.
-    THINK_EFFORT_LEVELS = %w[minimal low medium high xhigh max].freeze
-    private_constant :THINK_EFFORT_LEVELS
-
     # All keyword options accepted by +initialize+.
     #
     # This constant is public API — unlike the private field-group constants
@@ -465,10 +459,15 @@ module PromptBuilder
     #   Open Responses (+reasoning.effort+)
     # - +budget_tokens+ — Messages (+thinking.budget_tokens+) and Gemini
     #   (+thinkingConfig.thinkingBudget+); ignored by effort-based APIs
+    #   (Open Responses omits it from +reasoning+)
     # - Converse supports neither and warns once at serialization time
     #
-    # Called with no depth control, it requests reasoning without specifying
-    # how much, leaving the depth to the target API's default. Pass either
+    # Called with no depth control, it stores an empty configuration that
+    # leaves both whether and how much to reason to the target API's
+    # defaults. Only Messages has a switch for it, which it maps to adaptive
+    # thinking; Chat Completions and Gemini send no reasoning parameter, Open
+    # Responses sends an empty +reasoning+ object, and models that do not
+    # reason by default will not reason. Pass either
     # +effort+ or +budget_tokens+, not both — providers reject requests that
     # set both controls. An explicit token budget is only accepted by some
     # models; +effort+ is the portable control. Direct
@@ -476,15 +475,16 @@ module PromptBuilder
     # provider-specific keys.
     #
     # @param enabled [Boolean] pass +false+ to clear the reasoning configuration
-    # @param effort [String, Symbol, nil] a portable effort level; one of
-    #   +minimal+, +low+, +medium+, +high+, +xhigh+, +max+ (unsupported levels
-    #   are omitted by serializers whose target API does not accept them)
+    # @param effort [String, Symbol, nil] an effort level such as +minimal+,
+    #   +low+, +medium+, +high+, +xhigh+, or +max+. Any level is accepted, since
+    #   providers add new levels with new models; serializers forward it as is
+    #   and the target API rejects levels the model does not support
     # @param budget_tokens [Integer, nil] an explicit thinking token budget
     # @return [Hash, nil] the resulting +reasoning+ configuration
     # @raise [ArgumentError] if both +effort+ and +budget_tokens+ are given
-    #   when enabling, or the values are invalid
+    #   when enabling, or +budget_tokens+ is not a positive integer
     # @example
-    #   session.think                        # reasoning on, API default depth
+    #   session.think                        # API defaults (adaptive thinking on Messages)
     #   session.think(effort: :medium)       # portable across serializers
     #   session.think(budget_tokens: 8_000)  # explicit where supported
     #   session.think(false)                 # disable
@@ -498,11 +498,7 @@ module PromptBuilder
       raise ArgumentError, "pass either effort or budget_tokens, not both" if effort && budget_tokens
 
       if effort
-        effort = effort.to_s
-        unless THINK_EFFORT_LEVELS.include?(effort)
-          raise ArgumentError, "effort must be one of: #{THINK_EFFORT_LEVELS.join(", ")}"
-        end
-        self.reasoning = {"effort" => effort}
+        self.reasoning = {"effort" => effort.to_s}
       elsif budget_tokens
         budget_tokens = Integer(budget_tokens)
         raise ArgumentError, "budget_tokens must be positive" unless budget_tokens.positive?

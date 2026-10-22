@@ -603,7 +603,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["thinking"]).to eq({"type" => "adaptive"})
     end
 
-    it "omits unrecognized reasoning.effort values" do
+    it "forwards unrecognized reasoning.effort values for the API to validate" do
       session = PromptBuilder::Session.new(
         max_output_tokens: 1024,
         model: "claude-sonnet-4-20250514",
@@ -612,7 +612,7 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       session.user("Hi")
 
       h = described_class.request_payload(session)
-      expect(h).not_to have_key("output_config")
+      expect(h["output_config"]).to eq({"effort" => "tiny"})
       expect(h["thinking"]).to eq({"type" => "adaptive"})
     end
 
@@ -1256,10 +1256,10 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       expect(h["output_config"]).to eq({"effort" => "high"})
     end
 
-    it "raises when between_tools is combined with an incompatible effort level" do
-      expect {
-        described_class.request_payload(session_with({"type" => "between_tools", "effort" => "max"}))
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /effort "max" with reasoning.type between_tools/)
+    it "forwards between_tools with any effort level for the API to validate" do
+      h = described_class.request_payload(session_with({"type" => "between_tools", "effort" => "max"}))
+      expect(h["thinking"]).to eq({"type" => "between_tools"})
+      expect(h["output_config"]).to eq({"effort" => "max"})
     end
 
     it "raises when between_tools is combined with display" do
@@ -1286,25 +1286,75 @@ RSpec.describe PromptBuilder::Serializers::Messages do
       }.to raise_error(PromptBuilder::UnsupportedFormatError, /display when reasoning.type is disabled/)
     end
 
-    it "raises on an unrecognized reasoning.type rather than dropping it" do
-      expect {
-        described_class.request_payload(session_with({"type" => "interleaved"}))
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /does not support reasoning.type "interleaved"/)
+    it "forwards an unrecognized reasoning.type for the API to validate" do
+      h = described_class.request_payload(session_with({"type" => "interleaved", "effort" => "high"}))
+      expect(h["thinking"]).to eq({"type" => "interleaved"})
+      expect(h["output_config"]).to eq({"effort" => "high"})
     end
 
-    it "maps the minimal effort level to the lowest level the API accepts" do
+    it "forwards the minimal effort level as is" do
       h = described_class.request_payload(session_with({"effort" => "minimal"}))
-      expect(h["output_config"]).to eq({"effort" => "low"})
+      expect(h["output_config"]).to eq({"effort" => "minimal"})
       expect(h["thinking"]).to eq({"type" => "adaptive"})
     end
 
-    it "forwards sampling parameters alongside adaptive thinking" do
-      h = described_class.request_payload(
-        session_with({"type" => "adaptive"}, temperature: 0.7, top_p: 0.5)
-      )
+    it "emits no thinking for a configuration without thinking keys" do
+      h = described_class.request_payload(session_with({"summary" => "auto"}))
+      expect(h).not_to have_key("thinking")
+      expect(h).not_to have_key("output_config")
+    end
+
+    it "emits no thinking for nil-valued effort and budget_tokens" do
+      h = described_class.request_payload(session_with({"effort" => nil, "budget_tokens" => nil}))
+      expect(h).not_to have_key("thinking")
+      expect(h).not_to have_key("output_config")
+    end
+
+    it "raises when reasoning.type is enabled with a nil budget_tokens" do
+      expect {
+        described_class.request_payload(session_with({"type" => "enabled", "budget_tokens" => nil}))
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /budget_tokens when reasoning.type is enabled/)
+    end
+
+    it "sends effort on its own alongside temperature" do
+      h = described_class.request_payload(session_with({"effort" => "high"}, temperature: 0.7))
       expect(h["temperature"]).to eq(0.7)
-      expect(h["top_p"]).to eq(0.5)
+      expect(h["output_config"]).to eq({"effort" => "high"})
+      expect(h).not_to have_key("thinking")
+    end
+
+    it "sends effort on its own alongside a low top_p" do
+      h = described_class.request_payload(session_with({"effort" => "high"}, top_p: 0.5))
+      expect(h["output_config"]).to eq({"effort" => "high"})
+      expect(h).not_to have_key("thinking")
+    end
+
+    it "sends effort on its own alongside a forced tool_choice" do
+      session = session_with({"effort" => "medium"}, tool_choice: "required")
+      session.register_tool("get_weather") { |_| "sunny" }
+
+      h = described_class.request_payload(session)
+      expect(h["tool_choice"]).to eq({"type" => "any"})
+      expect(h["output_config"]).to eq({"effort" => "medium"})
+      expect(h).not_to have_key("thinking")
+    end
+
+    it "infers adaptive thinking from effort when the forced tool_choice has no tools" do
+      h = described_class.request_payload(session_with({"effort" => "medium"}, tool_choice: "required"))
       expect(h["thinking"]).to eq({"type" => "adaptive"})
+      expect(h).not_to have_key("tool_choice")
+    end
+
+    it "raises on temperature alongside adaptive thinking" do
+      expect {
+        described_class.request_payload(session_with({"type" => "adaptive"}, temperature: 0.7))
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /temperature when thinking is enabled/)
+    end
+
+    it "raises on temperature alongside a bare Session#think" do
+      expect {
+        described_class.request_payload(session_with({}, temperature: 0.7))
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /temperature when thinking is enabled/)
     end
 
     it "raises on temperature alongside a thinking budget" do
@@ -1312,22 +1362,30 @@ RSpec.describe PromptBuilder::Serializers::Messages do
         described_class.request_payload(
           session_with({"budget_tokens" => 2048}, temperature: 0.7)
         )
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /temperature with a reasoning.budget_tokens/)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /temperature when thinking is enabled/)
     end
 
-    it "raises on a low top_p alongside a thinking budget" do
+    it "raises on a low top_p alongside adaptive thinking" do
       expect {
-        described_class.request_payload(
-          session_with({"budget_tokens" => 2048}, top_p: 0.5)
-        )
-      }.to raise_error(PromptBuilder::UnsupportedFormatError, /top_p >= 0.95 with a reasoning.budget_tokens/)
+        described_class.request_payload(session_with({"type" => "adaptive"}, top_p: 0.5))
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /top_p >= 0.95 when thinking is enabled/)
     end
 
-    it "allows forced tool_choice alongside adaptive thinking" do
+    it "raises on forced tool_choice alongside adaptive thinking" do
       session = session_with({"type" => "adaptive"}, tool_choice: "required")
       session.register_tool("get_weather") { |_| "sunny" }
 
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /forced tool_choice when thinking is enabled/)
+    end
+
+    it "allows sampling parameters and forced tool_choice when thinking is disabled" do
+      session = session_with({"type" => "disabled"}, temperature: 0.7, top_p: 0.5, tool_choice: "required")
+      session.register_tool("get_weather") { |_| "sunny" }
+
       h = described_class.request_payload(session)
+      expect(h["thinking"]).to eq({"type" => "disabled"})
       expect(h["tool_choice"]).to eq({"type" => "any"})
     end
   end
