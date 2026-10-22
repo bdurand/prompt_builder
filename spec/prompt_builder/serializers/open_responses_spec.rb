@@ -29,6 +29,38 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(described_class.request_payload(session)).to eq(session.to_h)
     end
 
+    it "forwards canonical and unrecognized reasoning keys" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-5.4",
+        reasoning: {"effort" => "max", "summary" => "auto", "mode" => "pro"}
+      )
+      session.user("Hello")
+
+      payload = described_class.request_payload(session)
+      expect(payload["reasoning"]).to eq({"effort" => "max", "summary" => "auto", "mode" => "pro"})
+    end
+
+    it "omits reasoning keys that only other serializers understand" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-5.4",
+        reasoning: {"effort" => "high", "budget_tokens" => 8000, "type" => "adaptive", "display" => "summarized"}
+      )
+      session.user("Hello")
+
+      payload = described_class.request_payload(session)
+      expect(payload["reasoning"]).to eq({"effort" => "high"})
+      expect(session.reasoning).to include("budget_tokens" => 8000)
+    end
+
+    it "sends an empty reasoning object for Session#think with only budget_tokens" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hello")
+      session.think(budget_tokens: 8000)
+
+      payload = described_class.request_payload(session)
+      expect(payload["reasoning"]).to eq({})
+    end
+
     it "passes through InputImage with url unchanged" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(
@@ -618,6 +650,24 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
 
       payload = described_class.request_payload(session)
       expect(payload["reasoning"]).to eq({"effort" => "medium"})
+    end
+
+    it "serializes Session#think(false) to effort none, overriding any effort" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hi")
+      session.think(false)
+      expect(described_class.request_payload(session)["reasoning"]).to eq({"effort" => "none"})
+
+      session.think(false, effort: :low)
+      expect(described_class.request_payload(session)["reasoning"]).to eq({"effort" => "none"})
+      expect(session.reasoning).to eq({"type" => "disabled", "effort" => "low"})
+    end
+
+    it "omits reasoning when it is nil" do
+      session = PromptBuilder::Session.new(model: "gpt-5.4")
+      session.user("Hi")
+
+      expect(described_class.request_payload(session)).not_to have_key("reasoning")
     end
   end
 end

@@ -229,16 +229,22 @@ data = response.parsed_json!   # raises PromptBuilder::ParseError (including the
 Use `think` to configure reasoning portably; each serializer maps it to its native parameter:
 
 ```ruby
+session.think                        # API defaults (adaptive thinking on Messages)
 session.think(effort: :medium)       # portable across serializers
 session.think(budget_tokens: 8_000)  # explicit token budget where supported
-session.think(false)                 # clear the reasoning configuration
+session.think(false)                 # turn reasoning off
+session.think(false, effort: :low)   # off, with an effort level for Messages
+session.reasoning = nil              # no reasoning parameter; the API default applies
 ```
 
-- `effort:` (one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) maps to `output_config.effort` (Messages), `reasoning_effort` (Chat Completions), `thinkingConfig.thinkingLevel` (Gemini), and `reasoning.effort` (Open Responses). Levels a target API doesn't accept are omitted.
-- `budget_tokens:` maps to `thinking.budget_tokens` (Messages) and `thinkingConfig.thinkingBudget` (Gemini); effort-based APIs ignore it. The Messages serializer raises an `UnsupportedFormatError` at `request_payload` time when `max_output_tokens` is not greater than the budget, since the Anthropic API requires `max_tokens > budget_tokens`.
-- The Converse API has no reasoning parameter; the serializer warns once per process and omits the configuration.
+- `effort:` (any level, such as `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; `think` doesn't restrict it, since providers add new levels with new models) maps to `output_config.effort` (Messages), `reasoning_effort` (Chat Completions), `thinkingConfig.thinkingLevel` (Gemini), and `reasoning.effort` (Open Responses). Every serializer forwards the level as is (Gemini upcases it) without checking it against the model. Which levels a model accepts varies and changes often, so the target API is left to reject levels the model doesn't support.
+- `budget_tokens:` maps to `thinking.budget_tokens` (Messages) and `thinkingConfig.thinkingBudget` (Gemini); effort-based APIs ignore it (Open Responses omits it from `reasoning`, along with the Anthropic-only `type` and `display` keys). The Gemini serializer raises an `UnsupportedFormatError` when `budget_tokens` and `effort` would both be sent, since the Gemini API rejects `thinkingBudget` and `thinkingLevel` together. A fixed thinking budget is only accepted by some Anthropic models — `effort:` is the portable control. The Messages serializer raises an `UnsupportedFormatError` at `request_payload` time when `max_output_tokens` is not greater than the budget, since the Anthropic API requires `max_tokens > budget_tokens`.
+- Calling `think` with no depth control leaves both whether and how much to reason to the target API's defaults. Only the Messages serializer has a switch for it, which it maps to adaptive thinking (`thinking.type: "adaptive"`); Chat Completions and Gemini send no reasoning parameter and Open Responses sends an empty `reasoning` object, so models that don't reason by default won't reason.
+- `think(false)` turns reasoning off by storing `{"type" => "disabled"}`, which each serializer maps to its API's off switch: `thinking.type: "disabled"` (Messages), `reasoning_effort: "none"` (Chat Completions), `reasoning.effort: "none"` (Open Responses), and `thinkingConfig.thinkingBudget: 0` (Gemini). As with effort levels, the value is forwarded without checking the model, and models that can't turn reasoning off (or don't accept the parameter at all) reject it. This is different from `session.reasoning = nil`, which sends no reasoning parameter and leaves the API's default in place, so models that reason by default (such as Claude models that run adaptive thinking when `thinking` is omitted, or OpenAI models whose default effort isn't `none`) keep reasoning.
+- `think(false, effort:)` stores `{"type" => "disabled", "effort" => ...}`. On the Messages API, effort also limits overall token spend without thinking, so the serializer sends it as `output_config.effort` next to `thinking.type: "disabled"`. Chat Completions, Open Responses, and Gemini have no effort control separate from reasoning, so they ignore the effort and send their off value, keeping reasoning off. `think(false)` still raises an `ArgumentError` with `budget_tokens:`.
+- The Converse API has no reasoning parameter of its own, so the serializer sends the model family's native fields in `additionalModelRequestFields`: the Messages API `thinking` and `output_config.effort` fields for Anthropic models, the Responses API `reasoning` object (e.g. `reasoning.effort`) for OpenAI models, and the flat `reasoning_effort` field for OpenAI gpt-oss models. `think(false)` maps to `thinking.type: "disabled"` for Anthropic models and effort `none` for OpenAI models. Any other model raises an `UnsupportedFormatError` when `reasoning` holds a depth control or other setting (a bare `think` or `think(false)` sends nothing); pass that model's native fields through the `additional_model_request_fields` extra instead. See note ¹⁵.
 
-Direct `session.reasoning = {...}` assignment keeps working for provider-specific keys (e.g. Anthropic's `display`, Gemini's `summary`).
+Direct `session.reasoning = {...}` assignment keeps working for provider-specific keys (e.g. Anthropic's `type` and `display`, Gemini's `summary`).
 
 ### Agentic Tool Loops
 
@@ -639,7 +645,7 @@ The following table shows which session configuration fields are supported by ea
 | `presence_penalty` | ✅ | ❌ | ✅ → `generationConfig.presencePenalty` | ❌ |
 | `prompt_cache_key` | ✅ | ❌ | ❌ | ❌ |
 | `prompt_cache_retention` | ✅ | ❌ | ❌ | ❌ |
-| `reasoning` | `effort` key only | `budget_tokens`/`display`/`effort`/`type` only | `budget_tokens`/`effort`/`summary: "auto"` only | ❌ |
+| `reasoning` | `effort` key only | `budget_tokens`/`display`/`effort`/`type` only¹⁴ | `budget_tokens`/`effort`/`summary: "auto"` only | Anthropic and OpenAI models only → `additionalModelRequestFields`¹⁵ |
 | `safety_identifier` | ✅ | ✅ → `metadata.user_id` | ❌ | ❌ |
 | `service_tier` | ✅ | `auto`/`standard_only` only | `unspecified`/`standard`/`flex`/`priority` only | ✅ → `serviceTier.type` |
 | `store` | ✅ | ❌ | ✅ | ❌ |
@@ -659,13 +665,13 @@ The following table shows which session configuration fields are supported by ea
 | `InputVideo` | ❌ | ❌ | URL required (Google-hosted URI only)⁶ | S3 URI only |
 | `OutputText` | ✅ (annotations dropped on request)¹¹ | ✅ (annotations ↔ citations)¹² | ✅ | ✅ |
 | `RefusalContent` | dropped⁹ | dropped⁹ | dropped⁹ | dropped⁹ |
-| `Reasoning` items | ❌ | ✅³ | ✅⁴ | ❌ |
+| `Reasoning` items | ❌ | ✅³ | ✅⁴ | signed only → `reasoningContent`³ |
 | `Compaction` items | ❌ | ❌ | ❌ | ❌ |
 | `ItemReference` items | ❌ | ❌ | ❌ | ❌ |
 
 ¹ Messages format uses the media type from the data URL for base64 sources; set `InputFile.media_type` to override. `file_id` is mapped to a `file` source for the Anthropic Files API beta — set the appropriate `anthropic-beta: files-api-2025-04-14` header in your HTTP client.
 ² Converse format infers the document type from the filename or URL extension.
-³ Messages format only emits `thinking` blocks that include a cryptographic `signature`; unsigned blocks are silently dropped.
+³ Messages and Converse formats only emit `thinking` blocks that include a cryptographic `signature` (Converse sends them as `reasoningContent.reasoningText`, and `redacted_thinking` as `reasoningContent.redactedContent`); unsigned blocks are silently dropped.
 ⁴ Gemini format passes `thoughtSignature` through transparently on reasoning, text, and function-call parts. `redacted_thinking` blocks are silently skipped.
 ⁵ Anthropic does not support a `detail` field on images; it is silently dropped. `file_id` is mapped to a `file` source (Anthropic Files API beta).
 ⁶ Gemini supports inline base64 data or any URL. For files, set `media_type` or use a recognized `filename`/URL extension.
@@ -676,6 +682,10 @@ The following table shows which session configuration fields are supported by ea
 ¹¹ `OutputText.annotations` (e.g. URL citations from `web_search_options`) are parsed onto the assistant message and round-trip through session history, but are dropped silently on Chat Completions and Converse request serialization since those formats have no request-side equivalent. `OutputText.logprobs` is likewise dropped.
 ¹² Messages text-block `citations` are parsed into `OutputText.annotations` and emitted back as `citations` when serializing Messages history. Annotations from other providers (e.g. a Chat Completions `url_citation`) are silently dropped since they are not valid Anthropic citation shapes. Document/tool-result citation opt-ins are still not modeled.
 ¹³ Converse `requestMetadata` only accepts string key/value pairs. This serializer stringifies scalar metadata values and silently omits nested arrays or objects.
+
+¹⁴ A Messages `reasoning` configuration that asks for thinking (`type`, `budget_tokens`, `display`, an `effort` level, or an empty configuration from a bare `think`) emits a `thinking` parameter, since omitting it leaves the thinking mode to the model rather than turning thinking on. Adaptive thinking is not inferred from `effort` alongside `temperature`, a `top_p` below 0.95, or a forced `tool_choice`; the effort is sent on its own. `reasoning.type` is forwarded as is, including types the serializer doesn't know, and the API rejects types the model doesn't support.
+
+¹⁵ The Converse serializer detects the model family from the model id, allowing a cross-region inference prefix (`us.`, `global.`, ...) and an ARN resource path. Anthropic models (`anthropic.*`) get `thinking` (`type`, `budget_tokens`, `display`) and `output_config.effort`, with `thinking.type` inferred as in the Messages serializer (note ¹⁴) but without its validation. OpenAI models (`openai.*`) get `reasoning` without the Anthropic-only `budget_tokens`, `type`, and `display` keys; a bare `think` or `budget_tokens` alone sends nothing. The open-weight gpt-oss models (`openai.gpt-oss-*`) read only a flat `reasoning_effort` field, so they get `effort` as `reasoning_effort` and nothing else. A disabled configuration (`think(false)`) sends effort `none` to both OpenAI families in place of any effort; gpt-oss models can't turn reasoning off and reject it. Models in other families are assumed not to reason without their native fields, so a disabled configuration sends nothing for them. Application inference profile ARNs don't name a model family and raise like other unsupported models. Values are forwarded without validation, and the fields are deep-merged into the `additional_model_request_fields` extra, whose values win on conflicts. A `thinking` object in the extra replaces the inferred one as a whole rather than being merged into it, since which `thinking` keys are valid depends on its `type`.
 
 ### Features Not Accessible Through Open Responses
 
@@ -753,6 +763,7 @@ Request-side mappings worth calling out:
 | `text.format` | `response_format` (the OR-canonical flat `json_schema` is reshaped into `{"type": "json_schema", "json_schema": {...}}`) |
 | `text.verbosity` | top-level `verbosity` |
 | `reasoning.effort` | `reasoning_effort` |
+| `reasoning.type: "disabled"` | `reasoning_effort: "none"` (replaces any effort) |
 | `tool_choice: {"type": "function", "name": ...}` | `{"type": "function", "function": {"name": ...}}` |
 | `InputFile.file_id` | `{"type": "file", "file": {"file_id": ...}}` |
 | `InputFile` with data URL (+ optional `filename`/`media_type`) | `{"type": "file", "file": {"filename": ..., "file_data": "data:<media_type>;base64,..."}}` |
@@ -774,6 +785,8 @@ Response-side behavior and limitations:
 
 The Messages API requires the `max_tokens` parameter, which is populated from `session.max_output_tokens`. Serializing a session without `max_output_tokens` set raises a `PromptBuilder::UnsupportedFormatError`.
 
+When thinking is on (any `thinking.type` other than `disabled`), the serializer raises an `UnsupportedFormatError` if `temperature` is set, `top_p` is below `0.95`, `tool_choice` forces tool use, or `max_output_tokens` is not greater than `reasoning.budget_tokens`. Beyond that, which values the Messages API accepts for `temperature`, `top_p`, `reasoning.type`, and forced `tool_choice` depends on the model, and the serialized payload carries no model capability information, so these are forwarded without further validation.
+
 A few features map between the canonical Open Responses format and the Messages API in non-obvious ways:
 
 | Canonical field / value | Messages mapping |
@@ -783,9 +796,10 @@ A few features map between the canonical Open Responses format and the Messages 
 | `FunctionCallOutput.status` ∈ `incomplete`, `failed`, `error` | `tool_result.is_error: true` |
 | `safety_identifier` | `metadata.user_id` |
 | `parallel_tool_calls: false` | `tool_choice.disable_parallel_tool_use: true` (forces `tool_choice.type` to `auto` if unset) |
+| `reasoning` asking for thinking | `thinking` (`thinking.type` defaults to `adaptive`; see note ¹⁴) |
 | `reasoning.budget_tokens` | `thinking.budget_tokens` (with `thinking.type` defaulted to `enabled`) |
-| `reasoning.effort` | `output_config.effort` (`low`, `medium`, `high`, `xhigh`, or `max`) |
-| `reasoning.type: "adaptive"` | `thinking.type: "adaptive"` |
+| `reasoning.effort` | `output_config.effort` (forwarded as is) |
+| `reasoning.type` | `thinking.type` (forwarded as is, e.g. `adaptive`, `between_tools`, `disabled`, or `enabled`) |
 | `text.format.type: "json_schema"` | `output_config.format` (`type` and `schema` only; `name`, `description`, and `strict` are ignored) |
 | `Tools::Definition#strict` | tool definition `strict: true` |
 | `tool_choice: "required"` | `{"type": "any"}` |
@@ -811,7 +825,9 @@ Request-side mappings worth calling out:
 | `text.format == "text"` | `generationConfig.responseMimeType = "text/plain"` |
 | `text.format == "json_object"` | `generationConfig.responseMimeType = "application/json"` |
 | `text.format == "json_schema"` | `generationConfig.responseMimeType = "application/json"` + `responseSchema` (read from `format.json_schema.schema` or `format.schema`) |
-| `reasoning.budget_tokens` | `generationConfig.thinkingConfig.thinkingBudget` |
+| `reasoning.budget_tokens` | `generationConfig.thinkingConfig.thinkingBudget` (raises alongside a mapped `reasoning.effort`) |
+| `reasoning.type: "disabled"` | `generationConfig.thinkingConfig.thinkingBudget: 0` (replaces any budget or effort) |
+| `reasoning.effort` | `generationConfig.thinkingConfig.thinkingLevel` (upcased and forwarded as is) |
 | `tool_choice: "auto"` / `"none"` / `"required"` | `toolConfig.functionCallingConfig.mode = AUTO` / `NONE` / `ANY` |
 | `tool_choice: {"type": "function", "name": ...}` | `mode = ANY` + `allowedFunctionNames: [name]` |
 | Tool definitions | single `tools[0].functionDeclarations[]` entry |
@@ -857,6 +873,10 @@ Request-side restrictions worth calling out:
 | `tool_choice: "auto"` | `{"auto": {}}` |
 | `tool_choice: "required"` | `{"any": {}}` |
 | `tool_choice: {"type": "function", "name": ...}` | `{"tool": {"name": ...}}` |
+| `reasoning` (Anthropic models) | `additionalModelRequestFields.thinking` / `additionalModelRequestFields.output_config.effort` |
+| `reasoning` (OpenAI models) | `additionalModelRequestFields.reasoning` |
+| `reasoning` (OpenAI gpt-oss models) | `additionalModelRequestFields.reasoning_effort` (`effort` only) |
+| `reasoning` (other models) | raises `UnsupportedFormatError` (nothing is sent for a bare `think` or `think(false)`) |
 
 Content and message restrictions:
 
@@ -867,7 +887,7 @@ Content and message restrictions:
 - `InputFile.file_id` is silently ignored because Converse does not accept provider file IDs for documents.
 - `InputVideo` requires an `s3://` URI; a non-S3 URL is omitted, and raw bytes (`source.bytes`) cannot be sent because the canonical `InputVideo` content type does not model byte data.
 - `InputImage`, `InputFile`, and `InputVideo` are only supported in user messages; the same content on an assistant message is omitted. `RefusalContent`, `OutputText.annotations`, and `OutputText.logprobs` are also dropped because Converse has no request-side representation for them.
-- `Reasoning` items are silently skipped on the request side, so multi-turn extended-thinking + tool-use loops are not supported through this serializer (the response parser does decode `reasoningContent` blocks back into `Reasoning` items, but they cannot be sent back).
+- `Reasoning` items are replayed as `reasoningContent` blocks on the assistant turn, so multi-turn extended-thinking + tool-use loops work: Anthropic models require the signed reasoning ahead of a `toolUse` block when thinking is on. Only signed `thinking` blocks and `redacted_thinking` blocks are sent, because Bedrock validates replayed reasoning against its signature; unsigned reasoning and summaries are dropped. Signatures are tied to the model that produced them, so switching a session to a model from another family can make the request fail on the replayed reasoning; start a fresh session or remove the `Reasoning` items when you switch.
 - `Compaction` and `ItemReference` items are silently skipped.
 - `FunctionCall.arguments` must parse to a JSON object; non-object JSON values raise (Bedrock's `toolUse.input` requires an object).
 - `FunctionCallOutput.output` content supports `InputText`/`OutputText`, `InputImage`, `InputFile`, and `InputVideo`, mapping to Converse `text`, `image`, `document`, and `video` tool result blocks. Converse also supports `json` and `searchResult` tool result blocks, but this gem has no canonical content types for them, so unsupported content is omitted. `FunctionCallOutput.status` is mapped: `completed` → `success`, `failed`/`incomplete` → `error`, anything else passes through or is dropped.

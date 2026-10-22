@@ -747,12 +747,29 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
       expect(h["generationConfig"]["thinkingConfig"]).to eq({"thinkingBudget" => 5000})
     end
 
-    it "omits unsupported reasoning effort and summary values" do
-      session = PromptBuilder::Session.new(model: "gemini-3-flash-preview", reasoning: {"effort" => "extreme"})
-      session.user("Hi")
-      h = described_class.request_payload(session)
-      expect(h.dig("generationConfig", "thinkingConfig")).to be_nil
+    it "forwards effort levels Gemini does not define for the API to validate" do
+      ["xhigh", "max", "extreme"].each do |effort|
+        session = PromptBuilder::Session.new(model: "gemini-3-flash-preview", reasoning: {"effort" => effort})
+        session.user("Hi")
 
+        h = described_class.request_payload(session)
+        expect(h["generationConfig"]["thinkingConfig"]).to eq({"thinkingLevel" => effort.upcase})
+      end
+    end
+
+    it "raises when budget_tokens and effort are both mapped" do
+      session = PromptBuilder::Session.new(
+        model: "gemini-3-flash-preview",
+        reasoning: {"budget_tokens" => 5000, "effort" => "high"}
+      )
+      session.user("Hi")
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /budget_tokens together with reasoning.effort/)
+    end
+
+    it "omits unsupported reasoning summary values" do
       session = PromptBuilder::Session.new(model: "gemini-3-flash-preview", reasoning: {"summary" => "detailed"})
       session.user("Hi")
       h = described_class.request_payload(session)
@@ -1692,6 +1709,23 @@ RSpec.describe PromptBuilder::Serializers::Gemini do
 
       h = described_class.request_payload(session)
       expect(h["generationConfig"]["thinkingConfig"]).to eq({"thinkingBudget" => 8_000})
+    end
+
+    it "serializes Session#think(false) to a zero thinkingBudget, ignoring any effort" do
+      session = PromptBuilder::Session.new(model: "gemini-2.5-flash")
+      session.user("Hi")
+      session.think(false, effort: :low)
+
+      h = described_class.request_payload(session)
+      expect(h["generationConfig"]["thinkingConfig"]).to eq({"thinkingBudget" => 0})
+    end
+
+    it "sends no thinkingConfig when reasoning is nil" do
+      session = PromptBuilder::Session.new(model: "gemini-2.5-flash")
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h.fetch("generationConfig", {})).not_to have_key("thinkingConfig")
     end
   end
 end

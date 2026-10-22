@@ -22,7 +22,10 @@ module PromptBuilder
       # Partially supported session fields (unsupported keys are omitted):
       # - +text+ — only +format+ (mapped to +response_format+) and +verbosity+
       #   (mapped to top-level +verbosity+) are supported
-      # - +reasoning+ — only the +effort+ key is mapped to +reasoning_effort+
+      # - +reasoning+ — only the +effort+ key is mapped to +reasoning_effort+;
+      #   +type: "disabled"+ (Session#think(false)) is sent as
+      #   +reasoning_effort: "none"+ in place of any effort, and models that
+      #   cannot turn reasoning off reject it
       # - +stream_options+ — only +include_usage+ and +include_obfuscation+ are
       #   supported, and only when +stream+ is set (otherwise it is omitted)
       #
@@ -110,7 +113,10 @@ module PromptBuilder
             end
 
             if session.reasoning
-              effort = normalize_hash(session.reasoning)["effort"]
+              reasoning = normalize_hash(session.reasoning)
+              # Effort is the only reasoning control, so turning reasoning off
+              # overrides any effort set alongside it.
+              effort = reasoning_disabled?(reasoning) ? "none" : reasoning["effort"]
               h["reasoning_effort"] = effort if effort
             end
 

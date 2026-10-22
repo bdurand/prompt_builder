@@ -7,6 +7,14 @@ module PromptBuilder
       #
       # Required session fields (an UnsupportedFormatError is raised when missing):
       # - +model+
+      #
+      # Partially supported session fields:
+      # - +reasoning+ — forwarded as is, except that the +budget_tokens+,
+      #   +display+, and +type+ keys used by other serializers are omitted
+      #   since they are not part of the Open Responses schema.
+      #   +type: "disabled"+ (Session#think(false)) is sent as
+      #   +effort: "none"+ in place of any effort, and models that cannot
+      #   turn reasoning off reject it
       class Request < Base
         # Content extra keys that are part of the Open Responses API schema and
         # must survive extra-stripping (the canonical content classes have no
@@ -16,6 +24,11 @@ module PromptBuilder
           "input_image" => ["file_id"].freeze
         }.freeze
         private_constant :CANONICAL_EXTRA_KEYS
+
+        # Reasoning keys that only other serializers understand. The Open
+        # Responses API rejects unknown reasoning parameters.
+        NON_CANONICAL_REASONING_KEYS = ["budget_tokens", "display", "type"].freeze
+        private_constant :NON_CANONICAL_REASONING_KEYS
 
         class << self
           # Export a session to Open Responses API request payload.
@@ -33,6 +46,7 @@ module PromptBuilder
             normalize_content_urls!(payload)
             strip_non_replayable_reasoning!(payload)
             strip_output_only_fields!(payload)
+            strip_non_canonical_reasoning_keys!(payload)
             normalize_and_validate_input_images!(payload)
             normalize_text_format!(payload)
             payload
@@ -249,6 +263,17 @@ module PromptBuilder
                 block.delete("logprobs")
               end
             end
+          end
+
+          def strip_non_canonical_reasoning_keys!(payload)
+            reasoning = payload["reasoning"]
+            return unless reasoning.is_a?(Hash)
+
+            canonical = reasoning.except(*NON_CANONICAL_REASONING_KEYS)
+            # Effort is the only reasoning control, so turning reasoning off
+            # overrides any effort set alongside it.
+            canonical["effort"] = "none" if reasoning_disabled?(reasoning)
+            payload["reasoning"] = canonical
           end
 
           def normalize_optional_string(value)

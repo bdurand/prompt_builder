@@ -728,23 +728,6 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(h).not_to have_key("outputConfig")
     end
 
-    it "omits the reasoning field with a warning" do
-      PromptBuilder::Serializers::Converse::Request.reset_reasoning_warning!
-      session = PromptBuilder::Session.new(
-        model: "amazon.nova-pro-v1:0",
-        reasoning: {"budget_tokens" => 1024}
-      )
-      session.user("Hi")
-
-      h = nil
-      expect {
-        h = described_class.request_payload(session)
-      }.to output(/reasoning is not supported/).to_stderr
-      expect(h).not_to have_key("reasoning")
-    ensure
-      PromptBuilder::Serializers::Converse::Request.reset_reasoning_warning!
-    end
-
     it "omits the parallel_tool_calls field" do
       session = PromptBuilder::Session.new(
         model: "amazon.nova-pro-v1:0",
@@ -756,17 +739,82 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       expect(h).not_to have_key("parallel_tool_calls")
     end
 
-    it "silently skips Reasoning items" do
+    it "drops unsigned reasoning and summary-only Reasoning items" do
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
       session.user("Think hard")
       session.add_item(PromptBuilder::Items::Reasoning.new(
         content: [{"type" => "thinking", "thinking" => "Let me think..."}]
+      ))
+      session.add_item(PromptBuilder::Items::Reasoning.new(
+        summary: [{"type" => "summary_text", "text" => "Summary"}]
       ))
 
       h = described_class.request_payload(session)
       messages = h["messages"]
       expect(messages.length).to eq(1)
       expect(messages[0]["role"]).to eq("user")
+    end
+
+    it "replays signed and redacted reasoning ahead of the tool call on the assistant turn" do
+      session = PromptBuilder::Session.new(model: "us.anthropic.claude-opus-5-5")
+      session.user("What's the weather?")
+      session.add_item(PromptBuilder::Items::Reasoning.new(
+        content: [
+          {"type" => "thinking", "thinking" => "Check the weather tool.", "signature" => "sig-1"},
+          {"type" => "redacted_thinking", "data" => "ZW5jcnlwdGVk"},
+          {"type" => "thinking", "thinking" => "unsigned"}
+        ]
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCall.new(
+        name: "get_weather", call_id: "call_1", arguments: "{}"
+      ))
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: "call_1", output: "Sunny"))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][1]).to eq({
+        "role" => "assistant",
+        "content" => [
+          {"reasoningContent" => {"reasoningText" => {"text" => "Check the weather tool.", "signature" => "sig-1"}}},
+          {"reasoningContent" => {"redactedContent" => "ZW5jcnlwdGVk"}},
+          {"toolUse" => {"toolUseId" => "call_1", "name" => "get_weather", "input" => {}}}
+        ]
+      })
+    end
+
+    it "round-trips reasoning parsed from a Converse response" do
+      session = PromptBuilder::Session.new(model: "anthropic.claude-opus-5-5")
+      session.user("What's the weather?")
+      response = described_class.parse_response({
+        "output" => {
+          "message" => {
+            "role" => "assistant",
+            "content" => [
+              {"reasoningContent" => {"reasoningText" => {"text" => "Use the tool.", "signature" => "sig-1"}}},
+              {"toolUse" => {"toolUseId" => "call_1", "name" => "get_weather", "input" => {"city" => "Paris"}}}
+            ]
+          }
+        },
+        "stopReason" => "tool_use",
+        "usage" => {"inputTokens" => 1, "outputTokens" => 1, "totalTokens" => 2}
+      })
+      session.add_response(response)
+      session.add_item(PromptBuilder::Items::FunctionCallOutput.new(call_id: "call_1", output: "Sunny"))
+
+      h = described_class.request_payload(session)
+      expect(h["messages"][1]["content"]).to eq([
+        {"reasoningContent" => {"reasoningText" => {"text" => "Use the tool.", "signature" => "sig-1"}}},
+        {"toolUse" => {"toolUseId" => "call_1", "name" => "get_weather", "input" => {"city" => "Paris"}}}
+      ])
+    end
+
+    it "raises for redacted_thinking blocks without data" do
+      session = PromptBuilder::Session.new(model: "anthropic.claude-opus-5-5")
+      session.user("Hi")
+      session.add_item(PromptBuilder::Items::Reasoning.new(content: [{"type" => "redacted_thinking"}]))
+
+      expect {
+        described_class.request_payload(session)
+      }.to raise_error(PromptBuilder::UnsupportedFormatError, /redacted_thinking/)
     end
 
     it "silently drops RefusalContent" do
@@ -1340,9 +1388,6 @@ RSpec.describe PromptBuilder::Serializers::Converse do
   end
 
   describe "session helpers" do
-    before { PromptBuilder::Serializers::Converse::Request.reset_reasoning_warning! }
-    after { PromptBuilder::Serializers::Converse::Request.reset_reasoning_warning! }
-
     it "serializes Session#json_output to outputConfig" do
       schema = {"type" => "object", "properties" => {"answer" => {"type" => "string"}}}
       session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
@@ -1360,19 +1405,229 @@ RSpec.describe PromptBuilder::Serializers::Converse do
       })
     end
 
-    it "warns once when reasoning is set and omits it from the payload" do
-      session = PromptBuilder::Session.new(model: "amazon.nova-pro-v1:0")
-      session.user("Hi")
-      session.think(effort: :medium)
-
-      expect {
-        h = described_class.request_payload(session)
-        expect(h.keys).not_to include("reasoning")
-      }.to output(/reasoning is not supported by the Converse format/).to_stderr
-
-      expect {
+    describe "Session#think" do
+      def payload_for(model, **attrs)
+        session = PromptBuilder::Session.new(model: model, **attrs)
+        session.user("Hi")
+        yield session if block_given?
         described_class.request_payload(session)
-      }.not_to output.to_stderr
+      end
+
+      context "with an Anthropic model" do
+        it "maps effort to adaptive thinking and output_config.effort" do
+          h = payload_for("anthropic.claude-opus-5-5") { |s| s.think(effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({
+            "thinking" => {"type" => "adaptive"},
+            "output_config" => {"effort" => "low"}
+          })
+        end
+
+        it "recognizes cross-region inference profile ids and ARNs" do
+          [
+            "us.anthropic.claude-opus-5-5",
+            "global.anthropic.claude-opus-5-5",
+            "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5",
+            "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-5-5"
+          ].each do |model|
+            h = payload_for(model) { |s| s.think(effort: :high) }
+            expect(h["additionalModelRequestFields"]["output_config"]).to eq({"effort" => "high"})
+          end
+        end
+
+        it "maps budget_tokens to enabled thinking" do
+          h = payload_for("anthropic.claude-sonnet-4-5", max_output_tokens: 4096) { |s| s.think(budget_tokens: 2048) }
+          expect(h["additionalModelRequestFields"]).to eq({
+            "thinking" => {"type" => "enabled", "budget_tokens" => 2048}
+          })
+        end
+
+        it "maps a bare think to adaptive thinking" do
+          h = payload_for("anthropic.claude-opus-5-5", &:think)
+          expect(h["additionalModelRequestFields"]).to eq({"thinking" => {"type" => "adaptive"}})
+        end
+
+        it "forwards type and display as is" do
+          h = payload_for(
+            "anthropic.claude-sonnet-5-5",
+            reasoning: {"type" => "between_tools", "display" => "summarized", "effort" => "max"}
+          )
+          expect(h["additionalModelRequestFields"]).to eq({
+            "thinking" => {"type" => "between_tools", "display" => "summarized"},
+            "output_config" => {"effort" => "max"}
+          })
+        end
+
+        it "sends effort on its own alongside temperature" do
+          h = payload_for("anthropic.claude-opus-5-5", temperature: 0.5) { |s| s.think(effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({"output_config" => {"effort" => "low"}})
+        end
+
+        it "sends effort on its own alongside a forced tool_choice" do
+          h = payload_for("anthropic.claude-opus-5-5", tool_choice: "required") do |s|
+            s.register_tool("lookup", description: "Look up", parameters: {"type" => "object"})
+            s.think(effort: :low)
+          end
+          expect(h["additionalModelRequestFields"]).to eq({"output_config" => {"effort" => "low"}})
+        end
+
+        it "maps think(false) to disabled thinking" do
+          h = payload_for("anthropic.claude-haiku-5-5") { |s| s.think(false) }
+          expect(h["additionalModelRequestFields"]).to eq({"thinking" => {"type" => "disabled"}})
+        end
+
+        it "sends an effort alongside disabled thinking for think(false, effort:)" do
+          h = payload_for("anthropic.claude-haiku-5-5", temperature: 0.5) { |s| s.think(false, effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({
+            "thinking" => {"type" => "disabled"},
+            "output_config" => {"effort" => "low"}
+          })
+        end
+
+        it "deep-merges disabled thinking with the extra" do
+          h = payload_for("anthropic.claude-haiku-5-5") do |s|
+            s.extra = {"additional_model_request_fields" => {"top_k" => 10, "output_config" => {"effort" => "high"}}}
+            s.think(false, effort: :low)
+          end
+          expect(h["additionalModelRequestFields"]).to eq({
+            "top_k" => 10,
+            "thinking" => {"type" => "disabled"},
+            "output_config" => {"effort" => "high"}
+          })
+        end
+
+        it "replays signed reasoning with think(false) as it does without a reasoning configuration" do
+          session = PromptBuilder::Session.new(model: "anthropic.claude-haiku-5-5")
+          session.user("Hi")
+          session.add_item(PromptBuilder::Items::Reasoning.new(
+            content: [{"type" => "thinking", "thinking" => "Hmm", "signature" => "sig_1"}]
+          ))
+          session.assistant("Hello")
+          session.user("Again")
+
+          without_reasoning = described_class.request_payload(session)
+          session.think(false)
+          disabled = described_class.request_payload(session)
+
+          expect(disabled["messages"]).to eq(without_reasoning["messages"])
+          expect(disabled["messages"][1]["content"][0]).to eq({
+            "reasoningContent" => {"reasoningText" => {"text" => "Hmm", "signature" => "sig_1"}}
+          })
+        end
+
+        it "does not validate budget_tokens against max_output_tokens" do
+          h = payload_for("anthropic.claude-sonnet-4-5", max_output_tokens: 1024) { |s| s.think(budget_tokens: 2048) }
+          expect(h["additionalModelRequestFields"]["thinking"]["budget_tokens"]).to eq(2048)
+        end
+      end
+
+      context "with an OpenAI model" do
+        it "maps effort to a nested reasoning object" do
+          h = payload_for("us.openai.gpt-6-sol") { |s| s.think(effort: :xhigh) }
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning" => {"effort" => "xhigh"}})
+        end
+
+        it "forwards other reasoning keys but drops Anthropic-only keys" do
+          h = payload_for(
+            "openai.gpt-6-sol",
+            reasoning: {"effort" => "low", "summary" => "auto", "type" => "adaptive", "display" => "summarized"}
+          )
+          expect(h["additionalModelRequestFields"]).to eq({
+            "reasoning" => {"effort" => "low", "summary" => "auto"}
+          })
+        end
+
+        it "maps effort to the flat reasoning_effort field for gpt-oss models" do
+          h = payload_for("openai.gpt-oss-120b-1:0", reasoning: {"effort" => "high", "summary" => "auto"})
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning_effort" => "high"})
+
+          h = payload_for("us.openai.gpt-oss-20b-1:0") { |s| s.think(effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning_effort" => "low"})
+        end
+
+        it "sends nothing for gpt-oss models without an effort" do
+          expect(payload_for("openai.gpt-oss-120b-1:0") { |s| s.think(budget_tokens: 2048) }).not_to have_key("additionalModelRequestFields")
+          expect(payload_for("openai.gpt-oss-120b-1:0", &:think)).not_to have_key("additionalModelRequestFields")
+        end
+
+        it "maps think(false) to effort none, overriding any effort" do
+          h = payload_for("openai.gpt-6-sol") { |s| s.think(false) }
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning" => {"effort" => "none"}})
+
+          h = payload_for("openai.gpt-6-sol") { |s| s.think(false, effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning" => {"effort" => "none"}})
+        end
+
+        it "maps think(false) to reasoning_effort none for gpt-oss models" do
+          h = payload_for("openai.gpt-oss-120b-1:0") { |s| s.think(false, effort: :low) }
+          expect(h["additionalModelRequestFields"]).to eq({"reasoning_effort" => "none"})
+        end
+
+        it "sends nothing for budget_tokens or a bare think" do
+          expect(payload_for("openai.gpt-6-sol") { |s| s.think(budget_tokens: 2048) }).not_to have_key("additionalModelRequestFields")
+          expect(payload_for("openai.gpt-6-sol", &:think)).not_to have_key("additionalModelRequestFields")
+        end
+      end
+
+      it "deep-merges into additional_model_request_fields with the extra taking precedence" do
+        h = payload_for("anthropic.claude-opus-5-5") do |s|
+          s.extra = {
+            "additional_model_request_fields" => {
+              "top_k" => 10,
+              "thinking" => {"type" => "adaptive", "display" => "summarized"},
+              "output_config" => {"effort" => "max"}
+            }
+          }
+          s.think(effort: :low)
+        end
+        expect(h["additionalModelRequestFields"]).to eq({
+          "top_k" => 10,
+          "thinking" => {"type" => "adaptive", "display" => "summarized"},
+          "output_config" => {"effort" => "max"}
+        })
+      end
+
+      it "replaces the inferred thinking configuration with the extra's thinking" do
+        h = payload_for("anthropic.claude-sonnet-4-5", max_output_tokens: 4096) do |s|
+          s.extra = {"additional_model_request_fields" => {"thinking" => {"type" => "adaptive"}}}
+          s.think(budget_tokens: 2000)
+        end
+        expect(h["additionalModelRequestFields"]).to eq({"thinking" => {"type" => "adaptive"}})
+      end
+
+      it "deep-merges the extra into the OpenAI reasoning object" do
+        h = payload_for("openai.gpt-6-sol") do |s|
+          s.extra = {"additional_model_request_fields" => {"reasoning" => {"summary" => "auto"}}}
+          s.think(effort: :low)
+        end
+        expect(h["additionalModelRequestFields"]).to eq({"reasoning" => {"effort" => "low", "summary" => "auto"}})
+      end
+
+      it "sends nothing for a bare think on models without a reasoning mapping" do
+        h = payload_for("amazon.nova-pro-v1:0", &:think)
+        expect(h).not_to have_key("additionalModelRequestFields")
+      end
+
+      it "sends nothing for think(false) on models without a reasoning mapping" do
+        expect(payload_for("amazon.nova-pro-v1:0") { |s| s.think(false) }).not_to have_key("additionalModelRequestFields")
+        expect(payload_for("amazon.nova-pro-v1:0") { |s| s.think(false, effort: :low) }).not_to have_key("additionalModelRequestFields")
+      end
+
+      it "raises for models without a reasoning mapping" do
+        expect {
+          payload_for("amazon.nova-pro-v1:0") { |s| s.think(effort: :medium) }
+        }.to raise_error(PromptBuilder::UnsupportedFormatError, /additional_model_request_fields/)
+      end
+
+      it "raises for application inference profile ARNs" do
+        expect {
+          payload_for("arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123") { |s| s.think(effort: :low) }
+        }.to raise_error(PromptBuilder::UnsupportedFormatError)
+      end
+
+      it "allows any model when reasoning is not set" do
+        h = payload_for("amazon.nova-pro-v1:0", extra: {"additional_model_request_fields" => {"top_k" => 5}})
+        expect(h["additionalModelRequestFields"]).to eq({"top_k" => 5})
+      end
     end
   end
 end

@@ -68,6 +68,16 @@ module PromptBuilder
           nil
         end
 
+        # Whether a reasoning configuration turns reasoning off, as stored by
+        # Session#think(false). Distinct from a nil configuration, which leaves
+        # reasoning to the API's default.
+        #
+        # @param reasoning [Hash, nil] the session's reasoning configuration
+        # @return [Boolean]
+        def reasoning_disabled?(reasoning)
+          reasoning.is_a?(Hash) && reasoning["type"] == "disabled"
+        end
+
         # Ensure a response payload is a Hash containing the key that identifies
         # it as a well-formed response for this format. Raised before parsing so
         # malformed bodies (e.g. provider error envelopes) fail loudly with the

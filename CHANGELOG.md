@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0
+
+### Added
+
+- `Session#think` can be called with no depth control (`session.think`), leaving whether and how much to reason to the target API's defaults. The Messages serializer maps it to adaptive thinking; other serializers send no depth control. Previously it raised an `ArgumentError`.
+- `Session#think` accepts any `effort` level instead of raising an `ArgumentError` for levels outside `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, since providers add new levels with new models (e.g. OpenAI's `none`). The level is forwarded to the API, which rejects levels the model doesn't support.
+- `Session#think(false)` accepts an `effort` level, storing `{"type" => "disabled", "effort" => ...}`. The Messages serializer sends it as `output_config.effort` alongside `thinking.type: "disabled"`, since effort also limits token spend without thinking; serializers whose only reasoning control is effort ignore it and keep reasoning off. Previously it raised an `ArgumentError`, which `think(false, budget_tokens:)` still does.
+- The Messages serializer supports `reasoning.type: "between_tools"`, the lowest thinking setting on models that offer it. It was previously dropped silently, which sent the request with thinking left to the model — the opposite of what the caller asked for. It cannot be combined with `budget_tokens` or `display`.
+- The Converse serializer maps `session.reasoning` (including `Session#think`) into `additionalModelRequestFields` for Anthropic and OpenAI models, which read their native reasoning fields from it: the Messages API `thinking` and `output_config.effort` for Anthropic models, the `reasoning` object for OpenAI models, and the flat `reasoning_effort` field for the open-weight gpt-oss models. The model family is detected from the model id, allowing cross-region inference prefixes and ARNs. Values are forwarded without validation, and the fields are deep-merged into the `additional_model_request_fields` extra, whose values win on conflicts; a `thinking` object in the extra replaces the inferred one as a whole.
+
+### Changed
+
+- `Session#think(false)` turns reasoning off instead of clearing the reasoning configuration. It stores `{"type" => "disabled"}`, which the serializers map to `thinking.type: "disabled"` (Messages, and Anthropic models on Converse), effort `none` (`reasoning_effort` on Chat Completions and gpt-oss models on Converse, `reasoning.effort` on Open Responses and other OpenAI models on Converse), and `thinkingConfig.thinkingBudget: 0` (Gemini). Converse sends nothing for it on other model families rather than raising. Previously `think(false)` set `reasoning` to `nil`, which sends no reasoning parameter and leaves the API's default in place, so models that reason by default (such as Claude models that run adaptive thinking when `thinking` is omitted) kept reasoning. Set `session.reasoning = nil` to get that behavior. The off values are forwarded without checking the model, so models that can't turn reasoning off, or don't accept the parameter, reject the request.
+- The Converse serializer raises an `UnsupportedFormatError` when a non-empty `session.reasoning` is set for a model other than an Anthropic or OpenAI model, instead of warning and omitting it. Set the model's native reasoning fields through the `additional_model_request_fields` extra instead.
+- The Messages serializer now emits a `thinking` parameter for any reasoning configuration that asks for thinking, where it previously only emitted one for `budget_tokens` or an explicit `reasoning.type`. Omitting `thinking` leaves the thinking mode to the model rather than turning thinking on, so `think(effort:)` produced no thinking on models that don't think by default. `thinking.type` defaults to `enabled` when `budget_tokens` is set, so `think(budget_tokens:)` serializes as before, and to `adaptive` for an `effort` level, `display`, or bare `think`. Adaptive thinking is not inferred from `effort` alongside `temperature`, a `top_p` below 0.95, or a forced `tool_choice`, so those sessions still send the effort on its own. Configurations without thinking keys (e.g. only another provider's `summary`) still emit no `thinking`.
+- The Messages serializer forwards any `reasoning.type` to `thinking.type` instead of silently omitting the `thinking` parameter for types outside a fixed list, for the same reason. Which types a model accepts varies by model and changes often, so the API is left to reject types the model doesn't support.
+- The Messages and Gemini serializers forward every `reasoning.effort` level to the API as is (Gemini upcases it) instead of dropping levels outside a fixed list. Which levels a model accepts varies by model and changes often, so the API is left to reject levels the model doesn't support. Previously, levels such as `minimal` on Messages or `xhigh` and `max` on Gemini were dropped silently, leaving the depth at the model's default.
+- The Gemini serializer raises when `reasoning.budget_tokens` and `reasoning.effort` are both set, since the Gemini API rejects `thinkingBudget` and `thinkingLevel` in the same request.
+
+### Removed
+
+- `PromptBuilder::Serializers::Converse::Request.reset_reasoning_warning!`, since the Converse serializer no longer warns about reasoning.
+
+### Fixed
+
+- The Converse serializer replays `Reasoning` items as `reasoningContent` blocks instead of dropping them, so tool loops with thinking enabled work on Anthropic models, which reject a `toolUse` turn without its signed reasoning. Signed `thinking` blocks are sent as `reasoningText` with their `signature` and `redacted_thinking` blocks as `redactedContent`; unsigned reasoning and summaries are still dropped.
+- The Open Responses serializer no longer forwards the `budget_tokens`, `type`, and `display` reasoning keys, which are not part of the Open Responses schema and are rejected by the API. `think(budget_tokens:)` previously produced a payload the API rejects.
+
 ## 0.4.0
 
 ### Added

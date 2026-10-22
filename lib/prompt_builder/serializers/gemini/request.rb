@@ -52,8 +52,13 @@ module PromptBuilder
       #
       # The following Gemini parameters cannot be set through the Open Responses
       # canonical format:
-      # - +thinkingConfig.thinkingBudget+ — use +reasoning.budget_tokens+ instead
+      # - +thinkingConfig.thinkingBudget+ — use +reasoning.budget_tokens+ instead;
+      #   +reasoning.type: "disabled"+ (Session#think(false)) is sent as
+      #   +thinkingBudget: 0+ in place of any budget or effort, and models
+      #   that cannot turn thinking off reject it
       # - +thinkingConfig.thinkingLevel+ — use +reasoning.effort+ instead
+      #   (levels are upcased and forwarded as is; combining it with
+      #   +reasoning.budget_tokens+ raises, since the API rejects both together)
       # - +thinkingConfig.includeThoughts+ — use +reasoning.summary = "auto"+ instead
       # - +topK+ — top-K sampling parameter
       # - +seed+ — for reproducible outputs (model-dependent)
@@ -77,7 +82,6 @@ module PromptBuilder
       # - +cachedContent+ — referencing a CachedContent resource by name
       # - Top-level +labels+ (Vertex flavor only)
       class Request < Base
-        SUPPORTED_REASONING_EFFORTS = %w[minimal low medium high].freeze
         SUPPORTED_REASONING_SUMMARIES = %w[auto].freeze
         SUPPORTED_SERVICE_TIERS = %w[unspecified standard flex priority].freeze
 
@@ -493,14 +497,25 @@ module PromptBuilder
               # Unsupported reasoning.* keys are silently omitted.
               thinking_config = {}
 
-              if session.reasoning["budget_tokens"]
-                thinking_config["thinkingBudget"] = session.reasoning["budget_tokens"]
+              if reasoning_disabled?(session.reasoning)
+                # A zero budget turns thinking off. It replaces any budget or
+                # effort set alongside it, since the API rejects a budget
+                # together with a level. Models that cannot turn thinking off
+                # reject it.
+                thinking_config["thinkingBudget"] = 0
+              else
+                if session.reasoning["budget_tokens"]
+                  thinking_config["thinkingBudget"] = session.reasoning["budget_tokens"]
+                end
+
+                effort = session.reasoning["effort"]
+                # Effort levels are forwarded as is; the levels a model accepts vary.
+                thinking_config["thinkingLevel"] = effort.to_s.upcase if effort
               end
 
-              effort = session.reasoning["effort"]
-              # Unsupported effort levels are silently omitted.
-              if effort && SUPPORTED_REASONING_EFFORTS.include?(effort)
-                thinking_config["thinkingLevel"] = effort.upcase
+              if thinking_config.key?("thinkingBudget") && thinking_config.key?("thinkingLevel")
+                raise UnsupportedFormatError,
+                  "Gemini format does not support reasoning.budget_tokens together with reasoning.effort"
               end
 
               summary = session.reasoning["summary"]

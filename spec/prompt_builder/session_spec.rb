@@ -612,30 +612,40 @@ RSpec.describe PromptBuilder::Session do
       expect(session.reasoning).to eq({"budget_tokens" => 8_000})
     end
 
-    it "clears the reasoning configuration with think(false)" do
+    it "stores a disabled configuration with think(false)" do
       session.think(effort: :low)
-      session.think(false)
-      expect(session.reasoning).to be_nil
+      expect(session.think(false)).to eq({"type" => "disabled"})
+      expect(session.reasoning).to eq({"type" => "disabled"})
     end
 
-    it "raises when neither effort nor budget_tokens is given" do
-      expect { session.think }.to raise_error(ArgumentError, /effort.*budget_tokens/)
+    it "keeps an effort level alongside think(false)" do
+      session.think(false, effort: :low)
+      expect(session.reasoning).to eq({"type" => "disabled", "effort" => "low"})
+    end
+
+    it "stores an empty configuration when no depth control is given" do
+      session.think
+      expect(session.reasoning).to eq({})
     end
 
     it "raises when both effort and budget_tokens are given" do
       expect { session.think(effort: :low, budget_tokens: 1_000) }.to raise_error(ArgumentError, /not both/)
     end
 
-    it "raises on an unknown effort level" do
-      expect { session.think(effort: :extreme) }.to raise_error(ArgumentError, /effort must be one of/)
+    it "accepts effort levels outside the commonly supported set" do
+      session.think(effort: :none)
+      expect(session.reasoning).to eq({"effort" => "none"})
+
+      session.think(effort: "ultra")
+      expect(session.reasoning).to eq({"effort" => "ultra"})
     end
 
     it "raises on a non-positive budget" do
       expect { session.think(budget_tokens: 0) }.to raise_error(ArgumentError, /positive/)
     end
 
-    it "raises when think(false) is combined with options" do
-      expect { session.think(false, effort: :low) }.to raise_error(ArgumentError, /think\(false\)/)
+    it "raises when think(false) is combined with budget_tokens" do
+      expect { session.think(false, budget_tokens: 1_000) }.to raise_error(ArgumentError, /think\(false\)/)
     end
   end
 
