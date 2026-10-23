@@ -136,8 +136,8 @@ module PromptBuilder
         end
 
         # Each chunk reports log probabilities for its own tokens, so the
-        # token lists are concatenated in order and the sum is recomputed for
-        # the whole candidate.
+        # token lists are concatenated in order. The sum is recomputed for the
+        # whole candidate once the stream ends (see #recompute_logprobs_sum).
         def merge_logprobs_result(merged, result)
           target = merged["logprobsResult"] ||= {}
           result.each do |key, value|
@@ -147,11 +147,16 @@ module PromptBuilder
               target[key] = value
             end
           end
+        end
 
-          chosen = target["chosenCandidates"]
-          if target.key?("logProbabilitySum") && chosen
-            target["logProbabilitySum"] = chosen.sum { |token| token.is_a?(Hash) ? token["logProbability"].to_f : 0.0 }
-          end
+        def recompute_logprobs_sum(candidate)
+          result = candidate["logprobsResult"]
+          return unless result&.key?("logProbabilitySum")
+
+          chosen = result["chosenCandidates"]
+          return unless chosen
+
+          result["logProbabilitySum"] = chosen.sum { |token| token.is_a?(Hash) ? token["logProbability"].to_f : 0.0 }
         end
 
         def build_result
@@ -160,6 +165,7 @@ module PromptBuilder
           finished = !candidates.empty? && candidates.all? { |candidate| finished_candidate?(candidate) }
           incomplete!("Gemini stream ended without a finishReason") unless blocked || finished
 
+          candidates.each { |candidate| recompute_logprobs_sum(candidate) }
           @response.merge("candidates" => candidates)
         end
 

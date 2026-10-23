@@ -95,6 +95,31 @@ RSpec.describe PromptBuilder::Serializers::Gemini::StreamAccumulator do
     )
   end
 
+  it "does not re-sum the accumulated log probabilities for every chunk" do
+    count = 10_000
+    chunks = Array.new(count) do |i|
+      single = chunk([{"text" => "t"}], finish_reason: (i == count - 1) ? "STOP" : nil)
+      single["candidates"][0]["logprobsResult"] = {
+        "topCandidates" => [{"candidates" => [token("t", -0.5)]}],
+        "chosenCandidates" => [token("t", -0.5)],
+        "logProbabilitySum" => -0.5
+      }
+      single
+    end
+    body = sse(*chunks)
+
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    result = collapse(body)
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+    logprobs = result["candidates"][0]["logprobsResult"]
+    expect(logprobs["chosenCandidates"].length).to eq(count)
+    expect(logprobs["logProbabilitySum"]).to eq(-0.5 * count)
+    # Re-summing every chunk takes several seconds here; summing once when
+    # the stream ends takes a fraction of a second.
+    expect(elapsed).to be < 2
+  end
+
   it "merges candidates by index" do
     result = collapse(sse(
       {"candidates" => [{"index" => 0, "content" => {"parts" => [{"text" => "A"}]}}, {"index" => 1, "content" => {"parts" => [{"text" => "B"}]}}], "modelVersion" => "m"},
