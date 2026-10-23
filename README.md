@@ -240,7 +240,7 @@ Errors:
 - An error event sent mid-stream (with HTTP 200) raises a `PromptBuilder::ErrorResponseError` that includes the error the API reported. Examples are a Messages `error` event such as `overloaded_error`, an Open Responses `error` event, an `error` chunk from Chat Completions or Gemini, and a Converse `exception` frame such as `throttlingException`.
 - A stream that ends before the format's terminal event raises a `PromptBuilder::IncompleteStreamError`, a subclass of `UnexpectedPayloadError`, so a truncated stream is never treated as a complete response. The terminal events are Open Responses `response.completed`/`incomplete`/`failed`, Chat Completions `data: [DONE]`, Messages `message_stop`, a `finishReason` on every Gemini candidate (or a `promptFeedback.blockReason`), and Converse `messageStop`.
 - A malformed stream, such as an event-stream checksum mismatch or invalid JSON in an event, raises a `PromptBuilder::ParseError`.
-- A body that starts with `{` or `[` is not a stream. One example is an error envelope returned with a 4xx status. It is passed through unchanged, so `Response.parse_stream` raises the same `ErrorResponseError` that `Response.parse` would.
+- A body that is a JSON object or array, such as an error envelope returned with a 4xx status, is not a stream. It is passed through unchanged, so `Response.parse_stream` raises the same `ErrorResponseError` that `Response.parse` would.
 - Unknown event types are ignored, so new event types the providers add don't break parsing.
 
 ### Structured Output
