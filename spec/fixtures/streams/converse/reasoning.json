@@ -1,0 +1,44 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "reasoningContent": {
+            "reasoningText": {
+              "text": "Let me solve this step by step:\n\n1. First break down 27 * 453\n2. 453 = 400 + 50 + 3",
+              "signature": "EqQBCgIYAhIM1gbcDa9GJwZA2b3hGgxBdjrkzLoky3dl1pkiMOYds="
+            }
+          }
+        },
+        {
+          "reasoningContent": {
+            "redactedContent": "AQJyZWRhY3RlZC10aGlua2luZy1ieXRlc//+"
+          }
+        },
+        {
+          "text": "27 * 453 = 12,231"
+        }
+      ]
+    }
+  },
+  "stopReason": "end_turn",
+  "additionalModelResponseFields": {
+    "stop_sequence": null
+  },
+  "usage": {
+    "inputTokens": 85,
+    "outputTokens": 312,
+    "totalTokens": 2445,
+    "cacheReadInputTokens": 2048,
+    "cacheWriteInputTokens": 0
+  },
+  "metrics": {
+    "latencyMs": 5120
+  },
+  "trace": {
+    "promptRouter": {
+      "invokedModelId": "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5"
+    }
+  }
+}

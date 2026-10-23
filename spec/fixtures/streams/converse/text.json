@@ -1,0 +1,21 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "Bonjour! Un café ☕ à Paris — 東京 too."
+        }
+      ]
+    }
+  },
+  "stopReason": "end_turn",
+  "usage": {
+    "inputTokens": 25,
+    "outputTokens": 15,
+    "totalTokens": 40
+  },
+  "metrics": {
+    "latencyMs": 412
+  }
+}

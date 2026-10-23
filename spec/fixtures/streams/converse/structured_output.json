@@ -1,0 +1,21 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "{\"name\": \"Ada Lovelace\", \"born\": 1815}"
+        }
+      ]
+    }
+  },
+  "stopReason": "max_tokens",
+  "usage": {
+    "inputTokens": 40,
+    "outputTokens": 12,
+    "totalTokens": 52
+  },
+  "metrics": {
+    "latencyMs": 300
+  }
+}

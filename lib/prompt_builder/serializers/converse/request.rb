@@ -24,7 +24,9 @@ module PromptBuilder
       # - +prompt_cache_key+ / +prompt_cache_retention+ — explicit prompt cache keys are not supported
       # - +safety_identifier+ — no equivalent user-safety field on the Converse endpoint
       # - +store+ — server-side response storage is not supported
-      # - +stream+ — SSE streaming is handled outside the Converse request payload
+      # - +stream+ — streaming is selected by endpoint (+ConverseStream+), not a
+      #   request body field; Converse::StreamAccumulator (or
+      #   Response.parse_stream) reassembles the streamed response
       # - +stream_options+ — stream event options are not supported
       # - +top_logprobs+ — log probability output is not supported
       # - +truncation+ — server-side context truncation is not supported

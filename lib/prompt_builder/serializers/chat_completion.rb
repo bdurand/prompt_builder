@@ -7,6 +7,7 @@ module PromptBuilder
     class ChatCompletion < Base
       autoload :Request, File.expand_path("chat_completion/request", __dir__)
       autoload :Response, File.expand_path("chat_completion/response", __dir__)
+      autoload :StreamAccumulator, File.expand_path("chat_completion/stream_accumulator", __dir__)
 
       class << self
         # Export a session to Chat Completions request payload.

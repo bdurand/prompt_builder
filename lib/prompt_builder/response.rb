@@ -172,6 +172,30 @@ module PromptBuilder
         serializer.parse_response(hash, headers: headers)
       end
 
+      # Parse a complete streamed response body (from a request sent with
+      # +stream: true+ or a streaming endpoint) into a Response. The stream is
+      # reassembled into the body the non-streaming endpoint would have
+      # returned and then parsed with #parse, so the result is the same as for
+      # a non-streamed request.
+      #
+      # @param body [String, #each] the raw streamed body (SSE text, or AWS
+      #   event-stream bytes for Converse), or an enumerable of body chunks
+      # @param serializer_class [Class, Symbol] a serializer class or a symbol
+      #   shorthand (see #parse)
+      # @param headers [Hash, #each, nil] the HTTP response headers (see #parse)
+      # @return [Response]
+      # @raise [IncompleteStreamError] if the stream ended before the format's
+      #   terminal event
+      # @raise [ErrorResponseError] if the stream contains an error event or
+      #   the body is an API error envelope
+      # @raise [ParseError] if the stream is malformed
+      # @example
+      #   response = PromptBuilder::Response.parse_stream(sse_body, :messages)
+      def parse_stream(body, serializer_class, headers: nil)
+        serializer = Serializers.resolve(serializer_class)
+        parse(serializer.collapse_stream(body), serializer, headers: headers)
+      end
+
       # Deserialize a Response from a Hash.
       #
       # @param hash [Hash] a Hash with string keys from the API response

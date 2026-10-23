@@ -1,0 +1,131 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant",
+      "p": "abcdefghijkl"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 0,
+      "delta": {
+        "reasoningContent": {
+          "text": "Let me solve this step by step:\n\n1. First break down 27 * 453"
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 0,
+      "delta": {
+        "reasoningContent": {
+          "text": "\n2. 453 = 400 + 50 + 3"
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 0,
+      "delta": {
+        "reasoningContent": {
+          "signature": "EqQBCgIYAhIM1gbcDa9GJwZA2b3hGgxBdjrkzLoky3dl1pkiMOYds="
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 0,
+      "p": "abcdefghijklmnop"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 1,
+      "delta": {
+        "reasoningContent": {
+          "redactedContent": "AQJyZWRhYw=="
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 1,
+      "delta": {
+        "reasoningContent": {
+          "redactedContent": "dGVkLXRoaW5raW5nLWJ5dGVz//4="
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 1,
+      "p": "abcdefghijklmnop"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 2,
+      "delta": {
+        "text": "27 * 453 = 12,231"
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 2,
+      "p": "abcdefghijklmnop"
+    }
+  },
+  {
+    "event": "messageStop",
+    "payload": {
+      "stopReason": "end_turn",
+      "additionalModelResponseFields": {
+        "stop_sequence": null
+      },
+      "p": "abcdefghijk"
+    }
+  },
+  {
+    "event": "metadata",
+    "payload": {
+      "usage": {
+        "inputTokens": 85,
+        "outputTokens": 312,
+        "totalTokens": 2445,
+        "cacheReadInputTokens": 2048,
+        "cacheWriteInputTokens": 0
+      },
+      "metrics": {
+        "latencyMs": 5120
+      },
+      "trace": {
+        "promptRouter": {
+          "invokedModelId": "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5"
+        }
+      },
+      "p": "abcdefgh"
+    }
+  }
+]

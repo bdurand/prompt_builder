@@ -1,0 +1,71 @@
+{
+  "id": "resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b",
+  "object": "response",
+  "created_at": 1741476542,
+  "model": "o4-mini-2025-04-16",
+  "previous_response_id": null,
+  "instructions": null,
+  "tools": [],
+  "tool_choice": "auto",
+  "parallel_tool_calls": true,
+  "temperature": 1.0,
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "store": true,
+  "metadata": {},
+  "max_output_tokens": null,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "text": {
+    "format": {
+      "type": "text"
+    }
+  },
+  "error": null,
+  "incomplete_details": null,
+  "service_tier": "default",
+  "status": "completed",
+  "output": [
+    {
+      "type": "reasoning",
+      "id": "rs_6820f383d7c08191846711c5df8233bc",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "**Planning tool calls**\n\nI need the weather and the time."
+        }
+      ],
+      "encrypted_content": "gAAAAABoIPOBzQmFtKJ6nVbN0k2xGRz"
+    },
+    {
+      "type": "function_call",
+      "id": "fc_6820f3859b5c8191b5fc0d2b3e3b7d6a",
+      "call_id": "call_DdmO9pD3xa9XTPNJ32zg2hcA",
+      "name": "get_weather",
+      "arguments": "{\"location\":\"Paris, France\"}",
+      "status": "completed"
+    },
+    {
+      "type": "function_call",
+      "id": "fc_6820f385b14c81918b3c7f2b6b0e8a3d",
+      "call_id": "call_ABHxnfAEGv4pWSxcvYFeWGeg",
+      "name": "get_time",
+      "arguments": "{\"timezone\":\"Europe/Paris\"}",
+      "status": "completed"
+    }
+  ],
+  "usage": {
+    "input_tokens": 120,
+    "input_tokens_details": {
+      "cached_tokens": 64
+    },
+    "output_tokens": 210,
+    "output_tokens_details": {
+      "reasoning_tokens": 128
+    },
+    "total_tokens": 330
+  },
+  "completed_at": 1741476544
+}

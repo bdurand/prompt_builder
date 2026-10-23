@@ -1,0 +1,37 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "I'll check the weather and time in Paris."
+        },
+        {
+          "toolUse": {
+            "toolUseId": "tooluse_kZJMlvQmRJ6eAyJE5GIl7Q",
+            "name": "get_weather",
+            "input": {
+              "location": "Paris, France"
+            }
+          }
+        },
+        {
+          "toolUse": {
+            "toolUseId": "tooluse_Xq3TfZ2hS6mU9bP1cR4dWw",
+            "name": "get_time",
+            "input": {}
+          }
+        }
+      ]
+    }
+  },
+  "stopReason": "tool_use",
+  "usage": {
+    "inputTokens": 410,
+    "outputTokens": 96,
+    "totalTokens": 506
+  },
+  "metrics": {
+    "latencyMs": 1290
+  }
+}

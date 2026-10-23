@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require_relative "../support/stream_fixtures"
 
 RSpec.describe PromptBuilder::Response do
   let(:response_hash) do
@@ -76,6 +77,51 @@ RSpec.describe PromptBuilder::Response do
       }
       response = described_class.parse(converse_hash, :converse, headers: {"x-amzn-requestid" => "req-123"})
       expect(response.id).to eq("req-123")
+    end
+  end
+
+  describe ".parse_stream" do
+    let(:sse_body) do
+      [
+        {"type" => "message_start", "message" => {"id" => "msg_1", "type" => "message", "role" => "assistant", "content" => [], "model" => "claude-sonnet-4-5", "usage" => {"input_tokens" => 10, "output_tokens" => 1}}},
+        {"type" => "content_block_delta", "index" => 0, "delta" => {"type" => "text_delta", "text" => "Hello!"}},
+        {"type" => "message_delta", "delta" => {"stop_reason" => "end_turn"}, "usage" => {"output_tokens" => 3}},
+        {"type" => "message_stop"}
+      ].map { |data| "event: #{data["type"]}\ndata: #{JSON.generate(data)}\n\n" }.join
+    end
+
+    it "collapses a streamed body and parses it with the serializer" do
+      response = described_class.parse_stream(sse_body, :messages)
+      expect(response).to be_a(described_class)
+      expect(response.id).to eq("msg_1")
+      expect(response.text).to eq("Hello!")
+      expect(response).to be_completed
+      expect(response.usage.output_tokens).to eq(3)
+    end
+
+    it "accepts an enumerable of body chunks" do
+      chunks = sse_body.b.chars.each_slice(7).map(&:join)
+      expect(described_class.parse_stream(chunks, :messages).to_h).to eq(described_class.parse_stream(sse_body, :messages).to_h)
+    end
+
+    it "forwards HTTP headers to the serializer" do
+      body = [
+        {"event" => "contentBlockDelta", "payload" => {"contentBlockIndex" => 0, "delta" => {"text" => "Hello!"}}},
+        {"event" => "messageStop", "payload" => {"stopReason" => "end_turn"}}
+      ].map { |event| StreamFixtures.converse_event(event["event"], event["payload"]) }.join
+      response = described_class.parse_stream(body, :converse, headers: {"x-amzn-requestid" => "req-123"})
+      expect(response.id).to eq("req-123")
+      expect(response.text).to eq("Hello!")
+    end
+
+    it "raises ArgumentError for unknown symbol" do
+      expect { described_class.parse_stream("", :unknown_format) }
+        .to raise_error(ArgumentError, /Unknown serializer/)
+    end
+
+    it "raises UnsupportedFormatError for a serializer without a stream accumulator" do
+      expect { described_class.parse_stream("", PromptBuilder::Serializers::Base) }
+        .to raise_error(PromptBuilder::UnsupportedFormatError, /does not support streamed responses/)
     end
   end
 

@@ -12,6 +12,7 @@ module PromptBuilder
   autoload :ToolRegistry, "prompt_builder/tool_registry"
   autoload :Usage, "prompt_builder/usage"
   autoload :Serializers, "prompt_builder/serializers"
+  autoload :Streaming, "prompt_builder/streaming"
   autoload :Tools, "prompt_builder/tools"
 
   VERSION = File.read(File.join(__dir__, "../VERSION")).strip

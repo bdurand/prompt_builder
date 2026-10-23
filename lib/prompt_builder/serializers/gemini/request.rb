@@ -23,6 +23,9 @@ module PromptBuilder
       # - +parallel_tool_calls+ — parallel tool call control is not supported
       # - +prompt_cache_key+ / +prompt_cache_retention+ — explicit prompt cache keys are not supported
       # - +safety_identifier+ — no equivalent user-safety field on the generate endpoint
+      # - +stream+ — streaming is selected by endpoint (+streamGenerateContent+),
+      #   not a request body field; Gemini::StreamAccumulator (or
+      #   Response.parse_stream) reassembles the streamed response
       # - +stream_options+ — stream event options are not supported
       # - +truncation+ — server-side context truncation is not supported
       #

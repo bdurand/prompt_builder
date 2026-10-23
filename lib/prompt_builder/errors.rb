@@ -24,6 +24,14 @@ module PromptBuilder
   # error envelope). The message contains the error reported by the API.
   class ErrorResponseError < UnexpectedPayloadError; end
 
-  # Raised by Response#parsed_json! when the response text is not valid JSON.
+  # Raised when a streamed response ends before the format's terminal event
+  # (e.g. a dropped connection), so a truncated stream is never treated as a
+  # complete response.
+  class IncompleteStreamError < UnexpectedPayloadError; end
+
+  # Raised when text or binary data cannot be decoded: by Response#parsed_json!
+  # when the response text is not valid JSON, and by the stream decoders when a
+  # streamed response body is malformed (e.g. an AWS event-stream checksum
+  # mismatch or an unparseable event payload).
   class ParseError < Error; end
 end
