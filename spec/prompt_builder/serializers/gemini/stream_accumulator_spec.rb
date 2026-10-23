@@ -64,6 +64,11 @@ RSpec.describe PromptBuilder::Serializers::Gemini::StreamAccumulator do
       .to raise_error(PromptBuilder::IncompleteStreamError, /finishReason/)
   end
 
+  it "raises IncompleteStreamError when the finishReason is FINISH_REASON_UNSPECIFIED" do
+    body = sse(chunk([{"text" => "a"}]), chunk([{"text" => "b"}], finish_reason: "FINISH_REASON_UNSPECIFIED"))
+    expect { collapse(body) }.to raise_error(PromptBuilder::IncompleteStreamError, /finishReason/)
+  end
+
   it "raises IncompleteStreamError when only some candidates finished" do
     body = sse(
       {"candidates" => [{"index" => 0, "content" => {"parts" => [{"text" => "A"}]}, "finishReason" => "STOP"}, {"index" => 1, "content" => {"parts" => [{"text" => "B"}]}}], "modelVersion" => "m"}

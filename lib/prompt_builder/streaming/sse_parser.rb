@@ -37,6 +37,9 @@ module PromptBuilder
 
       def initialize
         @buffer = +"".b
+        # Where to resume searching for a line break, so an incomplete line
+        # held across chunks is not rescanned from the start on every chunk.
+        @scan_from = 0
         @bom_checked = false
         @event_type = nil
         @data_lines = []
@@ -54,7 +57,7 @@ module PromptBuilder
 
         events = []
         pos = 0
-        while (index = @buffer.index(LINE_BREAK, pos))
+        while (index = @buffer.index(LINE_BREAK, [pos, @scan_from].max))
           next_pos = index + 1
           if @buffer.getbyte(index) == CR
             # A CR at the end of the buffer may be the first half of a CRLF
@@ -66,6 +69,9 @@ module PromptBuilder
           pos = next_pos
         end
         @buffer = @buffer.byteslice(pos, @buffer.bytesize - pos) if pos > 0
+        # The rest of the buffer has no line break, except possibly a trailing
+        # CR, so the next search only needs to start at the last byte.
+        @scan_from = [@buffer.bytesize - 1, 0].max
 
         events.each(&block)
         self
@@ -83,6 +89,7 @@ module PromptBuilder
           line = @buffer.end_with?("\r") ? @buffer.byteslice(0, @buffer.bytesize - 1) : @buffer
           process_line(line, events)
           @buffer = +"".b
+          @scan_from = 0
         end
         dispatch(events)
 

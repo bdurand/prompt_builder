@@ -123,10 +123,18 @@ module PromptBuilder
         def build_result
           candidates = @candidates.sort_by { |index, _| index.to_i }.map { |_, candidate| candidate }
           blocked = @response.dig("promptFeedback", "blockReason")
-          finished = !candidates.empty? && candidates.all? { |candidate| candidate["finishReason"] }
+          finished = !candidates.empty? && candidates.all? { |candidate| finished_candidate?(candidate) }
           incomplete!("Gemini stream ended without a finishReason") unless blocked || finished
 
           @response.merge("candidates" => candidates)
+        end
+
+        # FINISH_REASON_UNSPECIFIED is the API's default value, which the
+        # response parser treats as no finish reason, so it does not mark a
+        # candidate as finished either.
+        def finished_candidate?(candidate)
+          reason = candidate["finishReason"]
+          !reason.nil? && reason != "FINISH_REASON_UNSPECIFIED"
         end
       end
     end

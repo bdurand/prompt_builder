@@ -78,6 +78,19 @@ RSpec.describe PromptBuilder::Streaming::SSEParser do
     expect(parse("\xEF".b, "\xBB".b, "\xBFdata: a\n\n").map(&:data)).to eq(["a"])
   end
 
+  it "does not rescan a long incomplete line for every chunk" do
+    data = "x" * (4 * 1024 * 1024)
+    chunks = "data: #{data}\r\n\r\n".b.scan(/.{1,1024}/mn)
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    events = parse(*chunks)
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+    expect(events.map(&:data)).to eq([data])
+    # Rescanning the whole line on each chunk takes several seconds here;
+    # resuming the search where the previous chunk ended takes milliseconds.
+    expect(elapsed).to be < 2
+  end
+
   it "yields events as soon as they are complete" do
     parser = described_class.new
     events = []
