@@ -9,9 +9,11 @@ module PromptBuilder
       #
       # With +alt=sse+ each event is a complete +GenerateContentResponse+
       # chunk. Candidates are merged by +index+: their parts are concatenated
-      # in order, with adjacent text parts of the same kind (thought or not)
-      # merged into one part that keeps the +thoughtSignature+; two parts that
-      # both carry a signature stay separate. A part with only a
+      # in order, and a text part that starts a chunk continues the text part
+      # that ended the previous chunk when both are the same kind (thought or
+      # not), keeping the +thoughtSignature+; two parts that both carry a
+      # signature stay separate. Parts within one chunk are distinct parts and
+      # are never merged with each other. A part with only a
       # +thoughtSignature+ and no text is the signature for the text before it,
       # so it is attached to that text part. +functionCall+ and other parts
       # arrive whole. +citationMetadata.citationSources+ and the
@@ -92,14 +94,18 @@ module PromptBuilder
         def merge_content(merged, content)
           target = merged["content"] ||= {"parts" => []}
           content.each { |key, value| target[key] = value unless key == "parts" || value.nil? }
-          (content["parts"] || []).each { |part| append_part(target["parts"], part) if part.is_a?(Hash) }
+          parts = (content["parts"] || []).select { |part| part.is_a?(Hash) }
+          parts.each_with_index { |part, position| append_part(target["parts"], part, continuation: position.zero?) }
         end
 
-        def append_part(parts, part)
+        # Only the first part of a chunk can continue text from the previous
+        # chunk; later parts in the same chunk are separate parts in the
+        # response, so they keep their own boundaries and signatures.
+        def append_part(parts, part, continuation:)
           last = parts.last
           if signature_only?(part) && text_part?(last) && !last["thoughtSignature"]
             last["thoughtSignature"] = part["thoughtSignature"]
-          elsif mergeable_text?(last, part)
+          elsif continuation && mergeable_text?(last, part)
             last["text"] << part["text"]
             last["thoughtSignature"] = part["thoughtSignature"] if part["thoughtSignature"]
           elsif text_part?(part)

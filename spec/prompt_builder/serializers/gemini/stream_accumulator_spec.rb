@@ -45,6 +45,26 @@ RSpec.describe PromptBuilder::Serializers::Gemini::StreamAccumulator do
     expect(parts(result)).to eq([{"text" => "ab", "thoughtSignature" => "s1"}])
   end
 
+  it "keeps distinct text parts in the same chunk separate" do
+    result = collapse(sse(
+      chunk([{"text" => "signed", "thoughtSignature" => "sig"}, {"text" => "unsigned"}], finish_reason: "STOP")
+    ))
+    expect(parts(result)).to eq([{"text" => "signed", "thoughtSignature" => "sig"}, {"text" => "unsigned"}])
+  end
+
+  it "continues text from the previous chunk only with the first part of a chunk" do
+    result = collapse(sse(
+      chunk([{"text" => "Hel", "thoughtSignature" => "sig"}]),
+      chunk([{"text" => "lo"}, {"text" => "Second"}], finish_reason: "STOP")
+    ))
+    expect(parts(result)).to eq([{"text" => "Hello", "thoughtSignature" => "sig"}, {"text" => "Second"}])
+  end
+
+  it "attaches a signature-only part to the text before it in the same chunk" do
+    result = collapse(sse(chunk([{"text" => "Answer"}, {"thoughtSignature" => "sig_text"}], finish_reason: "STOP")))
+    expect(parts(result)).to eq([{"text" => "Answer", "thoughtSignature" => "sig_text"}])
+  end
+
   it "attaches a trailing signature-only part to the text part before it" do
     result = collapse(sse(
       chunk([{"text" => "Ans"}]),
