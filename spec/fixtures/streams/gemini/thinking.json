@@ -1,0 +1,29 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "**Composing a haiku**\n\nThe user wants a haiku about autumn.",
+            "thought": true
+          },
+          {
+            "text": "Crisp leaves drift and fall\nGolden light on quiet paths\nThe year exhales slow",
+            "thoughtSignature": "CiQB0e2Kb4+gAJZ1bx2C1zXq3X0w"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 12,
+    "candidatesTokenCount": 20,
+    "totalTokenCount": 420,
+    "thoughtsTokenCount": 388
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "n9QPaJ2nBdOv1dkP7qKJ8Q4"
+}

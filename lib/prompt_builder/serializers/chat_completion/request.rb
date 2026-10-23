@@ -27,7 +27,10 @@ module PromptBuilder
       #   +reasoning_effort: "none"+ in place of any effort, and models that
       #   cannot turn reasoning off reject it
       # - +stream_options+ — only +include_usage+ and +include_obfuscation+ are
-      #   supported, and only when +stream+ is set (otherwise it is omitted)
+      #   supported, and only when +stream+ is set (otherwise it is omitted).
+      #   When +stream+ is set and +stream_options+ is not, +include_usage: true+
+      #   is sent so the streamed response reports token usage like a
+      #   non-streamed one
       #
       # Input content restrictions:
       # - +instructions+ is serialized as a system message inserted after the
@@ -100,9 +103,14 @@ module PromptBuilder
             h["prompt_cache_retention"] = session.prompt_cache_retention if session.prompt_cache_retention
             h["stream"] = session.stream unless session.stream.nil?
             # stream_options is only valid alongside stream; otherwise it is omitted.
-            # Unsupported stream_options keys are dropped.
-            if session.stream_options && session.stream
-              stream_options = normalize_hash(session.stream_options).slice(*SUPPORTED_STREAM_OPTION_KEYS)
+            # Unsupported stream_options keys are dropped. Streamed responses only
+            # report usage with include_usage, so it is requested by default.
+            if session.stream
+              stream_options = if session.stream_options
+                normalize_hash(session.stream_options).slice(*SUPPORTED_STREAM_OPTION_KEYS)
+              else
+                {"include_usage" => true}
+              end
               h["stream_options"] = stream_options unless stream_options.empty?
             end
 

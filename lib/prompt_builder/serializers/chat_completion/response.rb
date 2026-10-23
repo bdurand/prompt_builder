@@ -10,7 +10,9 @@ module PromptBuilder
       # responses, legacy +function_call+ responses, non-function tool calls,
       # and unknown content block types are silently skipped. Streaming chunks
       # (+chat.completion.chunk+ deltas) raise +UnsupportedFormatError+ — this
-      # parser expects a fully assembled non-streaming response body.
+      # parser expects a fully assembled non-streaming response body; use
+      # ChatCompletion::StreamAccumulator (or Response.parse_stream) to
+      # reassemble a streamed body first.
       # Top-level +system_fingerprint+ is exposed through +extra+.
       class Response < Base
         class << self

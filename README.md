@@ -203,6 +203,46 @@ response.text        # => "Authentication failed."
 response.completed?  # => true
 ```
 
+### Parsing Streamed Responses
+
+Streaming (`stream: true`, or a streaming endpoint) keeps bytes flowing during long generations. If you only need the final response, `Response.parse_stream` turns a complete streamed body into the same `Response` that the non-streaming endpoint would have produced. It first rebuilds the non-streaming response body from the stream, then parses it with `Response.parse`, so content, tool calls, reasoning, usage, and stop reasons come out exactly as they do for a non-streamed request:
+
+```ruby
+session.stream = true
+# ... send the request and read the whole streamed body ...
+response = PromptBuilder::Response.parse_stream(response_body, :messages)
+```
+
+The body is the raw stream: Server-Sent Events text for Open Responses, Chat Completions, Messages, and Gemini (`streamGenerateContent?alt=sse`), or AWS event-stream bytes for Converse (`ConverseStream`). Gemini and Converse choose streaming by endpoint rather than a request body field. Pass `headers:` the same way you would to `Response.parse`, for example to get the Converse response id from the `x-amzn-requestid` header.
+
+To reassemble the stream as it arrives without keeping the raw body, feed chunks to an accumulator. Chunks can split the stream anywhere, including in the middle of an event, a UTF-8 character, or a binary frame. The accumulator keeps only what it needs to rebuild the response:
+
+```ruby
+accumulator = PromptBuilder::Serializers::Messages.stream_accumulator
+http.request(request) do |http_response|
+  http_response.read_body { |chunk| accumulator << chunk }
+end
+response = PromptBuilder::Response.parse(accumulator.result, :messages)
+```
+
+`Serializers::<Format>.collapse_stream(body)` returns the rebuilt response hash directly. The body can be a String or an enumerable of chunks.
+
+How each format is rebuilt:
+
+- **Open Responses**: the full response object is taken from the terminal `response.completed`, `response.incomplete`, or `response.failed` event.
+- **Chat Completions**: `choices[].delta` objects are merged by choice index, and `tool_calls` fragments by tool call index (`function.arguments` is concatenated). Usage comes from the final chunk, which the API only sends when `stream_options.include_usage` is set. The Chat Completions serializer sets it by default when `stream` is true (see [Session Fields](#session-fields)).
+- **Messages**: content blocks are rebuilt by index from the text, citation, thinking, signature, and tool input deltas. `message_delta` supplies the stop reason, and its cumulative usage is merged into the `message_start` usage.
+- **Gemini**: candidate parts from each chunk are concatenated. A text part that starts a chunk continues the text part that ended the previous chunk if both are the same kind (thought or not), keeping the `thoughtSignature`. Parts within one chunk stay separate. A part that carries only a `thoughtSignature` is attached to the text part before it. The `logprobsResult` token lists are concatenated, and `logProbabilitySum` is recomputed from the chosen tokens. `finishReason`, `usageMetadata`, and other fields come from the last chunk that has them. A JSON array body (`streamGenerateContent` without `alt=sse`) is also accepted, but it is buffered whole.
+- **Converse**: event-stream frames are decoded with both CRC32 checksums verified, then content blocks are rebuilt from the `contentBlockStart` and `contentBlockDelta` events (text, tool use input, reasoning text, signatures, and redacted reasoning). `stopReason` comes from `messageStop`, and `usage` and `metrics` come from `metadata`.
+
+Errors:
+
+- An error event sent mid-stream (with HTTP 200) raises a `PromptBuilder::ErrorResponseError` that includes the error the API reported. Examples are a Messages `error` event such as `overloaded_error`, an Open Responses `error` event, an `error` chunk from Chat Completions or Gemini, and a Converse `exception` frame such as `throttlingException`.
+- A stream that ends before the format's terminal event raises a `PromptBuilder::IncompleteStreamError`, a subclass of `UnexpectedPayloadError`, so a truncated stream is never treated as a complete response. The terminal events are Open Responses `response.completed`/`incomplete`/`failed`, Chat Completions `data: [DONE]`, Messages `message_stop`, a `finishReason` on every Gemini candidate (or a `promptFeedback.blockReason`), and Converse `messageStop`.
+- A malformed stream, such as an event-stream checksum mismatch or invalid JSON in an event, raises a `PromptBuilder::ParseError`.
+- A body that is a JSON object or array, such as an error envelope returned with a 4xx status, is not a stream. It is passed through unchanged, so `Response.parse_stream` raises the same `ErrorResponseError` that `Response.parse` would.
+- Unknown event types are ignored, so new event types the providers add don't break parsing.
+
 ### Structured Output
 
 Use `json_output` to request JSON Schema structured output and `parsed_json` to read it back:
@@ -649,8 +689,8 @@ The following table shows which session configuration fields are supported by ea
 | `safety_identifier` | ✅ | ✅ → `metadata.user_id` | ❌ | ❌ |
 | `service_tier` | ✅ | `auto`/`standard_only` only | `unspecified`/`standard`/`flex`/`priority` only | ✅ → `serviceTier.type` |
 | `store` | ✅ | ❌ | ✅ | ❌ |
-| `stream` | ✅ | ✅ | endpoint-selected⁸ | ❌ |
-| `stream_options` | `include_usage`/`include_obfuscation` only | ❌ | ❌ | ❌ |
+| `stream` | ✅ | ✅ | endpoint-selected⁸ | endpoint-selected⁸ |
+| `stream_options` | `include_usage`/`include_obfuscation` only¹⁶ | ❌ | ❌ | ❌ |
 | `text` | `format`/`verbosity` only | `format.type=json_schema` only | `format` key only | `format.type == json_schema` only |
 | `top_logprobs` | ✅ | ❌ | ✅ → `responseLogprobs`/`logprobs` | ❌ |
 | `truncation` | ❌ | ❌ | ❌ | ❌ |
@@ -676,7 +716,7 @@ The following table shows which session configuration fields are supported by ea
 ⁵ Anthropic does not support a `detail` field on images; it is silently dropped. `file_id` is mapped to a `file` source (Anthropic Files API beta).
 ⁶ Gemini supports inline base64 data or any URL. For files, set `media_type` or use a recognized `filename`/URL extension.
 ⁷ Chat Completions does not accept `InputImage.file_id` — the `image_file` content type is Assistants API only. Use a URL or base64 `data` instead; a `file_id`-only image is omitted.
-⁸ Gemini selects streaming by endpoint (`:streamGenerateContent`), not a request body field, so `session.stream` is silently ignored when serializing to Gemini.
+⁸ Gemini (`:streamGenerateContent`) and Converse (`ConverseStream`) select streaming by endpoint, not a request body field, so `session.stream` is silently ignored when serializing to them. `Response.parse_stream` parses their streamed responses (see [Parsing Streamed Responses](#parsing-streamed-responses)).
 ⁹ `RefusalContent` blocks are dropped silently by all request serializers so a parsed refusal can sit in session history without breaking subsequent `request_payload` calls. A message left empty after stripping is omitted entirely.
 ¹⁰ Chat Completions sends `InputFile` as a `{"type": "file", "file": {...}}` content block. `file_id` (Files API) and base64 data URL (with optional `filename`/`media_type`) are supported. A URL-only `InputFile` (non-data URL) is omitted because Chat Completions has no remote-URL form for files.
 ¹¹ `OutputText.annotations` (e.g. URL citations from `web_search_options`) are parsed onto the assistant message and round-trip through session history, but are dropped silently on Chat Completions and Converse request serialization since those formats have no request-side equivalent. `OutputText.logprobs` is likewise dropped.
@@ -686,6 +726,8 @@ The following table shows which session configuration fields are supported by ea
 ¹⁴ A Messages `reasoning` configuration that asks for thinking (`type`, `budget_tokens`, `display`, an `effort` level, or an empty configuration from a bare `think`) emits a `thinking` parameter, since omitting it leaves the thinking mode to the model rather than turning thinking on. Adaptive thinking is not inferred from `effort` alongside `temperature`, a `top_p` below 0.95, or a forced `tool_choice`; the effort is sent on its own. `reasoning.type` is forwarded as is, including types the serializer doesn't know, and the API rejects types the model doesn't support.
 
 ¹⁵ The Converse serializer detects the model family from the model id, allowing a cross-region inference prefix (`us.`, `global.`, ...) and an ARN resource path. Anthropic models (`anthropic.*`) get `thinking` (`type`, `budget_tokens`, `display`) and `output_config.effort`, with `thinking.type` inferred as in the Messages serializer (note ¹⁴) but without its validation. OpenAI models (`openai.*`) get `reasoning` without the Anthropic-only `budget_tokens`, `type`, and `display` keys; a bare `think` or `budget_tokens` alone sends nothing. The open-weight gpt-oss models (`openai.gpt-oss-*`) read only a flat `reasoning_effort` field, so they get `effort` as `reasoning_effort` and nothing else. A disabled configuration (`think(false)`) sends effort `none` to both OpenAI families in place of any effort; gpt-oss models can't turn reasoning off and reject it. Models in other families are assumed not to reason without their native fields, so a disabled configuration sends nothing for them. Application inference profile ARNs don't name a model family and raise like other unsupported models. Values are forwarded without validation, and the fields are deep-merged into the `additional_model_request_fields` extra, whose values win on conflicts. A `thinking` object in the extra replaces the inferred one as a whole rather than being merged into it, since which `thinking` keys are valid depends on its `type`.
+
+¹⁶ A streamed Chat Completions response only reports token usage when `stream_options.include_usage` is set, so the serializer sends `stream_options: {"include_usage": true}` whenever `stream` is true and `stream_options` is not set. To opt out, set `stream_options` yourself, for example `{"include_usage" => false}`.
 
 ### Features Not Accessible Through Open Responses
 
@@ -774,7 +816,7 @@ Chat Completions request features with no canonical Open Responses field are ava
 Response-side behavior and limitations:
 
 - Responses with multiple choices (`n > 1`) parse only the first choice; additional candidates are dropped.
-- Streaming chunks (`chat.completion.chunk` deltas) raise `UnsupportedFormatError` — this gem expects a fully assembled non-streaming response body.
+- `Response.parse` raises `UnsupportedFormatError` for a single streaming chunk (a `chat.completion.chunk` delta). Use `Response.parse_stream` to parse a whole streamed body (see [Parsing Streamed Responses](#parsing-streamed-responses)).
 - `system_fingerprint` is exposed on `response.provider_data`.
 - `service_tier` is populated when present on the response.
 - `message.annotations` (URL citations from `web_search_options`) are copied onto `OutputText.annotations`.
@@ -854,7 +896,7 @@ Response-side limitations:
 - `finishReason` mappings: `STOP` → `completed`; `MAX_TOKENS` → `incomplete`; `SAFETY`, `RECITATION`, `OTHER`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `MALFORMED_FUNCTION_CALL`, `IMAGE_SAFETY`, `LANGUAGE`, `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS`, `MODEL_ARMOR` → `failed`. `FINISH_REASON_UNSPECIFIED` is treated as nil.
 - An empty `candidates` array combined with `promptFeedback.blockReason` is mapped to `failed`.
 - `usageMetadata.cachedContentTokenCount`, `toolUsePromptTokenCount`, `promptTokensDetails`, `cacheTokensDetails`, and `toolUsePromptTokensDetails` populate `response.usage.input_tokens_details`. `thoughtsTokenCount` and `candidatesTokensDetails` populate `response.usage.output_tokens_details`.
-- Response metadata with no canonical Open Responses slot is exposed on `response.provider_data`: `groundingMetadata`, `citationMetadata`, `urlContextMetadata`, `urlRetrievalMetadata`, `safetyRatings`, `groundingAttributions`, `avgLogprobs`, `logprobsResult`, `finishMessage`, candidate `index`, top-level `createTime`, and full `promptFeedback`. Streaming chunks are not parsed — this gem expects a fully assembled non-streaming response body.
+- Response metadata with no canonical Open Responses slot is exposed on `response.provider_data`: `groundingMetadata`, `citationMetadata`, `urlContextMetadata`, `urlRetrievalMetadata`, `safetyRatings`, `groundingAttributions`, `avgLogprobs`, `logprobsResult`, `finishMessage`, candidate `index`, top-level `createTime`, and full `promptFeedback`. Use `Response.parse_stream` to parse a `streamGenerateContent` response (see [Parsing Streamed Responses](#parsing-streamed-responses)).
 
 ### Converse-specific notes
 

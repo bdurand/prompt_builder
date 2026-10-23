@@ -1,0 +1,60 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b","object":"response","created_at":1741476542,"model":"gpt-4.1-2025-04-14","previous_response_id":null,"instructions":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"temperature":1.0,"top_p":1.0,"truncation":"disabled","store":true,"metadata":{},"max_output_tokens":null,"reasoning":{"effort":null,"summary":null},"text":{"format":{"type":"text"}},"error":null,"incomplete_details":null,"service_tier":"default","status":"in_progress","output":[],"usage":null}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b","object":"response","created_at":1741476542,"model":"gpt-4.1-2025-04-14","previous_response_id":null,"instructions":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"temperature":1.0,"top_p":1.0,"truncation":"disabled","store":true,"metadata":{},"max_output_tokens":null,"reasoning":{"effort":null,"summary":null},"text":{"format":{"type":"text"}},"error":null,"incomplete_details":null,"service_tier":"default","status":"in_progress","output":[],"usage":null}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_6820f383d7c08191846711c5df8233bc","summary":[]},"sequence_number":2}
+
+event: response.reasoning_summary_part.added
+data: {"type":"response.reasoning_summary_part.added","item_id":"rs_6820f383d7c08191846711c5df8233bc","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""},"sequence_number":3}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_6820f383d7c08191846711c5df8233bc","output_index":0,"summary_index":0,"delta":"**Planning tool calls**\n\n","sequence_number":4}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_6820f383d7c08191846711c5df8233bc","output_index":0,"summary_index":0,"delta":"I need the weather and the time.","sequence_number":5}
+
+event: response.reasoning_summary_text.done
+data: {"type":"response.reasoning_summary_text.done","item_id":"rs_6820f383d7c08191846711c5df8233bc","output_index":0,"summary_index":0,"text":"**Planning tool calls**\n\nI need the weather and the time.","sequence_number":6}
+
+event: response.reasoning_summary_part.done
+data: {"type":"response.reasoning_summary_part.done","item_id":"rs_6820f383d7c08191846711c5df8233bc","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":"**Planning tool calls**\n\nI need the weather and the time."},"sequence_number":7}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_6820f383d7c08191846711c5df8233bc","summary":[{"type":"summary_text","text":"**Planning tool calls**\n\nI need the weather and the time."}],"encrypted_content":"gAAAAABoIPOBzQmFtKJ6nVbN0k2xGRz"},"sequence_number":8}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_6820f3859b5c8191b5fc0d2b3e3b7d6a","call_id":"call_DdmO9pD3xa9XTPNJ32zg2hcA","name":"get_weather","arguments":"","status":"in_progress"},"sequence_number":9}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_6820f3859b5c8191b5fc0d2b3e3b7d6a","output_index":1,"delta":"{\"location","sequence_number":10}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_6820f3859b5c8191b5fc0d2b3e3b7d6a","output_index":1,"delta":"\":\"Paris, France\"}","sequence_number":11}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_6820f3859b5c8191b5fc0d2b3e3b7d6a","output_index":1,"arguments":"{\"location\":\"Paris, France\"}","sequence_number":12}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"fc_6820f3859b5c8191b5fc0d2b3e3b7d6a","call_id":"call_DdmO9pD3xa9XTPNJ32zg2hcA","name":"get_weather","arguments":"{\"location\":\"Paris, France\"}","status":"completed"},"sequence_number":13}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","id":"fc_6820f385b14c81918b3c7f2b6b0e8a3d","call_id":"call_ABHxnfAEGv4pWSxcvYFeWGeg","name":"get_time","arguments":"","status":"in_progress"},"sequence_number":14}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_6820f385b14c81918b3c7f2b6b0e8a3d","output_index":2,"delta":"{\"timezone","sequence_number":15}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_6820f385b14c81918b3c7f2b6b0e8a3d","output_index":2,"delta":"\":\"Europe/Paris\"}","sequence_number":16}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_6820f385b14c81918b3c7f2b6b0e8a3d","output_index":2,"arguments":"{\"timezone\":\"Europe/Paris\"}","sequence_number":17}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":2,"item":{"type":"function_call","id":"fc_6820f385b14c81918b3c7f2b6b0e8a3d","call_id":"call_ABHxnfAEGv4pWSxcvYFeWGeg","name":"get_time","arguments":"{\"timezone\":\"Europe/Paris\"}","status":"completed"},"sequence_number":18}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":19,"response":{"id":"resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b","object":"response","created_at":1741476542,"model":"o4-mini-2025-04-16","previous_response_id":null,"instructions":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"temperature":1.0,"top_p":1.0,"truncation":"disabled","store":true,"metadata":{},"max_output_tokens":null,"reasoning":{"effort":"medium","summary":"auto"},"text":{"format":{"type":"text"}},"error":null,"incomplete_details":null,"service_tier":"default","status":"completed","output":[{"type":"reasoning","id":"rs_6820f383d7c08191846711c5df8233bc","summary":[{"type":"summary_text","text":"**Planning tool calls**\n\nI need the weather and the time."}],"encrypted_content":"gAAAAABoIPOBzQmFtKJ6nVbN0k2xGRz"},{"type":"function_call","id":"fc_6820f3859b5c8191b5fc0d2b3e3b7d6a","call_id":"call_DdmO9pD3xa9XTPNJ32zg2hcA","name":"get_weather","arguments":"{\"location\":\"Paris, France\"}","status":"completed"},{"type":"function_call","id":"fc_6820f385b14c81918b3c7f2b6b0e8a3d","call_id":"call_ABHxnfAEGv4pWSxcvYFeWGeg","name":"get_time","arguments":"{\"timezone\":\"Europe/Paris\"}","status":"completed"}],"usage":{"input_tokens":120,"input_tokens_details":{"cached_tokens":64},"output_tokens":210,"output_tokens_details":{"reasoning_tokens":128},"total_tokens":330},"completed_at":1741476544}}
+

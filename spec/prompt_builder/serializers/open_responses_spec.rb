@@ -61,6 +61,15 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses do
       expect(payload["reasoning"]).to eq({})
     end
 
+    it "serializes stream and stream_options" do
+      session = PromptBuilder::Session.new(model: "gpt-4.1", stream: true, stream_options: {"include_obfuscation" => false})
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["stream"]).to be true
+      expect(h["stream_options"]).to eq({"include_obfuscation" => false})
+    end
+
     it "passes through InputImage with url unchanged" do
       session = PromptBuilder::Session.new(model: "gpt-5.4")
       session.add_item(PromptBuilder::Items::Message.new(

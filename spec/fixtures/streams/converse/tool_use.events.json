@@ -1,0 +1,133 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant",
+      "p": "abcdefghijkl"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 0,
+      "delta": {
+        "text": "I'll check the weather"
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 0,
+      "delta": {
+        "text": " and time in Paris."
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 0,
+      "p": "abcdefghijklmnop"
+    }
+  },
+  {
+    "event": "contentBlockStart",
+    "payload": {
+      "contentBlockIndex": 1,
+      "start": {
+        "toolUse": {
+          "toolUseId": "tooluse_kZJMlvQmRJ6eAyJE5GIl7Q",
+          "name": "get_weather"
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 1,
+      "delta": {
+        "toolUse": {
+          "input": "{\"location\":"
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 1,
+      "delta": {
+        "toolUse": {
+          "input": " \"Paris, France\"}"
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 1,
+      "p": "abcdefghijklmnop"
+    }
+  },
+  {
+    "event": "contentBlockStart",
+    "payload": {
+      "contentBlockIndex": 2,
+      "start": {
+        "toolUse": {
+          "toolUseId": "tooluse_Xq3TfZ2hS6mU9bP1cR4dWw",
+          "name": "get_time"
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 2,
+      "delta": {
+        "toolUse": {
+          "input": ""
+        }
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 2,
+      "p": "abcdefghijklmnop"
+    }
+  },
+  {
+    "event": "messageStop",
+    "payload": {
+      "stopReason": "tool_use",
+      "p": "abcdefghijk"
+    }
+  },
+  {
+    "event": "metadata",
+    "payload": {
+      "usage": {
+        "inputTokens": 410,
+        "outputTokens": 96,
+        "totalTokens": 506
+      },
+      "metrics": {
+        "latencyMs": 1290
+      },
+      "p": "abcdefgh"
+    }
+  }
+]

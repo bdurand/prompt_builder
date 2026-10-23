@@ -1,0 +1,57 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant",
+      "p": "abcdefghijkl"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 0,
+      "delta": {
+        "text": "Bonjour! Un café ☕"
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 0,
+      "delta": {
+        "text": " à Paris — 東京 too."
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 0,
+      "p": "abcdefghijklmnop"
+    }
+  },
+  {
+    "event": "messageStop",
+    "payload": {
+      "stopReason": "end_turn",
+      "p": "abcdefghijk"
+    }
+  },
+  {
+    "event": "metadata",
+    "payload": {
+      "usage": {
+        "inputTokens": 25,
+        "outputTokens": 15,
+        "totalTokens": 40
+      },
+      "metrics": {
+        "latencyMs": 412
+      },
+      "p": "abcdefgh"
+    }
+  }
+]

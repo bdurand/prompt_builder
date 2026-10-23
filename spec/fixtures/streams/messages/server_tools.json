@@ -1,0 +1,14 @@
+{
+  "id": "msg_01G6kZ7mGkpvMsRTBZsXwTVv",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5-20250929",
+  "content": [
+    {"type": "server_tool_use", "id": "srvtoolu_014hJH82Qum7Td6UV8gDXThB", "name": "web_search", "input": {"query": "weather NYC today"}},
+    {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_014hJH82Qum7Td6UV8gDXThB", "content": [{"type": "web_search_result", "title": "Weather in New York City", "url": "https://weather.example.com/nyc", "encrypted_content": "Ev0DCioIAhgCIiQ3NmU4ZmI4OC1k", "page_age": null}]},
+    {"type": "text", "text": "It's sunny in New York with a high of 72°F.", "citations": [{"type": "web_search_result_location", "cited_text": "Sunny with a high of 72F", "url": "https://weather.example.com/nyc", "title": "Weather in New York City", "encrypted_index": "Eo8BCioIAhgBIiQyYjQ0OWJmZi1lNm"}]}
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {"input_tokens": 10682, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 510, "server_tool_use": {"web_search_requests": 1}}
+}

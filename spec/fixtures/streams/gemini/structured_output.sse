@@ -1,0 +1,4 @@
+data: {"candidates":[{"content":{"parts":[{"text":"{\"name\": \"Ada Lovel"}],"role":"model"},"index":0,"citationMetadata":{"citationSources":[{"startIndex":0,"endIndex":10,"uri":"https://example.com/a"}]}}],"usageMetadata":{"promptTokenCount":30,"totalTokenCount":30},"modelVersion":"gemini-2.5-flash","responseId":"p9QPaMf2GtOv1dkPo6KJ8Q4"}
+
+data: {"candidates":[{"content":{"parts":[{"text":"ace\", \"born\": 18"}],"role":"model"},"index":0,"finishReason":"MAX_TOKENS","safetyRatings":[{"category":"HARM_CATEGORY_HATE_SPEECH","probability":"NEGLIGIBLE"}],"citationMetadata":{"citationSources":[{"startIndex":10,"endIndex":20,"uri":"https://example.com/b"}]}}],"usageMetadata":{"promptTokenCount":30,"candidatesTokenCount":12,"totalTokenCount":42},"modelVersion":"gemini-2.5-flash","responseId":"p9QPaMf2GtOv1dkPo6KJ8Q4"}
+

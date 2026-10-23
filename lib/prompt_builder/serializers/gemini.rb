@@ -7,6 +7,7 @@ module PromptBuilder
     class Gemini < Base
       autoload :Request, File.expand_path("gemini/request", __dir__)
       autoload :Response, File.expand_path("gemini/response", __dir__)
+      autoload :StreamAccumulator, File.expand_path("gemini/stream_accumulator", __dir__)
 
       class << self
         # Export a session to Gemini request payload.

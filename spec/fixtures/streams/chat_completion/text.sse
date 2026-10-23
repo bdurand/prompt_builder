@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-AxKTq7Rkfr7WXGXxDbmWRdV","object":"chat.completion.chunk","created":1738000000,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_50cad350e4","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl-AxKTq7Rkfr7WXGXxDbmWRdV","object":"chat.completion.chunk","created":1738000000,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_50cad350e4","choices":[{"index":0,"delta":{"content":"Bonjour! Un café ☕"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl-AxKTq7Rkfr7WXGXxDbmWRdV","object":"chat.completion.chunk","created":1738000000,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_50cad350e4","choices":[{"index":0,"delta":{"content":" à Paris — 東京 too."},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl-AxKTq7Rkfr7WXGXxDbmWRdV","object":"chat.completion.chunk","created":1738000000,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_50cad350e4","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"usage":null}
+
+data: {"id":"chatcmpl-AxKTq7Rkfr7WXGXxDbmWRdV","object":"chat.completion.chunk","created":1738000000,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_50cad350e4","choices":[],"usage":{"prompt_tokens":19,"completion_tokens":11,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}}
+
+data: [DONE]
+

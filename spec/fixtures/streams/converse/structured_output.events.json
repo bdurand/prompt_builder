@@ -1,0 +1,57 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant",
+      "p": "abcdefghijkl"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 0,
+      "delta": {
+        "text": "{\"name\": \"Ada Lovel"
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "contentBlockIndex": 0,
+      "delta": {
+        "text": "ace\", \"born\": 1815}"
+      },
+      "p": "abcdefghijklmnopq"
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 0,
+      "p": "abcdefghijklmnop"
+    }
+  },
+  {
+    "event": "messageStop",
+    "payload": {
+      "stopReason": "max_tokens",
+      "p": "abcdefghijk"
+    }
+  },
+  {
+    "event": "metadata",
+    "payload": {
+      "usage": {
+        "inputTokens": 40,
+        "outputTokens": 12,
+        "totalTokens": 52
+      },
+      "metrics": {
+        "latencyMs": 300
+      },
+      "p": "abcdefgh"
+    }
+  }
+]

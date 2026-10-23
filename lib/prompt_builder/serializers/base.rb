@@ -32,6 +32,42 @@ module PromptBuilder
           deserialize_response(hash)
         end
 
+        # Create an incremental accumulator that reassembles a streamed
+        # response body in this format into the Hash the non-streaming
+        # endpoint would have returned. Feed it raw body chunks with +<<+,
+        # then call +result+.
+        #
+        # @return [Streaming::Accumulator] a new accumulator
+        # @raise [UnsupportedFormatError] if the format has no stream accumulator
+        def stream_accumulator
+          unless const_defined?(:StreamAccumulator, false)
+            raise UnsupportedFormatError, "#{name} does not support streamed responses"
+          end
+
+          const_get(:StreamAccumulator, false).new
+        end
+
+        # Reassemble a complete streamed response body into the Hash the
+        # non-streaming endpoint would have returned, ready for
+        # +parse_response+.
+        #
+        # @param body [String, #each] the raw streamed body (SSE text, or AWS
+        #   event-stream bytes for Converse), or an enumerable of body chunks
+        # @return [Hash] the non-streaming equivalent response
+        # @raise [IncompleteStreamError] if the stream ended before the
+        #   format's terminal event
+        # @raise [ErrorResponseError] if the stream contains an error event
+        # @raise [ParseError] if the stream is malformed
+        def collapse_stream(body)
+          accumulator = stream_accumulator
+          if body.is_a?(String)
+            accumulator << body
+          else
+            body.each { |chunk| accumulator << chunk }
+          end
+          accumulator.result
+        end
+
         private
 
         def serialize_request(_session)

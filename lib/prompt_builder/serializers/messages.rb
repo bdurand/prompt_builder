@@ -7,6 +7,7 @@ module PromptBuilder
     class Messages < Base
       autoload :Request, File.expand_path("messages/request", __dir__)
       autoload :Response, File.expand_path("messages/response", __dir__)
+      autoload :StreamAccumulator, File.expand_path("messages/stream_accumulator", __dir__)
 
       class << self
         # Export a session to Messages request payload.

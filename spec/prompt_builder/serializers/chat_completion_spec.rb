@@ -624,6 +624,48 @@ RSpec.describe PromptBuilder::Serializers::ChatCompletion do
       expect(h).not_to have_key("stream_options")
     end
 
+    it "requests usage by default when streaming without stream_options" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", stream: true)
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["stream"]).to be true
+      expect(h["stream_options"]).to eq({"include_usage" => true})
+    end
+
+    it "keeps explicit stream_options without adding include_usage" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-4o",
+        stream: true,
+        stream_options: {"include_obfuscation" => false}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["stream_options"]).to eq({"include_obfuscation" => false})
+    end
+
+    it "lets stream_options turn off include_usage" do
+      session = PromptBuilder::Session.new(
+        model: "gpt-4o",
+        stream: true,
+        stream_options: {"include_usage" => false}
+      )
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["stream_options"]).to eq({"include_usage" => false})
+    end
+
+    it "omits stream_options when stream is false" do
+      session = PromptBuilder::Session.new(model: "gpt-4o", stream: false)
+      session.user("Hi")
+
+      h = described_class.request_payload(session)
+      expect(h["stream"]).to be false
+      expect(h).not_to have_key("stream_options")
+    end
+
     it "omits unsupported stream_options keys" do
       session = PromptBuilder::Session.new(
         model: "gpt-4o",

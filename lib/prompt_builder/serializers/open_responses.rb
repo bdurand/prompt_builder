@@ -7,6 +7,7 @@ module PromptBuilder
     class OpenResponses < Base
       autoload :Request, File.expand_path("open_responses/request", __dir__)
       autoload :Response, File.expand_path("open_responses/response", __dir__)
+      autoload :StreamAccumulator, File.expand_path("open_responses/stream_accumulator", __dir__)
 
       class << self
         # Export a session to Open Responses API request payload.

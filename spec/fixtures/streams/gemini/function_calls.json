@@ -1,0 +1,41 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "I'll check the weather and time in Paris."
+          },
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "location": "Paris, France"
+              }
+            },
+            "thoughtSignature": "CtwFAdHtim9sig1"
+          },
+          {
+            "functionCall": {
+              "name": "get_time",
+              "args": {
+                "timezone": "Europe/Paris"
+              }
+            }
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 95,
+    "candidatesTokenCount": 40,
+    "totalTokenCount": 201,
+    "thoughtsTokenCount": 66
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "o9QPaLe1FtOv1dkPn6KJ8Q4"
+}
