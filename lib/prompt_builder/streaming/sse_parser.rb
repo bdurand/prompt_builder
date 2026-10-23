@@ -17,6 +17,7 @@ module PromptBuilder
       #
       # @!attribute [r] event
       #   @return [String, nil] the +event+ field, or nil when the event has none
+      #     or an empty one (both mean the default +message+ event type)
       # @!attribute [r] data
       #   @return [String] the +data+ lines joined with newlines (UTF-8)
       # @!attribute [r] id
@@ -125,7 +126,9 @@ module PromptBuilder
 
         case field
         when "event"
-          @event_type = utf8(value)
+          # An empty event field means the default "message" type, the same
+          # as no event field at all.
+          @event_type = value.empty? ? nil : utf8(value)
         when "data"
           @data_lines << value
         when "id"

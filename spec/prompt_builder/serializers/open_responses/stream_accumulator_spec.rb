@@ -38,6 +38,16 @@ RSpec.describe PromptBuilder::Serializers::OpenResponses::StreamAccumulator do
     expect(collapse(body)).to eq(response)
   end
 
+  it "reads the event type from the data when the SSE event names are empty" do
+    body = "event:\ndata: #{JSON.generate({"type" => "response.completed", "response" => response})}\n\n"
+    expect(collapse(body)).to eq(response)
+  end
+
+  it "raises ErrorResponseError for an error event with an empty SSE event name" do
+    body = "event:\ndata: #{JSON.generate({"type" => "error", "code" => "ERR_SOMETHING", "message" => "Something went wrong"})}\n\n"
+    expect { collapse(body) }.to raise_error(PromptBuilder::ErrorResponseError, "the API returned an error: ERR_SOMETHING: Something went wrong")
+  end
+
   it "returns a failed response so it parses into a failed Response" do
     failed = response.merge("status" => "failed", "output" => [], "error" => {"code" => "server_error", "message" => "boom"})
     parsed = PromptBuilder::Response.parse_stream(sse({"type" => "response.failed", "response" => failed}), :open_responses)

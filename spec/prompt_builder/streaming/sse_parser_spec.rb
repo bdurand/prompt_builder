@@ -16,6 +16,11 @@ RSpec.describe PromptBuilder::Streaming::SSEParser do
     expect(events.map(&:to_h)).to eq([{event: "greeting", data: "hello", id: "7"}])
   end
 
+  it "treats an empty event field as no event name" do
+    events = parse("event:\ndata: a\n\nevent: \ndata: b\n\n")
+    expect(events.map(&:to_h)).to eq([{event: nil, data: "a", id: nil}, {event: nil, data: "b", id: nil}])
+  end
+
   it "joins multi-line data with newlines" do
     events = parse("data: line one\ndata: line two\ndata:\n\n")
     expect(events.map(&:data)).to eq(["line one\nline two\n"])
