@@ -13,6 +13,10 @@ RSpec.describe PromptBuilder::Serializers::Gemini::StreamAccumulator do
     {"candidates" => [candidate], "modelVersion" => "gemini-2.5-flash", "responseId" => "r1"}
   end
 
+  def token(text, logprob)
+    {"token" => text, "logProbability" => logprob}
+  end
+
   def collapse(body)
     PromptBuilder::Serializers::Gemini.collapse_stream(body)
   end
@@ -41,6 +45,24 @@ RSpec.describe PromptBuilder::Serializers::Gemini::StreamAccumulator do
     expect(parts(result)).to eq([{"text" => "ab", "thoughtSignature" => "s1"}])
   end
 
+  it "attaches a trailing signature-only part to the text part before it" do
+    result = collapse(sse(
+      chunk([{"text" => "Ans"}]),
+      chunk([{"text" => "wer"}]),
+      chunk([{"thoughtSignature" => "sig_text"}], finish_reason: "STOP")
+    ))
+    expect(parts(result)).to eq([{"text" => "Answer", "thoughtSignature" => "sig_text"}])
+  end
+
+  it "keeps a signature-only part separate when there is no unsigned text part to attach it to" do
+    call = {"functionCall" => {"name" => "f", "args" => {}}}
+    result = collapse(sse(
+      chunk([{"text" => "a", "thoughtSignature" => "s1"}, call]),
+      chunk([{"thoughtSignature" => "s2"}], finish_reason: "STOP")
+    ))
+    expect(parts(result)).to eq([{"text" => "a", "thoughtSignature" => "s1"}, call, {"thoughtSignature" => "s2"}])
+  end
+
   it "does not merge text across a function call or other part types" do
     call = {"functionCall" => {"name" => "f", "args" => {}}}
     code = {"executableCode" => {"language" => "PYTHON", "code" => "1"}}
@@ -49,6 +71,28 @@ RSpec.describe PromptBuilder::Serializers::Gemini::StreamAccumulator do
       chunk([{"text" => "b"}, code, {"text" => "c"}], finish_reason: "STOP")
     ))
     expect(parts(result)).to eq([{"text" => "a"}, call, {"text" => "b"}, code, {"text" => "c"}])
+  end
+
+  it "concatenates log probability tokens across chunks and recomputes their sum" do
+    first = chunk([{"text" => "a"}])
+    first["candidates"][0]["logprobsResult"] = {
+      "topCandidates" => [{"candidates" => [token("a", -0.25)]}],
+      "chosenCandidates" => [token("a", -0.25)],
+      "logProbabilitySum" => -0.25
+    }
+    second = chunk([{"text" => "b"}], finish_reason: "STOP")
+    second["candidates"][0]["logprobsResult"] = {
+      "topCandidates" => [{"candidates" => [token("b", -0.5)]}],
+      "chosenCandidates" => [token("b", -0.5)],
+      "logProbabilitySum" => -0.5
+    }
+
+    result = collapse(sse(first, second))
+    expect(result["candidates"][0]["logprobsResult"]).to eq(
+      "topCandidates" => [{"candidates" => [token("a", -0.25)]}, {"candidates" => [token("b", -0.5)]}],
+      "chosenCandidates" => [token("a", -0.25), token("b", -0.5)],
+      "logProbabilitySum" => -0.75
+    )
   end
 
   it "merges candidates by index" do

@@ -11,10 +11,14 @@ module PromptBuilder
       # chunk. Candidates are merged by +index+: their parts are concatenated
       # in order, with adjacent text parts of the same kind (thought or not)
       # merged into one part that keeps the +thoughtSignature+; two parts that
-      # both carry a signature stay separate. +functionCall+ and other parts
-      # arrive whole. +citationMetadata.citationSources+ are concatenated, and
-      # every other field (+finishReason+, +usageMetadata+, +modelVersion+,
-      # +responseId+, ...) is taken from the last chunk that has it.
+      # both carry a signature stay separate. A part with only a
+      # +thoughtSignature+ and no text is the signature for the text before it,
+      # so it is attached to that text part. +functionCall+ and other parts
+      # arrive whole. +citationMetadata.citationSources+ and the
+      # +logprobsResult+ token lists are concatenated (with +logProbabilitySum+
+      # recomputed from the chosen tokens), and every other field
+      # (+finishReason+, +usageMetadata+, +modelVersion+, +responseId+, ...) is
+      # taken from the last chunk that has it.
       #
       # Without +alt=sse+ the endpoint returns a JSON array of the same chunks;
       # it is buffered whole and merged the same way.
@@ -25,6 +29,9 @@ module PromptBuilder
       class StreamAccumulator < Streaming::Accumulator
         TEXT_PART_KEYS = %w[text thought thoughtSignature].freeze
         private_constant :TEXT_PART_KEYS
+
+        LOGPROBS_TOKEN_LISTS = %w[topCandidates chosenCandidates].freeze
+        private_constant :LOGPROBS_TOKEN_LISTS
 
         def initialize
           super
@@ -74,6 +81,8 @@ module PromptBuilder
               merge_content(merged, value) if value.is_a?(Hash)
             when "citationMetadata"
               merge_citation_metadata(merged, value) if value.is_a?(Hash)
+            when "logprobsResult"
+              merge_logprobs_result(merged, value) if value.is_a?(Hash)
             else
               merged[key] = value
             end
@@ -88,7 +97,9 @@ module PromptBuilder
 
         def append_part(parts, part)
           last = parts.last
-          if mergeable_text?(last, part)
+          if signature_only?(part) && text_part?(last) && !last["thoughtSignature"]
+            last["thoughtSignature"] = part["thoughtSignature"]
+          elsif mergeable_text?(last, part)
             last["text"] << part["text"]
             last["thoughtSignature"] = part["thoughtSignature"] if part["thoughtSignature"]
           elsif text_part?(part)
@@ -109,6 +120,10 @@ module PromptBuilder
           part.is_a?(Hash) && part["text"].is_a?(String) && (part.keys - TEXT_PART_KEYS).empty?
         end
 
+        def signature_only?(part)
+          part["thoughtSignature"].is_a?(String) && !part.key?("text") && (part.keys - TEXT_PART_KEYS).empty?
+        end
+
         def merge_citation_metadata(merged, metadata)
           target = merged["citationMetadata"] ||= {}
           metadata.each do |key, value|
@@ -117,6 +132,25 @@ module PromptBuilder
             elsif !value.nil?
               target[key] = value
             end
+          end
+        end
+
+        # Each chunk reports log probabilities for its own tokens, so the
+        # token lists are concatenated in order and the sum is recomputed for
+        # the whole candidate.
+        def merge_logprobs_result(merged, result)
+          target = merged["logprobsResult"] ||= {}
+          result.each do |key, value|
+            if LOGPROBS_TOKEN_LISTS.include?(key) && value.is_a?(Array)
+              (target[key] ||= []).concat(value)
+            elsif !value.nil?
+              target[key] = value
+            end
+          end
+
+          chosen = target["chosenCandidates"]
+          if target.key?("logProbabilitySum") && chosen
+            target["logProbabilitySum"] = chosen.sum { |token| token.is_a?(Hash) ? token["logProbability"].to_f : 0.0 }
           end
         end
 
